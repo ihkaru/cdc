@@ -1,0 +1,26 @@
+# ===================================================
+# FASIH-SM RPA Sync — Konfigurasi
+# ===================================================
+# Salin file ini menjadi .env dan isi nilainya
+
+# Kredensial Login SSO BPS
+SSO_USERNAME=your_username
+SSO_PASSWORD=your_password
+
+# Target Survey (nama persis seperti di tabel FASIH)
+SURVEY_NAME=PEMUTAKHIRAN DTSEN PBI 2026
+
+# Filter Wilayah (opsional, kosongkan jika tidak perlu filter)
+FILTER_PROVINSI=KALIMANTAN BARAT
+FILTER_KABUPATEN=KABUPATEN MEMPAWAH
+
+# Rotasi filter: "pengawas" atau "pencacah"
+# - pengawas: loop per pengawas, sub-loop pencacah jika >1000
+# - pencacah: selalu loop per pencacah (lebih lambat tapi lebih aman)
+FILTER_ROTATION=pengawas
+
+# Scheduler: interval dalam menit (0 = jalankan sekali saja)
+INTERVAL_MINUTES=30
+
+# Database SQLite
+DB_PATH=data/fasih_sync.db

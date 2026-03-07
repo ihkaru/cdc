@@ -1,0 +1,36 @@
+{
+  "name": "fasih-dashboard-client",
+  "version": "0.0.1",
+  "description": "A Quasar Project",
+  "productName": "FASIH Sync Dashboard",
+  "author": "Antigravity",
+  "private": true,
+  "scripts": {
+    "lint": "eslint --ext .js,.ts,.vue ./",
+    "format": "prettier --write \"**/*.{js,ts,vue,scss,html,md,json}\"",
+    "test": "echo \"No test specified\" && exit 0"
+  },
+  "dependencies": {
+    "@guolao/vue-monaco-editor": "^1.6.0",
+    "@quasar/extras": "^1.16.4",
+    "echarts": "^6.0.0",
+    "maplibre-gl": "^5.19.0",
+    "quasar": "^2.16.0",
+    "vue": "^3.4.18",
+    "vue-echarts": "^8.0.1",
+    "vue-router": "^4.0.12",
+    "vuedraggable": "^4.1.0"
+  },
+  "devDependencies": {
+    "@quasar/app-vite": "^2.0.0",
+    "@types/node": "^20.5.9",
+    "typescript": "^5.2.2"
+  },
+  "engines": {
+    "node": "^18 || ^20 || ^22",
+    "npm": "^9 || ^10",
+    "yarn": "^1.22.1",
+    "pnpm": "^8 || ^9",
+    "bun": "^1"
+  }
+}

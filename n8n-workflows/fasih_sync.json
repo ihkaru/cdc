@@ -1,0 +1,107 @@
+{
+    "name": "FASIH Sync Automation",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "minutes",
+                            "minutesInterval": 30
+                        }
+                    ]
+                }
+            },
+            "id": "trigger",
+            "name": "Every 30 Mins",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.1,
+            "position": [
+                400,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "url": "http://dashboard:3000/api/surveys",
+                "options": {}
+            },
+            "id": "get_surveys",
+            "name": "Get Active Surveys",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                600,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "fieldToSplitOut": "data",
+                "options": {}
+            },
+            "id": "split_surveys",
+            "name": "Split Surveys",
+            "type": "n8n-nodes-base.splitInBatches",
+            "typeVersion": 1,
+            "position": [
+                800,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=http://dashboard:3000/api/surveys/{{ $json.id }}/sync",
+                "options": {}
+            },
+            "id": "trigger_sync",
+            "name": "Trigger Sync",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                1000,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "Every 30 Mins": {
+            "main": [
+                [
+                    {
+                        "node": "Get Active Surveys",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get Active Surveys": {
+            "main": [
+                [
+                    {
+                        "node": "Split Surveys",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Split Surveys": {
+            "main": [
+                [
+                    {
+                        "node": "Trigger Sync",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": true,
+    "settings": {
+        "executionOrder": "v1"
+    }
+}
