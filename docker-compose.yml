@@ -49,6 +49,7 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - SKIP_DETAIL_FETCH=${SKIP_DETAIL_FETCH:-false}
     depends_on:
       vpn:
         condition: service_started

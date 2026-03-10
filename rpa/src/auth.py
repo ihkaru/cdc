@@ -7,7 +7,7 @@ from playwright.async_api import Page
 TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
 
 
-async def auto_login(page: Page, username: str, password: str) -> bool:
+async def auto_login(page: Page, username: str, password: str) -> tuple[bool, dict]:
     """
     Otomasi login SSO BPS:
     1. Buka halaman login FASIH
@@ -16,7 +16,7 @@ async def auto_login(page: Page, username: str, password: str) -> bool:
     4. Submit dan tunggu redirect ke dashboard
     
     Returns:
-        True jika berhasil login, False jika gagal
+        (sukses: bool, cookies: dict)
     """
     try:
         # --- Step 1: Buka halaman login FASIH ---
@@ -52,14 +52,20 @@ async def auto_login(page: Page, username: str, password: str) -> bool:
         current_url = page.url
         if "oauth_login" in current_url or "sso.bps.go.id" in current_url:
             print("   ❌ Login gagal — masih di halaman login. Cek username/password.")
-            return False
+            return False, {}
 
         print("   ✅ Login berhasil!")
-        return True
+        
+        # Ekstrak Cookie
+        context = page.context
+        cookies = await context.cookies()
+        cookie_dict = {c["name"]: c["value"] for c in cookies}
+        
+        return True, cookie_dict
 
     except Exception as e:
         print(f"   ❌ Login error: {e}")
-        return False
+        return False, {}
 
 
 async def check_session_valid(page: Page) -> bool:

@@ -74,15 +74,20 @@ async def select_region_dropdown(page: Page, css_selector: str, option_text: str
             break
         await asyncio.sleep(0.5)
 
-    # Klik item yang cocok (partial match, case-insensitive)
+    # Klik item yang cocok (semua kata/token harus ada, case-insensitive)
     clicked = await page.evaluate("""(args) => {
         const [sel, text] = args;
         const el = document.querySelector(sel);
         if (!el) return false;
-        const textLower = text.toLowerCase();
+        
+        const searchWords = text.toLowerCase().trim().split(' ').filter(w => w.trim() !== '');
         const items = el.querySelectorAll('.dropdown-menu .ngx-select__item');
+        
         for (const item of items) {
-            if (item.innerText.trim().toLowerCase().includes(textLower)) {
+            const itemText = item.innerText.toLowerCase();
+            const isMatch = searchWords.every(word => itemText.includes(word));
+            
+            if (isMatch) {
                 item.click();
                 return true;
             }
@@ -145,10 +150,15 @@ async def _select_optiontextfield_dropdown(page: Page, index: int, option_text: 
         const [idx, text] = args;
         const selects = document.querySelectorAll('ngx-select[optiontextfield="-"]');
         if (!selects[idx]) return false;
-        const textLower = text.toLowerCase();
+        
+        const searchWords = text.toLowerCase().trim().split(' ').filter(w => w.trim() !== '');
         const items = selects[idx].querySelectorAll('.dropdown-menu .ngx-select__item');
+        
         for (const item of items) {
-            if (item.innerText.trim().toLowerCase().includes(textLower)) {
+            const itemText = item.innerText.toLowerCase();
+            const isMatch = searchWords.every(word => itemText.includes(word));
+            
+            if (isMatch) {
                 item.click();
                 return true;
             }

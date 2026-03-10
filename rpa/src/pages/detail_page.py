@@ -120,7 +120,7 @@ async def _fetch_one(
                         body_text = await resp.text()
                         print(f"   ❌ {assignment_id[:8]}... HTTP {resp.status}: {body_text[:100]}")
                         if attempt < retries:
-                            await asyncio.sleep(RETRY_DELAY)
+                            await asyncio.sleep(RETRY_DELAY * attempt)
                             continue
                         return None
 
@@ -131,7 +131,7 @@ async def _fetch_one(
                     print(f"   ❌ {assignment_id[:8]}... API returned success=False: {body}")
 
                     if attempt < retries:
-                        await asyncio.sleep(RETRY_DELAY)
+                        await asyncio.sleep(RETRY_DELAY * attempt)
                         continue
                     else:
                         return None
@@ -139,7 +139,7 @@ async def _fetch_one(
             except Exception as e:
                 print(f"   ❌ {assignment_id[:8]}... Exception: {e}")
                 if attempt < retries:
-                    await asyncio.sleep(RETRY_DELAY)
+                    await asyncio.sleep(RETRY_DELAY * attempt)
                 else:
                     return None
 
@@ -147,16 +147,16 @@ async def _fetch_one(
 
 
 async def fetch_assignments_concurrent(
-    context,
+    cookie_dict: dict,
     urls: list[str],
-    concurrency: int = 30,
+    concurrency: int = 5,
     on_progress=None,
 ) -> list[dict]:
     """
     Fetch multiple assignment details concurrently using aiohttp.
 
     Args:
-        context: Playwright browser context (to extract cookies)
+        cookie_dict: Dictionary of session cookies
         urls: List of assignment detail URLs
         concurrency: Maximum number of concurrent requests
         on_progress: Optional callback(fetched_count, total_count, data_or_none)
@@ -165,9 +165,7 @@ async def fetch_assignments_concurrent(
         List of successfully fetched assignment data dicts
     """
     import aiohttp
-
-    # Extract session cookies from Playwright browser
-    cookie_dict = await extract_cookies_from_context(context)
+    
     
     # Create SSL context that doesn't verify (VPN internal network)
     ssl_ctx = ssl.create_default_context()

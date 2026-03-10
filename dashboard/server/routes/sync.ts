@@ -106,4 +106,48 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
             .delete(systemSettings)
             .where(eq(systemSettings.key, "vpn_cookie"));
         return { success: true, message: "Cookie cleared. Using env var fallback." };
+    })
+
+    // ===== FASIH Lookup (untuk wizard Add Survey) =====
+
+    // Lookup surveys + provinces dari FASIH API (memerlukan SSO login ~15 detik)
+    .post("/fasih/lookup", async ({ body }) => {
+        const { ssoUsername, ssoPassword } = body as { ssoUsername: string; ssoPassword: string };
+        const response = await fetch(`${RPA_URL}/lookup/metadata`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sso_username: ssoUsername, sso_password: ssoPassword }),
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            const detail = (err as any).detail || `RPA error ${response.status}`;
+            throw new Error(detail);
+        }
+        return await response.json();
+    })
+
+    // Lookup kabupaten untuk satu provinsi
+    .post("/fasih/kabupaten", async ({ body }) => {
+        const { ssoUsername, ssoPassword, provFullCode } = body as {
+            ssoUsername: string;
+            ssoPassword: string;
+            provFullCode: string;
+        };
+        const response = await fetch(`${RPA_URL}/lookup/kabupaten`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                sso_username: ssoUsername,
+                sso_password: ssoPassword,
+                prov_full_code: provFullCode,
+            }),
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error((err as any).detail || `RPA error ${response.status}`);
+        }
+        return await response.json();
     });
+

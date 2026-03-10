@@ -1,0 +1,155 @@
+2026-03-10 14:01:27,005 - Starting API Exploration...
+🔐 Membuka halaman login FASIH...
+   Mengklik 'Login SSO BPS'...
+   Menunggu halaman SSO BPS (Keycloak)...
+   Mengisi username: ihz***
+   Mengklik 'Log In'...
+   Menunggu redirect ke dashboard FASIH...
+2026-03-10 14:01:30,318 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/survey/api/v1/users/check-user
+2026-03-10 14:01:30,318 -    Payload: {"headers":{"normalizedNames":{},"lazyUpdate":null},"withCredentials":true}...
+2026-03-10 14:01:30,537 - ⬅️ RESPONSE: [201] https://fasih-sm.bps.go.id/survey/api/v1/users/check-user
+2026-03-10 14:01:30,538 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/users/myinfo
+2026-03-10 14:01:30,656 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/users/myinfo
+2026-03-10 14:01:31,126 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/access-control/api/resource-master/my
+2026-03-10 14:01:31,160 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/access-control/api/resource-master/my
+2026-03-10 14:01:31,168 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/resource-master/my
+2026-03-10 14:01:31,210 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/resource-master/my
+2026-03-10 14:01:31,229 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/users/myinfo
+2026-03-10 14:01:31,229 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-add-permission
+2026-03-10 14:01:31,229 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"ALL SURVEY"}...
+2026-03-10 14:01:31,271 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/survey/api/v1/surveys/datatable?surveyType=Pencacahan
+2026-03-10 14:01:31,271 -    Payload: {"pageNumber":0,"pageSize":10,"sortBy":"CREATED_AT","sortDirection":"DESC","keywordSearch":""}...
+2026-03-10 14:01:31,280 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/survey/api/v1/surveys/datatable?surveyType=Pelatihan
+2026-03-10 14:01:31,280 -    Payload: {"pageNumber":0,"pageSize":10,"sortBy":"CREATED_AT","sortDirection":"DESC","keywordSearch":""}...
+2026-03-10 14:01:31,287 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/survey/api/v1/surveys/datatable?surveyType=Ujicoba
+2026-03-10 14:01:31,287 -    Payload: {"pageNumber":0,"pageSize":10,"sortBy":"CREATED_AT","sortDirection":"DESC","keywordSearch":""}...
+2026-03-10 14:01:31,289 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-add-permission
+2026-03-10 14:01:31,336 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/users/myinfo
+2026-03-10 14:01:32,928 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/surveys/datatable?surveyType=Ujicoba
+2026-03-10 14:01:34,493 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/surveys/datatable?surveyType=Pelatihan
+2026-03-10 14:01:44,712 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/surveys/datatable?surveyType=Pencacahan
+   ✅ Login berhasil!
+📋 Mencari survey: 'SAKERNAS NOV 2025 - PENDATAAN'...
+2026-03-10 14:01:45,488 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/access-control/api/resource-master/my
+2026-03-10 14:01:45,488 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/access-control/api/resource-master/my
+2026-03-10 14:01:45,738 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/resource-master/my
+2026-03-10 14:01:45,792 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/resource-master/my
+2026-03-10 14:01:45,807 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/users/myinfo
+2026-03-10 14:01:45,808 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-add-permission
+2026-03-10 14:01:45,808 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"ALL SURVEY"}...
+2026-03-10 14:01:45,829 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/survey/api/v1/surveys/datatable?surveyType=Pencacahan
+2026-03-10 14:01:45,829 -    Payload: {"pageNumber":0,"pageSize":10,"sortBy":"CREATED_AT","sortDirection":"DESC","keywordSearch":""}...
+2026-03-10 14:01:45,835 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/survey/api/v1/surveys/datatable?surveyType=Pelatihan
+2026-03-10 14:01:45,835 -    Payload: {"pageNumber":0,"pageSize":10,"sortBy":"CREATED_AT","sortDirection":"DESC","keywordSearch":""}...
+2026-03-10 14:01:45,842 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/survey/api/v1/surveys/datatable?surveyType=Ujicoba
+2026-03-10 14:01:45,843 -    Payload: {"pageNumber":0,"pageSize":10,"sortBy":"CREATED_AT","sortDirection":"DESC","keywordSearch":""}...
+2026-03-10 14:01:46,245 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-add-permission
+2026-03-10 14:01:46,251 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/users/myinfo
+2026-03-10 14:01:47,270 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/surveys/datatable?surveyType=Ujicoba
+2026-03-10 14:01:48,847 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/surveys/datatable?surveyType=Pelatihan
+2026-03-10 14:01:58,607 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/surveys/datatable?surveyType=Pencacahan
+   ✅ Ditemukan: 'SAKERNAS NOV 2025 - PENDATAAN' → ID: c3274ff3-ea58-4309-9980-ebed0c566f9d
+📊 Navigasi ke tab Data: https://fasih-sm.bps.go.id/survey-collection/collect/c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:01:59,702 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/access-control/api/resource-master/my
+2026-03-10 14:01:59,702 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/access-control/api/resource-master/my
+2026-03-10 14:02:00,073 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/resource-master/my
+2026-03-10 14:02:00,570 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/resource-master/my
+2026-03-10 14:02:00,572 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-all-permission
+2026-03-10 14:02:00,572 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d","permissionNames":["read"]}...
+2026-03-10 14:02:00,612 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-all-permission
+2026-03-10 14:02:00,625 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-add-permission
+2026-03-10 14:02:00,625 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:00,639 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-add-permission
+2026-03-10 14:02:00,640 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:00,640 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-add-permission
+2026-03-10 14:02:00,640 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:00,666 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-add-permission
+2026-03-10 14:02:00,668 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-read-permission
+2026-03-10 14:02:00,668 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:01,084 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-add-permission
+2026-03-10 14:02:01,087 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-add-permission
+2026-03-10 14:02:01,092 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-read-permission
+2026-03-10 14:02:01,092 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:01,097 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-read-permission
+2026-03-10 14:02:01,099 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-read-permission
+2026-03-10 14:02:01,099 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:01,100 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-write-permission
+2026-03-10 14:02:01,100 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:01,134 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-read-permission
+2026-03-10 14:02:01,135 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-write-permission
+2026-03-10 14:02:01,135 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:01,148 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-write-permission
+2026-03-10 14:02:01,149 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-read-permission
+2026-03-10 14:02:01,151 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-delete-permission
+2026-03-10 14:02:01,151 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:01,151 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-delete-permission
+2026-03-10 14:02:01,151 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:01,183 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-write-permission
+2026-03-10 14:02:01,183 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-delete-permission
+2026-03-10 14:02:01,183 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:01,594 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-delete-permission
+2026-03-10 14:02:01,596 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-delete-permission
+2026-03-10 14:02:01,598 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-manage-permission
+2026-03-10 14:02:01,598 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:01,601 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-delete-permission
+2026-03-10 14:02:01,602 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-manage-permission
+2026-03-10 14:02:01,602 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:01,602 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-manage-permission
+2026-03-10 14:02:01,602 -    Payload: {"resourceMasterName":"SURVEY","resourceKey":"c3274ff3-ea58-4309-9980-ebed0c566f9d"}...
+2026-03-10 14:02:01,646 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-manage-permission
+2026-03-10 14:02:01,650 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/survey-periods?surveyId=c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:01,651 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-manage-permission
+2026-03-10 14:02:01,652 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-manage-permission
+2026-03-10 14:02:01,653 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/survey-periods?surveyId=c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:01,654 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/survey-periods?surveyId=c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:02,111 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/survey-periods?surveyId=c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:02,115 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-read-permission
+2026-03-10 14:02:02,115 -    Payload: {"resourceMasterName":"SURVEY PERIOD","resourceKey":"7c5f684c-8a4b-4990-9a73-3cd670d5eb27"}...
+2026-03-10 14:02:02,202 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-read-permission
+2026-03-10 14:02:02,205 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/survey-periods?surveyId=c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:02,620 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/survey-periods?surveyId=c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:02,633 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/surveys/c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:02,634 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/survey-periods/my?surveyId=c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:02,746 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/surveys/c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:02,868 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/survey-periods/my?surveyId=c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:02,875 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/users/myinfo?surveyPeriodId=7c5f684c-8a4b-4990-9a73-3cd670d5eb27
+2026-03-10 14:02:02,876 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/users/check-is-pencacah?surveyPeriodId=7c5f684c-8a4b-4990-9a73-3cd670d5eb27
+2026-03-10 14:02:02,877 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/survey-templates/search?surveyId=c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:02,877 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/surveys/authorization-by-survey-period-id?surveyPeriodId=7c5f684c-8a4b-4990-9a73-3cd670d5eb27
+2026-03-10 14:02:02,879 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-add-permission
+2026-03-10 14:02:02,879 -    Payload: {"resourceMasterName":"SURVEY PERIOD","resourceKey":"7c5f684c-8a4b-4990-9a73-3cd670d5eb27"}...
+2026-03-10 14:02:02,933 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/surveys/authorization-by-survey-period-id?surveyPeriodId=7c5f684c-8a4b-4990-9a73-3cd670d5eb27
+2026-03-10 14:02:03,182 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-add-permission
+2026-03-10 14:02:03,184 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-read-permission
+2026-03-10 14:02:03,184 -    Payload: {"resourceMasterName":"SURVEY PERIOD","resourceKey":"7c5f684c-8a4b-4990-9a73-3cd670d5eb27"}...
+2026-03-10 14:02:03,184 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/survey-templates/search?surveyId=c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:03,185 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/users/check-is-pencacah?surveyPeriodId=7c5f684c-8a4b-4990-9a73-3cd670d5eb27
+2026-03-10 14:02:03,186 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/users/myinfo?surveyPeriodId=7c5f684c-8a4b-4990-9a73-3cd670d5eb27
+2026-03-10 14:02:03,191 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/assignment-sync/api/mobile/template/custom-data/1928ab3a-d85f-41e9-90ec-e51426b3b5af
+2026-03-10 14:02:03,198 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/survey/api/v1/survey-roles?surveyId=c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:03,199 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/region/api/v1/region-metadata?id=82af087a-d063-48b9-8633-71c84c4e7422
+2026-03-10 14:02:03,199 - ➡️ REQUEST: [GET] https://fasih-sm.bps.go.id/region/api/v1/region/level1?groupId=82af087a-d063-48b9-8633-71c84c4e7422
+2026-03-10 14:02:03,244 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-read-permission
+2026-03-10 14:02:03,252 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-write-permission
+2026-03-10 14:02:03,252 -    Payload: {"resourceMasterName":"SURVEY PERIOD","resourceKey":"7c5f684c-8a4b-4990-9a73-3cd670d5eb27"}...
+2026-03-10 14:02:03,266 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/region/api/v1/region-metadata?id=82af087a-d063-48b9-8633-71c84c4e7422
+2026-03-10 14:02:03,284 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/assignment-sync/api/mobile/template/custom-data/1928ab3a-d85f-41e9-90ec-e51426b3b5af
+2026-03-10 14:02:03,288 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/region/api/v1/region/level1?groupId=82af087a-d063-48b9-8633-71c84c4e7422
+2026-03-10 14:02:03,321 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/analytic/api/v2/assignment/datatable-all-user-survey-periode
+2026-03-10 14:02:03,321 -    === FULL PAYLOAD ===
+{"draw":1,"columns":[{"data":"id","name":"","searchable":true,"orderable":false,"search":{"value":"","regex":false}},{"data":"codeIdentity","name":"","searchable":true,"orderable":false,"search":{"value":"","regex":false}},{"data":"data1","name":"","searchable":true,"orderable":true,"search":{"value":"","regex":false}},{"data":"data2","name":"","searchable":true,"orderable":true,"search":{"value":"","regex":false}},{"data":"data3","name":"","searchable":true,"orderable":true,"search":{"value":"","regex":false}},{"data":"data4","name":"","searchable":true,"orderable":true,"search":{"value":"","regex":false}},{"data":"data5","name":"","searchable":true,"orderable":true,"search":{"value":"","regex":false}},{"data":"data6","name":"","searchable":true,"orderable":true,"search":{"value":"","regex":false}},{"data":"data7","name":"","searchable":true,"orderable":true,"search":{"value":"","regex":false}}],"order":[{"column":0,"dir":"asc"}],"start":0,"length":10,"search":{"value":"","regex":false},"assignmentExtraParam":{"region1Id":null,"region2Id":null,"region3Id":null,"region4Id":null,"region5Id":null,"region6Id":null,"region7Id":null,"region8Id":null,"region9Id":null,"region10Id":null,"surveyPeriodId":"7c5f684c-8a4b-4990-9a73-3cd670d5eb27","assignmentErrorStatusType":-1,"assignmentStatusAlias":null,"data1":null,"data2":null,"data3":null,"data4":null,"data5":null,"data6":null,"data7":null,"data8":null,"data9":null,"data10":null,"userIdResponsibility":null,"currentUserId":null,"regionId":null,"filterTargetType":"TARGET_ONLY"}}
+======================
+2026-03-10 14:02:03,678 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-write-permission
+2026-03-10 14:02:03,679 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/analytic/api/v2/assignment/datatable-all-user-survey-periode
+2026-03-10 14:02:03,680 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-manage-permission
+2026-03-10 14:02:03,680 -    Payload: {"resourceMasterName":"SURVEY PERIOD","resourceKey":"7c5f684c-8a4b-4990-9a73-3cd670d5eb27"}...
+2026-03-10 14:02:03,724 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-manage-permission
+2026-03-10 14:02:03,748 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization/has-delete-permission
+2026-03-10 14:02:03,749 -    Payload: {"resourceMasterName":"SURVEY PERIOD","resourceKey":"7c5f684c-8a4b-4990-9a73-3cd670d5eb27"}...
+2026-03-10 14:02:04,192 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization/has-delete-permission
+2026-03-10 14:02:04,195 - ➡️ REQUEST: [POST] https://fasih-sm.bps.go.id/access-control/api/authorization-assignment/can
+2026-03-10 14:02:04,195 -    Payload: {"permissionName":"do regional admin","surveyPeriodId":"7c5f684c-8a4b-4990-9a73-3cd670d5eb27"}...
+2026-03-10 14:02:04,198 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/survey/api/v1/survey-roles?surveyId=c3274ff3-ea58-4309-9980-ebed0c566f9d
+2026-03-10 14:02:04,246 - ⬅️ RESPONSE: [200] https://fasih-sm.bps.go.id/access-control/api/authorization-assignment/can
+   ✅ Tab Data terbuka, tabel assignment terdeteksi.
+2026-03-10 14:02:04,817 - Waiting 30 seconds to capture interactions...
