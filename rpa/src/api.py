@@ -20,7 +20,32 @@ from db.connection import init_db, get_session, reset_engine
 from db.models import SyncLog
 from db.repository import SyncStats, log_sync_run, BatchUpserter
 
-app = FastAPI(title="FASIH-SM RPA Sync API", version="1.0.0")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(fastapi_app):
+    """On startup: clean up any stale 'running'/'queued' jobs left over from a previous crash/restart."""
+    try:
+        init_db()
+        session = get_session()
+        stale = (
+            session.query(SyncLog)
+            .filter(SyncLog.status.in_(["running", "queued"]))
+            .all()
+        )
+        if stale:
+            for job in stale:
+                job.status = "failed"
+                job.finished_at = datetime.now(timezone.utc)
+                job.notes = "Killed by container restart"
+            session.commit()
+            print(f"🧹 Startup cleanup: marked {len(stale)} stale job(s) as failed.")
+        session.close()
+    except Exception as e:
+        print(f"⚠️ Startup cleanup failed: {e}")
+    yield  # Server runs here
+
+app = FastAPI(title="FASIH-SM RPA Sync API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -103,7 +128,8 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
     from pages.detail_page import fetch_assignments_concurrent
     from db.repository import get_existing_modifications_by_ids
 
-    CONCURRENCY = int(os.getenv("FETCH_CONCURRENCY", "30"))
+    CONCURRENCY = int(os.getenv("FETCH_CONCURRENCY", "5"))
+    SKIP_DETAIL_FETCH = os.getenv("SKIP_DETAIL_FETCH", "false").lower() == "true"
 
     reset_engine()
     init_db()
@@ -142,32 +168,191 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                 if not login_ok:
                     raise Exception("Login gagal")
 
-                # Navigate to survey
-                survey_id = await find_survey_id(page, req.survey_name)
+                from api_client import FasihApiClient
+                
+                # Fetch cookies and close browser right after login!
+                pw_cookies = await context.cookies()
+                cookie_dict = {c["name"]: c["value"] for c in pw_cookies}
+                await browser.close()
+                browser = None  # To avoid closing twice in finally
+                
+                api = FasihApiClient(cookie_dict)
+
+                if SKIP_DETAIL_FETCH:
+                    print("\n--- FASE 2: Resolving API Metadata ---")
+                    survey_id = await api.get_survey_id(req.survey_name)
+                    if not survey_id:
+                        raise Exception(f"Survey '{req.survey_name}' tidak ditemukan")
+
+                    period_id, role_ids = await api.get_survey_period_and_roles(survey_id)
+                    if not period_id or not role_ids:
+                        raise Exception(f"Period/Role tidak ditemukan untuk survey {survey_id}")
+
+                    prov_code, region_filter, region_full_code, region_group_id = await api.get_region_metadata(req.filter_provinsi, req.filter_kabupaten, survey_id)
+
+                    pengawas_list, pencacah_list = await api.get_users_by_region(period_id, role_ids, region_full_code)
+
+                    filters_to_run = []
+                    if req.filter_rotation == "pencacah" and pencacah_list:
+                        for idx, user in enumerate(pencacah_list):
+                            filters_to_run.append({
+                                "label": f"[{idx+1}/{len(pencacah_list)}] Pencacah: {user['fullname']}",
+                                "pengawas_id": None,
+                                "pencacah_id": user['userId']
+                            })
+                    elif pengawas_list:
+                        for idx, user in enumerate(pengawas_list):
+                            filters_to_run.append({
+                                "label": f"[{idx+1}/{len(pengawas_list)}] Pengawas: {user['fullname']}",
+                                "pengawas_id": user['userId'],
+                                "pencacah_id": None
+                            })
+                    else:
+                        filters_to_run.append({
+                            "label": "[1/1] Wilayah Saja (Tanpa Pengawas/Pencacah)",
+                            "pengawas_id": None,
+                            "pencacah_id": None
+                        })
+
+                    batch_upserter = BatchUpserter(session, batch_size=500)
+                    total_skipped = 0
+
+                    print("\n--- FASE 4: Skip Detail Fetch (Fast Mode) ---")
+                    print("   ⏩ SKIP_DETAIL_FETCH=true. Memasukkan seluruh data dari Datatable langsung ke Database tanpa detail/survey response.")
+                    
+                    # Masukkan metadata tabel secara primitif
+                    from db.models import Assignment as DbAssignment
+                    
+                    for f in filters_to_run:
+                        print(f"\n🔄 {f['label']}")
+                        metadata_batch = await api.get_assignments_metadata(
+                            period_id, 
+                            prov_uuid=prov_code,
+                            kab_uuid=region_filter if region_filter != prov_code else None,
+                            pengawas_id=f['pengawas_id'], 
+                            pencacah_id=f['pencacah_id'],
+                            region_group_id=region_group_id
+                        )
+                        
+                        if not metadata_batch:
+                            continue
+                            
+                        # Extract IDs
+                        all_ids = [m.get("id") for m in metadata_batch if m.get("id")]
+                        if not all_ids:
+                            continue
+                            
+                        # Bulk check existing modifications
+                        existing_mods = get_existing_modifications_by_ids(session, all_ids)
+                        
+                        # Filter for new or updated records
+                        to_upsert_metadata = []
+                        
+                        for m in metadata_batch:
+                            rec_id = m.get("id")
+                            remote_date = m.get("dateModifiedRemote")
+                            
+                            if not rec_id:
+                                continue
+                                
+                            # If record exists and dates match, skip it
+                            if rec_id in existing_mods and existing_mods[rec_id] == remote_date:
+                                total_skipped += 1
+                                continue
+                                
+                            # Otherwise, needs upsert
+                            to_upsert_metadata.append(m)
+
+                        if not to_upsert_metadata:
+                            print(f"   ⏩ Semua {len(all_ids)} data belum berubah, skip upsert.")
+                            continue
+
+                        print(f"   ⬇️  Upserting {len(to_upsert_metadata)} data baru/berubah dari total {len(all_ids)}...")
+
+                        # We need to construct barebones assignment objects from the index metadata
+                        for meta in to_upsert_metadata:
+                            # Inject survey_config_id for relationship
+                            meta["_survey_config_id"] = req.survey_config_id
+                            # Simulate minimal structure so the Upserter doesn't crash
+                            barebones_data = {
+                                "_id": meta.get("id"),
+                                "assignment": meta,
+                                "responses": [],
+                                "_survey_config_id": req.survey_config_id
+                            }
+                            batch_upserter.add(barebones_data)
+                        
+                    stats = batch_upserter.finish()
+                    # Manual add skipped stats that didn't go through upserter
+                    stats.total_skipped += total_skipped
+                    print(f"   ✅ Fast sync selesai: {stats}")
+
+                    # Update sync log → success
+                    log = session.query(SyncLog).get(sync_log.id)
+                    log.finished_at = datetime.now(timezone.utc)
+                    log.total_fetched = stats.total_fetched
+                    log.total_new = stats.total_new
+                    log.total_updated = stats.total_updated
+                    log.total_skipped = stats.total_skipped
+                    log.total_failed = stats.total_failed
+                    log.status = "success"
+                    session.commit()
+                    return
+                
+                print("\n--- FASE 2: Resolving API Metadata ---")
+                survey_id = await api.get_survey_id(req.survey_name)
                 if not survey_id:
                     raise Exception(f"Survey '{req.survey_name}' tidak ditemukan")
 
-                nav_ok = await navigate_to_data_tab(page, survey_id)
-                if not nav_ok:
-                    raise Exception("Gagal membuka tab Data")
+                period_id, role_ids = await api.get_survey_period_and_roles(survey_id)
+                if not period_id or not role_ids:
+                    raise Exception(f"Period/Role tidak ditemukan untuk survey {survey_id}")
 
-                # Iterate filters and fetch using concurrent batch + batch upsert
+                prov_code, region_filter, region_full_code, region_group_id = await api.get_region_metadata(req.filter_provinsi, req.filter_kabupaten, survey_id)
+
+                pengawas_list, pencacah_list = await api.get_users_by_region(period_id, role_ids, region_full_code)
+
+                filters_to_run = []
+                if req.filter_rotation == "pencacah" and pencacah_list:
+                    for idx, user in enumerate(pencacah_list):
+                        filters_to_run.append({
+                            "label": f"[{idx+1}/{len(pencacah_list)}] Pencacah: {user['fullname']}",
+                            "pengawas_id": None,
+                            "pencacah_id": user['userId']
+                        })
+                elif pengawas_list:
+                    for idx, user in enumerate(pengawas_list):
+                        filters_to_run.append({
+                            "label": f"[{idx+1}/{len(pengawas_list)}] Pengawas: {user['fullname']}",
+                            "pengawas_id": user['userId'],
+                            "pencacah_id": None
+                        })
+                else:
+                    filters_to_run.append({
+                        "label": "[1/1] Wilayah Saja (Tanpa Pengawas/Pencacah)",
+                        "pengawas_id": None,
+                        "pencacah_id": None
+                    })
+
                 batch_upserter = BatchUpserter(session, batch_size=500)
-                # Keep track of skipped items manually
                 total_skipped = 0
 
-                async for pengawas, pencacah in iterate_filters(
-                    page,
-                    provinsi=req.filter_provinsi,
-                    kabupaten=req.filter_kabupaten,
-                    rotation=req.filter_rotation,
-                ):
-                    metadata_batch = await get_all_assignments_metadata(page)
+                for f in filters_to_run:
+                    print(f"\n🔄 {f['label']}")
+                    metadata_batch = await api.get_assignments_metadata(
+                        period_id, 
+                        prov_uuid=prov_code,
+                        kab_uuid=region_filter if region_filter != prov_code else None,
+                        pengawas_id=f['pengawas_id'], 
+                        pencacah_id=f['pencacah_id'],
+                        region_group_id=region_group_id
+                    )
+                    
                     if not metadata_batch:
                         continue
                         
                     # Extract IDs
-                    all_ids = [m["id"] for m in metadata_batch if m.get("id")]
+                    all_ids = [m.get("id") for m in metadata_batch if m.get("id")]
                     if not all_ids:
                         continue
                         
@@ -180,7 +365,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                     
                     for m in metadata_batch:
                         rec_id = m.get("id")
-                        remote_date = m.get("dateModified")
+                        remote_date = m.get("dateModifiedRemote")
                         
                         if not rec_id:
                             continue
@@ -191,7 +376,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                             continue
                             
                         # Otherwise, needs fetch
-                        to_fetch_links.append(f"{TARGET_URL}/assignment-detail/{rec_id}/2/1")
+                        to_fetch_links.append(f"{TARGET_URL}/assignment-detail/{rec_id}/{survey_id}/1")
                         
                     if not to_fetch_links:
                         print(f"   ⏩ Semua {len(all_ids)} data belum berubah, skip fetch.")
@@ -201,7 +386,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
 
                     # Concurrent batch fetch — 30 parallel requests
                     results = await fetch_assignments_concurrent(
-                        context, to_fetch_links, concurrency=CONCURRENCY,
+                        cookie_dict, to_fetch_links, concurrency=CONCURRENCY,
                     )
 
                     for data in results:
@@ -214,7 +399,8 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                 stats.total_skipped += total_skipped
 
             finally:
-                await browser.close()
+                if 'browser' in locals() and browser:
+                    await browser.close()
 
         # Update sync log → success
         log = session.query(SyncLog).get(sync_log.id)
@@ -456,6 +642,212 @@ class ProbeRequest(BaseModel):
     survey_name: str
     filter_provinsi: str = ""
     filter_kabupaten: str = ""
+
+
+# ========== FASIH LOOKUP (untuk wizard Add Survey) ==========
+
+class LookupRequest(BaseModel):
+    sso_username: str
+    sso_password: str
+
+
+class KabupatenLookupRequest(BaseModel):
+    sso_username: str
+    sso_password: str
+    prov_full_code: str   # e.g. "61"
+
+
+@app.post("/lookup/metadata")
+async def lookup_metadata(req: LookupRequest):
+    """
+    Login ke FASIH via Playwright, lalu fetch:
+    - Daftar semua survey (Pencacahan)
+    - Daftar semua provinsi
+
+    Digunakan oleh wizard Add Survey di dashboard.
+    Membutuhkan ~15 detik karena harus login SSO Keycloak.
+    """
+    from playwright.async_api import async_playwright
+    from auth import auto_login
+    import aiohttp
+
+    TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
+    GROUP_ID   = "82af087a-d063-48b9-8633-71c84c4e7422"
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+        )
+        try:
+            page = await context.new_page()
+            login_ok = await auto_login(page, req.sso_username, req.sso_password)
+            if not login_ok:
+                raise HTTPException(status_code=401, detail="Login FASIH gagal. Periksa username/password.")
+
+            # Ambil cookies dari Playwright
+            pw_cookies = await context.cookies()
+            cookie_jar = aiohttp.CookieJar(unsafe=True)
+            for c in pw_cookies:
+                cookie_jar.update_cookies({c["name"]: c["value"]})
+
+            # SSL bypass untuk koneksi VPN internal
+            import ssl
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+            headers = {
+                "Accept": "application/json, text/plain, */*",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": f"{TARGET_URL}/",
+                "Origin": TARGET_URL,
+                "X-Requested-With": "XMLHttpRequest",
+            }
+            if pw_cookies:
+                for c in pw_cookies:
+                    if c["name"] == "XSRF-TOKEN":
+                        headers["X-XSRF-TOKEN"] = c["value"]
+                        break
+
+            connector = aiohttp.TCPConnector(ssl=ssl_ctx, limit=50)
+            async with aiohttp.ClientSession(
+                cookie_jar=cookie_jar,
+                connector=connector,
+                headers=headers,
+            ) as session:
+                # === Fetch survey list (all pages) ===
+                surveys = []
+                page_number = 0
+                while True:
+                    async with session.post(
+                        f"{TARGET_URL}/survey/api/v1/surveys/datatable?surveyType=Pencacahan",
+                        json={
+                            "pageNumber": page_number,
+                            "pageSize": 50,
+                            "sortBy": "CREATED_AT",
+                            "sortDirection": "DESC",
+                            "keywordSearch": "",
+                        },
+                    ) as resp:
+                        data = await resp.json()
+                        items = data.get("data", {}).get("content", [])
+                        for s in items:
+                            surveys.append({
+                                "id":   s.get("id"),
+                                "name": s.get("name") or s.get("surveyName", ""),
+                            })
+                        total_pages = data.get("totalPage", 1)
+                        if page_number >= total_pages - 1 or not items:
+                            break
+                        page_number += 1
+
+                # === Fetch province list ===
+                provinces = []
+                async with session.get(
+                    f"{TARGET_URL}/region/api/v1/region/level1?groupId={GROUP_ID}",
+                ) as resp:
+                    data = await resp.json()
+                    for r in data.get("data", []):
+                        provinces.append({
+                            "id":       r.get("id"),
+                            "name":     r.get("name", ""),
+                            "fullCode": r.get("fullCode", ""),
+                        })
+
+        finally:
+            await browser.close()
+
+    return {
+        "surveys":   surveys,
+        "provinces": provinces,
+    }
+
+
+@app.post("/lookup/kabupaten")
+async def lookup_kabupaten(req: KabupatenLookupRequest):
+    """
+    Fetch daftar kabupaten untuk satu provinsi.
+    Menggunakan SSO creds yang sama — jika sesi Keycloak masih valid
+    proses login akan sangat cepat (<5 detik).
+    """
+    from playwright.async_api import async_playwright
+    from auth import auto_login
+    import aiohttp
+
+    TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
+    GROUP_ID   = "82af087a-d063-48b9-8633-71c84c4e7422"
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+        )
+        try:
+            page = await context.new_page()
+            login_ok = await auto_login(page, req.sso_username, req.sso_password)
+            if not login_ok:
+                raise HTTPException(status_code=401, detail="Login FASIH gagal.")
+
+            pw_cookies = await context.cookies()
+            cookie_jar = aiohttp.CookieJar(unsafe=True)
+            for c in pw_cookies:
+                cookie_jar.update_cookies({c["name"]: c["value"]})
+
+            # SSL bypass untuk koneksi VPN internal
+            import ssl
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+            headers = {
+                "Accept": "application/json, text/plain, */*",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": f"{TARGET_URL}/",
+                "Origin": TARGET_URL,
+                "X-Requested-With": "XMLHttpRequest",
+            }
+            if pw_cookies:
+                for c in pw_cookies:
+                    if c["name"] == "XSRF-TOKEN":
+                        headers["X-XSRF-TOKEN"] = c["value"]
+                        break
+
+            connector = aiohttp.TCPConnector(ssl=ssl_ctx, limit=50)
+            async with aiohttp.ClientSession(
+                cookie_jar=cookie_jar,
+                connector=connector,
+                headers=headers,
+            ) as session:
+                kabupaten = []
+                async with session.get(
+                    f"{TARGET_URL}/region/api/v1/region/level2"
+                    f"?groupId={GROUP_ID}&level1FullCode={req.prov_full_code}",
+                ) as resp:
+                    data = await resp.json()
+                    for r in data.get("data", []):
+                        kabupaten.append({
+                            "id":       r.get("id"),
+                            "name":     r.get("name", ""),
+                            "fullCode": r.get("fullCode", ""),
+                        })
+
+        finally:
+            await browser.close()
+
+    return {"kabupaten": kabupaten}
+
+
 
 
 @app.post("/probe/datatable")

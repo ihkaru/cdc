@@ -7,15 +7,18 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
     // Get assignments for a survey (paginated — supports both offset and cursor)
     .get(
         "/:id/assignments",
-        async ({ params, query }) => {
-            const limit = Math.min(Number(query.limit) || 50, 200);
-            const cursor = query.cursor as string | undefined;
+        async ({ params, query: queryParams }) => {
+            const limit = Math.min(Number(queryParams.limit) || 50, 200);
+            const cursor = queryParams.cursor as string | undefined;
 
             // Build base WHERE clause
             const baseWhere = eq(assignments.surveyConfigId, params.id);
 
+            // Fetch pagination parameters
+            const page = Number(queryParams.page) || 1;
+            const offset = (page - 1) * limit;
+
             // Cursor-based pagination: use dateSynced + id as composite cursor
-            // Format: "2026-03-04T15:03:00.234Z|some-uuid-id"
             let whereClause = baseWhere;
             if (cursor) {
                 const [cursorDate, cursorId] = cursor.split("|");
@@ -45,11 +48,15 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
                 .from(assignments)
                 .leftJoin(
                     labelData,
-                    sql`${assignments.surveyConfigId} = ${labelData.surveyConfigId} AND ${assignments.codeIdentity} = ${labelData.codeIdentity}`
+                    and(
+                        eq(assignments.surveyConfigId, labelData.surveyConfigId),
+                        eq(assignments.codeIdentity, labelData.codeIdentity)
+                    )
                 )
                 .where(whereClause)
                 .orderBy(desc(assignments.dateSynced), desc(assignments.id))
-                .limit(limit + 1); // Fetch one extra to determine hasMore
+                .limit(limit + 1)
+                .offset(!cursor && offset > 0 ? offset : 0);
 
             const hasMore = rows.length > limit;
             const data = hasMore ? rows.slice(0, limit) : rows;
@@ -61,36 +68,21 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
                 nextCursor = `${lastRow.dateSynced ? new Date(lastRow.dateSynced).toISOString() : ""}|${lastRow.id}`;
             }
 
-            // Approximate total count using pg_class statistics (O(1) instead of O(N))
-            // Falls back to exact count for very small tables
-            const [approx] = await db.execute(sql`
-                SELECT CASE
-                    WHEN c.reltuples < 1000 THEN (
-                        SELECT count(*)::int FROM assignments WHERE survey_config_id = ${params.id}
-                    )
-                    ELSE (
-                        SELECT (c.reltuples * (
-                            SELECT count(*)::float / greatest(count(*)::float, 1)
-                            FROM assignments
-                            WHERE survey_config_id = ${params.id}
-                            LIMIT 1
-                        ))::int
-                        FROM pg_class c WHERE c.relname = 'assignments'
-                    )
-                END as estimated_total
-                FROM pg_class c WHERE c.relname = 'assignments'
-            `) as unknown as { estimated_total: number }[];
-
-            // Also support legacy offset pagination for backward compat
-            const page = Number(query.page) || 1;
+            // Fix: Exact count for specific surveyConfigId
+            const [countResult] = await db
+                .select({ count: sql`count(*)::int` })
+                .from(assignments)
+                .where(baseWhere);
+            
+            const total = Number(countResult?.count || 0);
 
             return {
                 data,
                 pagination: {
                     page,
                     limit,
-                    total: approx?.estimated_total || 0,
-                    totalPages: Math.ceil((approx?.estimated_total || 0) / limit),
+                    total: total,
+                    totalPages: Math.ceil(total / limit),
                     hasMore,
                     nextCursor,
                 },

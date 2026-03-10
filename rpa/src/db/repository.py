@@ -75,13 +75,20 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
     Returns:
         "new" | "updated" | "skipped"
     """
-    record_id = data.get("_id")
+    # Hubungi ID dari berbagai kemungkinan (API detail vs API datatable)
+    record_id = data.get("_id") or data.get("id") or data.get("assignment", {}).get("id")
     if not record_id:
         if stats:
             stats.total_failed += 1
         return "failed"
 
-    date_modified = data.get("date_modified", "")
+    # Hubungi Date Modified dari berbagai kemungkinan
+    date_modified = (
+        data.get("date_modified") or 
+        data.get("dateModifiedRemote") or 
+        data.get("assignment", {}).get("dateModifiedRemote") or
+        ""
+    )
     data_json_str = json.dumps(data, ensure_ascii=False)
     flat_data = extract_flat_data(data)
 
@@ -92,10 +99,26 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
         assignment = Assignment(
             id=record_id,
             survey_config_id=data.get("_survey_config_id", ""),
-            code_identity=data.get("code_identity", ""),
-            survey_period_id=data.get("survey_period_id", ""),
-            assignment_status_alias=data.get("assignment_status_alias", ""),
-            current_user_username=data.get("current_user_username", ""),
+            code_identity=(
+                data.get("code_identity") or 
+                data.get("assignment", {}).get("codeIdentity") or 
+                ""
+            ),
+            survey_period_id=(
+                data.get("survey_period_id") or 
+                data.get("assignment", {}).get("surveyPeriodId") or 
+                ""
+            ),
+            assignment_status_alias=(
+                data.get("assignment_status_alias") or 
+                data.get("assignment", {}).get("assignmentStatusAlias") or 
+                ""
+            ),
+            current_user_username=(
+                data.get("current_user_username") or 
+                data.get("assignment", {}).get("currentUserUsername") or 
+                ""
+            ),
             data_json=data_json_str,
             flat_data=flat_data,
             date_modified_remote=date_modified,
@@ -108,10 +131,26 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
 
     elif existing.date_modified_remote != date_modified:
         # UPDATE — data berubah
-        existing.code_identity = data.get("code_identity", existing.code_identity)
-        existing.survey_period_id = data.get("survey_period_id", existing.survey_period_id)
-        existing.assignment_status_alias = data.get("assignment_status_alias", existing.assignment_status_alias)
-        existing.current_user_username = data.get("current_user_username", existing.current_user_username)
+        existing.code_identity = (
+            data.get("code_identity") or 
+            data.get("assignment", {}).get("codeIdentity") or 
+            existing.code_identity
+        )
+        existing.survey_period_id = (
+            data.get("survey_period_id") or 
+            data.get("assignment", {}).get("surveyPeriodId") or 
+            existing.survey_period_id
+        )
+        existing.assignment_status_alias = (
+            data.get("assignment_status_alias") or 
+            data.get("assignment", {}).get("assignmentStatusAlias") or 
+            existing.assignment_status_alias
+        )
+        existing.current_user_username = (
+            data.get("current_user_username") or 
+            data.get("assignment", {}).get("currentUserUsername") or 
+            existing.current_user_username
+        )
         existing.data_json = data_json_str
         existing.flat_data = flat_data
         existing.date_modified_remote = date_modified

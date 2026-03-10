@@ -184,6 +184,14 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useQuasar } from 'quasar'
 
+interface ApiResponse<T> {
+  data: T;
+  pagination: {
+    total: number;
+    nextCursor?: string;
+  };
+}
+
 const route = useRoute()
 const $q = useQuasar()
 const surveyId = route.params.id as string
@@ -205,9 +213,13 @@ const downloading = ref(false)
 
 const pagination = ref({
   page: 1,
-  rowsPerPage: 20,
+  rowsPerPage: 10,
   rowsNumber: 0
 })
+
+// Cursor history for prev/next navigation
+// cursors[0] = undefined (first page), cursors[1] = cursor for page 2, etc.
+const cursorHistory = ref<(string | undefined)[]>([undefined])
 
 const columns = [
   { name: 'identity', required: true, label: 'Code Identity', align: 'left' as const, field: 'codeIdentity' },
@@ -245,7 +257,7 @@ async function loadStatsAndSurvey() {
     stats.value = await statsRes.json()
     const survey = await surveyRes.json()
     surveyName.value = survey.surveyName
-    const labelsData = await labelsRes.json()
+    const labelsData = await labelsRes.json() as ApiResponse<any>
     labelCount.value = labelsData?.pagination?.total || 0
     labelSchema.value = await schemaRes.json()
   } catch (e) {
@@ -257,12 +269,34 @@ async function onRequest(props: any) {
   const { page, rowsPerPage } = props.pagination
   loading.value = true
   try {
-    const res = await fetch(`/api/surveys/${surveyId}/assignments?page=${page}&limit=${rowsPerPage}`)
-    const data = await res.json()
+    // If rowsPerPage changed, reset all cursor history (cursors are page-size-specific)
+    if (rowsPerPage !== pagination.value.rowsPerPage) {
+      cursorHistory.value = [undefined]
+    }
+
+    // Determine which cursor to use based on page direction
+    // cursors are tracked in cursorHistory array indexed by page number (0-based)
+    const pageIdx = page - 1
+    
+    // Grow cursor history array if needed
+    while (cursorHistory.value.length <= pageIdx) {
+      cursorHistory.value.push(undefined)
+    }
+    
+    const cursor = cursorHistory.value[pageIdx]
+    const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''
+    
+    const res = await fetch(`/api/surveys/${surveyId}/assignments?limit=${rowsPerPage}${cursorParam}&page=${page}`)
+    const data = await res.json() as ApiResponse<any[]>
     assignments.value = data.data
     pagination.value.rowsNumber = data.pagination.total
     pagination.value.page = page
     pagination.value.rowsPerPage = rowsPerPage
+    
+    // Store the next cursor for the NEXT page
+    if (data.pagination.nextCursor) {
+      cursorHistory.value[pageIdx + 1] = data.pagination.nextCursor
+    }
   } catch (e) {
     console.error('Failed to load assignments')
   } finally {
@@ -270,12 +304,13 @@ async function onRequest(props: any) {
   }
 }
 
+
 async function downloadTemplate() {
   downloading.value = true
   try {
     // Use same-window navigation — Content-Disposition: attachment prevents
     // page replacement and triggers a proper download with correct filename
-    location.href = `/api/surveys/${surveyId}/labels/template`
+    window.location.href = `/api/surveys/${surveyId}/labels/template`
   } catch {
     $q.notify({ type: 'negative', message: 'Gagal download template' })
   } finally {

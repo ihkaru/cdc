@@ -29,7 +29,7 @@ async def find_survey_id(page: Page, survey_name: str) -> str | None:
         
         for link in links:
             text = (await link.inner_text()).strip()
-            if survey_name.lower() in text.lower():
+            if survey_name.strip().lower() in text.lower():
                 href = await link.get_attribute("href")
                 # Ekstrak survey ID dari href: /survey-collection/general/{SURVEY_ID}
                 match = re.search(r'/general/([a-f0-9\-]+)', href)
