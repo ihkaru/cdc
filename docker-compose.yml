@@ -33,29 +33,49 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD-SHELL", "ip addr show ppp0 || exit 1" ]
-      interval: 10s
-      timeout: 5s
+      test: [ "CMD-SHELL", "curl -fks --connect-timeout 5 --max-time 8 https://fasih-sm.bps.go.id/oauth_login.html -o /dev/null && echo ok || exit 1" ]
+      interval: 30s
+      timeout: 12s
       retries: 3
+      start_period: 30s
     restart: unless-stopped
+    stop_grace_period: 15s
 
   rpa:
     build: ./rpa
     container_name: cdc-rpa
     init: true
-    # ports: # Pindahkan port mapping ke vpn jika ingin akses dari luar
-    #   - "8000:8000"
+    # IMPORTANT: network_mode shares VPN network namespace.
+    # To rebuild RPA WITHOUT restarting VPN (to preserve cookie), only rebuild rpa image:
+    #   docker compose build rpa && docker compose up -d --no-deps rpa
     network_mode: "service:vpn"
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - SKIP_DETAIL_FETCH=${SKIP_DETAIL_FETCH:-false}
+      - FASIH_CONCURRENCY=${FASIH_CONCURRENCY:-3}
+      - FETCH_CONCURRENCY=${FETCH_CONCURRENCY:-3}
+      - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
     depends_on:
       vpn:
         condition: service_started
       postgres:
         condition: service_healthy
     restart: unless-stopped
+
+  vpn-auth:
+    build: ./rpa
+    container_name: cdc-vpn-auth
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    command: uvicorn src.app:app --host 0.0.0.0 --port 8000
 
   postgres:
     image: postgres:16-alpine

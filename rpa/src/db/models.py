@@ -85,3 +85,16 @@ class SyncLog(Base):
 
     def __repr__(self):
         return f"<SyncLog(id={self.id}, status={self.status})>"
+
+
+class SystemSettings(Base):
+    """Pengaturan global / token"""
+    __tablename__ = "system_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self):
+        return f"<SystemSettings(key={self.key})>"

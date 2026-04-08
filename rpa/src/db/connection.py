@@ -50,11 +50,17 @@ def init_db(database_url: str = ""):
     from .models import Base
     engine = get_engine(database_url)
     Base.metadata.create_all(bind=engine)
-    print(f"✅ Database siap")
 
 
 def reset_engine():
-    """Reset engine (for switching databases between runs)."""
+    """Reset engine (for switching databases between runs) and gracefully close connections to prevent leaks."""
     global _engine, _SessionLocal
+    if _engine is not None:
+        try:
+            _engine.dispose()
+            print("🚰 Pool connections gracefully disposed.")
+        except Exception as e:
+            print(f"⚠️ Error disposing engine: {e}")
+            
     _engine = None
     _SessionLocal = None

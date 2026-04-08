@@ -36,21 +36,28 @@
             <div class="row q-col-gutter-md">
               <div class="col-12 col-md-6">
                 <div class="text-subtitle2 text-grey-5 q-mb-xs">Username SSO</div>
-                <q-input v-model="form.ssoUsername" dark filled placeholder="NIP / Username" />
+                <q-input v-model="form.ssoUsername" dark filled placeholder="NIP / Username" :disable="!vpnStatus?.connected" />
               </div>
               <div class="col-12 col-md-6">
                 <div class="text-subtitle2 text-grey-5 q-mb-xs">Password SSO</div>
                 <q-input v-model="form.ssoPassword" dark filled type="password" 
-                  :placeholder="isEdit ? '(Dikosongkan jika tidak ingin ganti)' : 'Password'" />
+                  :placeholder="isEdit ? '(Dikosongkan jika tidak ingin ganti)' : 'Password'" :disable="!vpnStatus?.connected" />
               </div>
             </div>
+
+            <q-banner v-if="!vpnStatus?.connected" class="bg-negative text-white q-mt-md rounded-borders" rounded>
+              <template v-slot:avatar>
+                <q-icon name="warning" />
+              </template>
+              Koneksi VPN BPS terputus. Anda tidak dapat melakukan pencarian survei dan wilayah dari API FASIH.
+            </q-banner>
 
             <q-stepper-navigation class="row justify-end q-mt-lg">
               <q-btn
                 @click="onConnectFasih"
                 color="primary"
                 :loading="connecting"
-                :disable="!form.ssoUsername || (!isEdit && !form.ssoPassword)"
+                :disable="!form.ssoUsername || (!isEdit && !form.ssoPassword) || !vpnStatus?.connected"
                 label="Hubungkan ke FASIH"
                 icon-right="link"
                 unelevated
@@ -196,6 +203,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useQuasar } from 'quasar'
+import { vpnStatus } from '../composables/useVpn'
 
 const $q = useQuasar()
 const router = useRouter()

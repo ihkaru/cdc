@@ -10,9 +10,22 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
         async ({ params, query: queryParams }) => {
             const limit = Math.min(Number(queryParams.limit) || 50, 200);
             const cursor = queryParams.cursor as string | undefined;
+            const q = queryParams.q as string | undefined;
 
             // Build base WHERE clause
-            const baseWhere = eq(assignments.surveyConfigId, params.id);
+            let baseWhere = eq(assignments.surveyConfigId, params.id);
+            if (q) {
+                const searchStr = `%${q}%`;
+                baseWhere = and(
+                    baseWhere,
+                    sql`(${assignments.codeIdentity} ILIKE ${searchStr} OR 
+                         ${assignments.currentUserUsername} ILIKE ${searchStr} OR 
+                         ${assignments.assignmentStatusAlias} ILIKE ${searchStr} OR 
+                         ${assignments.dataJson}::text ILIKE ${searchStr} OR 
+                         ${assignments.flatData}::text ILIKE ${searchStr} OR 
+                         ${labelData.data}::text ILIKE ${searchStr})`
+                )!;
+            }
 
             // Fetch pagination parameters
             const page = Number(queryParams.page) || 1;
@@ -69,11 +82,21 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
             }
 
             // Fix: Exact count for specific surveyConfigId
-            const [countResult] = await db
+            const countQuery = db
                 .select({ count: sql`count(*)::int` })
-                .from(assignments)
-                .where(baseWhere);
-            
+                .from(assignments);
+
+            if (q) {
+                countQuery.leftJoin(
+                    labelData,
+                    and(
+                        eq(assignments.surveyConfigId, labelData.surveyConfigId),
+                        eq(assignments.codeIdentity, labelData.codeIdentity)
+                    )
+                );
+            }
+
+            const [countResult] = await countQuery.where(baseWhere);
             const total = Number(countResult?.count || 0);
 
             return {

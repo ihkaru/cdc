@@ -11,7 +11,10 @@
         label="Add Survey"
         to="/survey/new"
         unelevated
-      />
+        :disable="!vpnStatus?.connected"
+      >
+        <q-tooltip v-if="!vpnStatus?.connected">Membutuhkan koneksi VPN aktif</q-tooltip>
+      </q-btn>
     </div>
 
     <!-- RPA Status Banner -->
@@ -100,10 +103,12 @@
                 :color="getSyncButtonColor(s.id)"
                 :label="getSyncButtonLabel(s.id)" 
                 :loading="syncingId === s.id"
-                :disable="syncingId === s.id || isJobActive(s.id)"
+                :disable="syncingId === s.id || isJobActive(s.id) || !vpnStatus?.connected"
                 @click="triggerSync(s.id)"
                 unelevated
-              />
+              >
+                <q-tooltip v-if="!vpnStatus?.connected">VPN tidak terhubung</q-tooltip>
+              </q-btn>
               <q-btn class="col" color="grey-9" text-color="white" :to="`/survey/${s.id}`" label="View Data" unelevated />
             </div>
             <div class="row q-gutter-x-sm row-sm-btns">
@@ -122,6 +127,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useQuasar } from 'quasar'
+import { vpnStatus } from '../composables/useVpn'
 
 const $q = useQuasar()
 const surveys = ref<any[]>([])

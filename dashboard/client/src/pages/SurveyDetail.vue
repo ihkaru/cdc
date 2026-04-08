@@ -77,12 +77,49 @@
       </template>
     </q-banner>
 
+    <div class="row q-mb-md flex items-center justify-between">
+      <q-input
+        v-model="searchQuery"
+        dense
+        outlined
+        dark
+        placeholder="Cari data (identitas, user, atau isian data)..."
+        debounce="500"
+        class="col-12 col-sm-4 bg-dark"
+        @update:model-value="onSearch"
+      >
+        <template v-slot:append>
+          <q-icon name="search" />
+        </template>
+      </q-input>
+
+      <div class="q-ml-sm row">
+        <q-btn outline icon="view_column" label="Columns" no-caps color="primary" class="bg-dark">
+          <q-menu dark class="bg-dark border-card" :offset="[0, 8]">
+            <q-list style="min-width: 250px" class="q-py-sm">
+              <q-item-label header class="text-grey-5 q-pb-sm">Tampilkan Kolom Data</q-item-label>
+              <q-separator dark class="q-mb-sm" />
+              <q-item v-for="col in allAvailableColumns" :key="col.name" tag="label" v-ripple dense>
+                <q-item-section side top>
+                  <q-checkbox v-model="visibleColumnKeys" :val="col.name" dark @update:model-value="saveColumnPreferences" size="sm" />
+                </q-item-section>
+                <q-item-section>
+                  <q-item-label>{{ col.name }}</q-item-label>
+                  <q-item-label caption class="text-grey-6">{{ col.type }}</q-item-label>
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </q-menu>
+        </q-btn>
+      </div>
+    </div>
+
     <q-card class="bg-dark border-card" flat bordered>
       <q-table
         dark
         flat
         :rows="assignments"
-        :columns="columns"
+        :columns="computedColumns"
         row-key="id"
         :loading="loading"
         v-model:pagination="pagination"
@@ -180,7 +217,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useQuasar } from 'quasar'
 
@@ -221,13 +258,67 @@ const pagination = ref({
 // cursors[0] = undefined (first page), cursors[1] = cursor for page 2, etc.
 const cursorHistory = ref<(string | undefined)[]>([undefined])
 
-const columns = [
-  { name: 'identity', required: true, label: 'Code Identity', align: 'left' as const, field: 'codeIdentity' },
-  { name: 'labelData', align: 'left' as const, label: 'Enrichment', field: 'labelData' },
-  { name: 'user', align: 'left' as const, label: 'Assigned User', field: 'currentUserUsername' },
-  { name: 'status', align: 'left' as const, label: 'Status', field: 'assignmentStatusAlias' },
-  { name: 'date', align: 'left' as const, label: 'Last Modified', field: 'dateModifiedRemote' }
-]
+const searchQuery = ref('')
+const allAvailableColumns = ref<any[]>([])
+const visibleColumnKeys = ref<string[]>([])
+
+const PREF_KEY = computed(() => `cdc_cols_${surveyId}`)
+
+function loadColumnPreferences() {
+  const saved = localStorage.getItem(PREF_KEY.value)
+  if (saved) {
+    try {
+      visibleColumnKeys.value = JSON.parse(saved)
+    } catch {}
+  }
+}
+
+function saveColumnPreferences() {
+  localStorage.setItem(PREF_KEY.value, JSON.stringify(visibleColumnKeys.value))
+}
+
+async function fetchSchema() {
+  try {
+     const res = await fetch(`/api/surveys/${surveyId}/visualizations/schema`)
+     const data = await res.json()
+     allAvailableColumns.value = data.columns || []
+  } catch(e) { console.error('Failed to load full schema for columns') }
+}
+
+function onSearch() {
+  pagination.value.page = 1
+  cursorHistory.value = [undefined]
+  onRequest({ pagination: pagination.value })
+}
+
+const computedColumns = computed(() => {
+  const baseCols = [
+    { name: 'identity', required: true, label: 'Code Identity', align: 'left' as const, field: 'codeIdentity' },
+    { name: 'user', align: 'left' as const, label: 'Assigned User', field: 'currentUserUsername' },
+    { name: 'status', align: 'left' as const, label: 'Status', field: 'assignmentStatusAlias' },
+    { name: 'date', align: 'left' as const, label: 'Last Modified', field: 'dateModifiedRemote' }
+  ]
+
+  const dyCols = visibleColumnKeys.value
+    .filter(key => key !== 'codeIdentity' && key !== 'assignmentStatusAlias' && key !== 'currentUserUsername' && key !== 'dateModifiedRemote')
+    .map(key => {
+      return {
+        name: key,
+        align: 'left' as const,
+        label: key,
+        field: (row: any) => {
+           if (row.flatData && row.flatData[key] !== undefined) return row.flatData[key]
+           if (row.labelData && row.labelData[key] !== undefined) return row.labelData[key]
+           if (row[key] !== undefined) return row[key]
+           return '-'
+        }
+      }
+    })
+
+  const enrichmentCol = { name: 'labelData', align: 'left' as const, label: 'Enrichment', field: 'labelData' }
+  
+  return [...baseCols, ...dyCols, enrichmentCol]
+})
 
 function badgeColor(status: string) {
   if (status.includes('COMPLETED') || status.includes('UPLOADED')) return 'positive'
@@ -285,8 +376,9 @@ async function onRequest(props: any) {
     
     const cursor = cursorHistory.value[pageIdx]
     const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''
+    const searchParam = searchQuery.value ? `&q=${encodeURIComponent(searchQuery.value)}` : ''
     
-    const res = await fetch(`/api/surveys/${surveyId}/assignments?limit=${rowsPerPage}${cursorParam}&page=${page}`)
+    const res = await fetch(`/api/surveys/${surveyId}/assignments?limit=${rowsPerPage}${cursorParam}${searchParam}&page=${page}`)
     const data = await res.json() as ApiResponse<any[]>
     assignments.value = data.data
     pagination.value.rowsNumber = data.pagination.total
@@ -366,6 +458,8 @@ async function clearLabels() {
 }
 
 onMounted(() => {
+  loadColumnPreferences()
+  fetchSchema()
   loadStatsAndSurvey()
   onRequest({ pagination: pagination.value })
 })

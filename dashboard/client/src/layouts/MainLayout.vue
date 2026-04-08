@@ -83,6 +83,15 @@
         </q-card-section>
 
         <q-card-actions align="right" class="q-px-md q-pb-md">
+          <q-btn
+            flat
+            label="Auto-Fix (Smart)"
+            color="secondary"
+            icon="auto_fix_high"
+            @click="triggerAutoFix"
+            :loading="cookieLoading"
+            class="q-mr-auto"
+          />
           <q-btn flat label="Clear Cookie" color="warning" @click="clearCookie" :loading="cookieLoading" />
           <q-btn
             label="Update & Connect"
@@ -108,8 +117,10 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { vpnStatus, useVpn } from '../composables/useVpn'
 
-const vpnStatus = ref<{ connected: boolean; info?: string; reason?: string } | null>(null)
+const { checkVPN } = useVpn()
+
 const showCookieDialog = ref(false)
 const cookieInput = ref('')
 const cookieLoading = ref(false)
@@ -117,15 +128,6 @@ const cookieError = ref('')
 const cookieSuccess = ref('')
 let timer: any = null
 let rapidTimer: any = null
-
-async function checkVPN() {
-  try {
-    const res = await fetch('/api/surveys/vpn/status')
-    vpnStatus.value = await res.json()
-  } catch (e) {
-    vpnStatus.value = { connected: false, reason: 'Backend unreachable' }
-  }
-}
 
 function startRapidPolling() {
   // Clear any existing rapid poll
@@ -173,6 +175,23 @@ async function clearCookie() {
     const res = await fetch('/api/surveys/vpn/cookie', { method: 'DELETE' })
     const data = await res.json()
     cookieSuccess.value = data.message || 'Cookie cleared!'
+  } catch (e: any) {
+    cookieError.value = e.message || 'Unknown error'
+  } finally {
+    cookieLoading.value = false
+  }
+}
+
+async function triggerAutoFix() {
+  cookieLoading.value = true
+  cookieError.value = ''
+  cookieSuccess.value = ''
+  try {
+    const res = await fetch('/api/surveys/vpn/auto-fetch', { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || 'Auto-fix failed')
+    cookieSuccess.value = 'Auto-fix triggered! RPA is grabbing the cookie...'
+    startRapidPolling()
   } catch (e: any) {
     cookieError.value = e.message || 'Unknown error'
   } finally {
