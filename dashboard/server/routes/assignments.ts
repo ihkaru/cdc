@@ -347,4 +347,36 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
             // Fallback to empty stats instead of 500
             return { total: 0, open: 0, submitted: 0, rejected: 0 };
         }
+    })
+
+    // Get workload per user for a survey
+    .get("/:id/workload", async ({ params }) => {
+        try {
+            const rows = await db
+                .select({
+                    username: assignments.currentUserUsername,
+                    total: count(),
+                    open: count(sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%open%' OR ${assignments.assignmentStatusAlias} ILIKE '%draft%' THEN 1 END`),
+                    rejected: count(sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%rejected%' OR ${assignments.assignmentStatusAlias} ILIKE '%error%' THEN 1 END`),
+                })
+                .from(assignments)
+                .where(eq(assignments.surveyConfigId, params.id))
+                .groupBy(assignments.currentUserUsername);
+
+            const result = rows.map(r => {
+                const pending = Number(r.open || 0) + Number(r.rejected || 0);
+                return {
+                    username: r.username || 'Unassigned',
+                    pending,
+                    total: Number(r.total || 0),
+                    open: Number(r.open || 0),
+                    rejected: Number(r.rejected || 0),
+                };
+            }).sort((a, b) => b.pending - a.pending);
+
+            return result;
+        } catch (error) {
+            console.error(`Error fetching workload for survey ${params.id}:`, error);
+            return [];
+        }
     });

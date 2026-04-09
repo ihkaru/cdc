@@ -262,6 +262,42 @@
       </q-table>
     </q-card>
 
+    <!-- Workload Leaderboard -->
+    <q-card class="bg-dark border-card q-mt-lg" flat bordered v-if="workloads && workloads.length > 0">
+      <div class="q-pa-md row items-center no-wrap">
+        <q-icon name="leaderboard" size="sm" class="q-mr-sm text-primary" />
+        <div class="text-h6 text-white text-weight-medium">User Workload</div>
+        <q-space />
+        <div class="text-caption text-grey-5">Ranked by Pending (Open + Rejected)</div>
+      </div>
+      
+      <q-table
+        :rows="workloads"
+        :columns="workloadCols"
+        row-key="username"
+        flat
+        class="bg-dark text-white table-dark"
+        hide-bottom
+        :pagination="{ rowsPerPage: 0 }"
+      >
+        <template v-slot:body-cell-pending="props">
+          <q-td :props="props">
+            <q-badge color="negative" class="text-weight-bold" transparent>{{ props.row.pending }}</q-badge>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-open="props">
+          <q-td :props="props">
+            <span class="text-warning">{{ props.row.open }}</span>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-rejected="props">
+          <q-td :props="props">
+            <span class="text-negative">{{ props.row.rejected }}</span>
+          </q-td>
+        </template>
+      </q-table>
+    </q-card>
+
     <!-- Upload Dialog -->
     <q-dialog v-model="showUploadDialog" persistent>
       <q-card style="min-width: 450px" class="bg-dark text-white">
@@ -340,6 +376,7 @@ const surveyId = route.params.id as string
 const loading = ref(true)
 const assignments = ref<any[]>([])
 const stats = ref<any>(null)
+const workloads = ref<any[]>([])
 const surveyName = ref('')
 const labelCount = ref(0)
 const labelSchema = ref<any>(null)
@@ -435,6 +472,14 @@ const computedColumns = computed(() => {
   return [...baseCols, ...dyCols, enrichmentCol]
 })
 
+const workloadCols = [
+  { name: 'username', label: 'Assigned User', field: 'username', align: 'left' as const, sortable: true },
+  { name: 'pending', label: 'Pending Action', field: 'pending', align: 'center' as const, sortable: true, sortOrder: 'dd' as const },
+  { name: 'open', label: 'Open / Draft', field: 'open', align: 'center' as const, sortable: true },
+  { name: 'rejected', label: 'Rejected', field: 'rejected', align: 'center' as const, sortable: true },
+  { name: 'total', label: 'Total Handled', field: 'total', align: 'center' as const, sortable: true }
+]
+
 function badgeColor(status: string) {
   if (status.includes('COMPLETED') || status.includes('UPLOADED')) return 'positive'
   if (status.includes('IN_PROGRESS') || status.includes('DRAFT')) return 'warning'
@@ -494,11 +539,12 @@ function hasUnmirroredImages(row: any) {
 
 async function loadStatsAndSurvey() {
   try {
-    const [statsRes, surveyRes, labelsRes, schemaRes] = await Promise.all([
+    const [statsRes, surveyRes, labelsRes, schemaRes, workloadRes] = await Promise.all([
       fetch(`/api/surveys/${surveyId}/stats`),
       fetch(`/api/surveys/${surveyId}`),
       fetch(`/api/surveys/${surveyId}/labels?limit=1`),
       fetch(`/api/surveys/${surveyId}/labels/schema`),
+      fetch(`/api/surveys/${surveyId}/workload`)
     ])
     stats.value = await statsRes.json()
     const survey = await surveyRes.json()
@@ -506,6 +552,7 @@ async function loadStatsAndSurvey() {
     const labelsData = await labelsRes.json() as ApiResponse<any>
     labelCount.value = labelsData?.pagination?.total || 0
     labelSchema.value = await schemaRes.json()
+    workloads.value = await workloadRes.json()
   } catch (e) {
     console.error('Failed to load stats')
   }
