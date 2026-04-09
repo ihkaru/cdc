@@ -280,6 +280,11 @@
         hide-bottom
         :pagination="{ rowsPerPage: 0 }"
       >
+        <template v-slot:body-cell-index="props">
+          <q-td :props="props" class="text-grey-5">
+            {{ props.rowIndex + 1 }}
+          </q-td>
+        </template>
         <template v-slot:body-cell-pending="props">
           <q-td :props="props">
             <q-badge color="negative" class="text-weight-bold" transparent>{{ props.row.pending }}</q-badge>
@@ -478,6 +483,7 @@ const computedColumns = computed(() => {
 })
 
 const workloadCols = [
+  { name: 'index', label: '#', field: 'index', align: 'left' as const },
   { name: 'username', label: 'Assigned User', field: 'username', align: 'left' as const, sortable: true },
   { name: 'pending', label: 'Pending Action', field: 'pending', align: 'center' as const, sortable: true, sortOrder: 'dd' as const },
   { name: 'open', label: 'Open / Draft', field: 'open', align: 'center' as const, sortable: true },
