@@ -11,3 +11,30 @@ venv/
 **/.env
 new_vpn_cookie.txt
 GEMINI.md
+
+# Debug & temp scripts (root level)
+archiver_logs.txt
+rpa_logs_debug.txt
+data_dump.txt
+full_data_dump.txt
+failed_ids.txt
+successfully_mirrored_ids.txt
+test.jpg
+test_copy.txt
+find_8.py
+find_8_host.py
+fix_db_paths.py
+get_failed_8.py
+get_the_8.py
+parse_host.py
+query_*.py
+verify_fix.py
+
+# Debug scripts inside RPA
+rpa/debug_metadata.py
+rpa/src/debug_*.py
+rpa/src/debug_vars*.py
+rpa/src/prove_success.py
+rpa/src/tmp_*.py
+rpa/src/tmp_test_*.py
+rpa/src/tmp_browser_refresh.py

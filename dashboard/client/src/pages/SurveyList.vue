@@ -5,6 +5,25 @@
         <h1 class="text-h3 text-weight-bold q-my-none">Survey Configurations</h1>
         <p class="text-grey-5 q-mt-sm">Manage your FASIH surveys and trigger data sync.</p>
       </div>
+    </div>
+
+    <div class="row q-mb-lg flex items-center justify-between">
+      <q-input
+        v-model="searchQuery"
+        dense
+        outlined
+        dark
+        placeholder="Cari survey (nama, user, atau kabupaten)..."
+        class="col-12 col-sm-5 bg-dark"
+      >
+        <template v-slot:prepend>
+          <q-icon name="search" />
+        </template>
+        <template v-slot:append v-if="searchQuery">
+          <q-icon name="clear" class="cursor-pointer" @click="searchQuery = ''" />
+        </template>
+      </q-input>
+
       <q-btn
         color="primary"
         icon="add"
@@ -68,7 +87,7 @@
     </q-card>
 
     <div v-else class="row q-col-gutter-lg">
-      <div v-for="s in surveys" :key="s.id" class="col-12 col-md-4">
+      <div v-for="s in filteredSurveys" :key="s.id" class="col-12 col-md-4">
         <q-card class="bg-dark text-white border-card my-card transition-hover" flat bordered>
           <q-card-section>
             <div class="row justify-between items-start q-mb-sm">
@@ -125,16 +144,27 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useQuasar } from 'quasar'
 import { vpnStatus } from '../composables/useVpn'
 
 const $q = useQuasar()
+const searchQuery = ref('')
 const surveys = ref<any[]>([])
 const loading = ref(true)
 const syncingId = ref<string | null>(null)
 const rpaStatus = ref<any>({})
 let pollTimer: any = null
+
+const filteredSurveys = computed(() => {
+  if (!searchQuery.value) return surveys.value
+  const q = searchQuery.value.toLowerCase()
+  return surveys.value.filter(s => 
+    (s.surveyName && s.surveyName.toLowerCase().includes(q)) ||
+    (s.ssoUsername && s.ssoUsername.toLowerCase().includes(q)) ||
+    (s.filterKabupaten && s.filterKabupaten.toLowerCase().includes(q))
+  )
+})
 
 async function loadData() {
   loading.value = true

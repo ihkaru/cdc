@@ -21,6 +21,8 @@ import asyncio
 import os
 import re
 import sys
+import time
+import json
 from datetime import datetime, timezone
 
 from playwright.async_api import async_playwright
@@ -32,7 +34,7 @@ from auth import auto_login
 from api_client import FasihApiClient
 from pages.detail_page import fetch_assignments_concurrent
 from db.connection import init_db, get_session
-from db.repository import upsert_assignment, log_sync_run, SyncStats
+from db.repository import upsert_assignment, log_sync_run, SyncStats, BatchUpserterBulk
 
 
 async def run_sync_cycle(settings: Settings, dry_run: bool = False):
@@ -41,6 +43,8 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
     """
     started_at = datetime.now(timezone.utc)
     stats = SyncStats()
+    timings = {}
+    total_start = time.perf_counter()
     
     print("\n" + "=" * 60)
     print(f"🤖 FASIH-SM API Sync — Cycle dimulai")
@@ -52,6 +56,7 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
 
     # --- FASE 1: LOGIN SSO via PLAYWRIGHT ---
     print("\n--- FASE 1: Login SSO BPS ---")
+    phase_start = time.perf_counter()
     cookies = {}
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, slow_mo=50)
@@ -63,7 +68,7 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
 
         login_ok, cookies_dict = await auto_login(page, settings.sso_username, settings.sso_password)
         if not login_ok or not cookies_dict:
-            print("❌ Login gagal! Cycle dibatalkan.")
+            print("❌ Login gagal atau cookies tidak didapatkan! Cycle dibatalkan.")
             await browser.close()
             return
             
@@ -71,12 +76,34 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
         await browser.close()
         
     print(f"   🔑 Didapatkan {len(cookies)} cookies. Melanjutkan ke mode API murni.")
+    timings["login"] = int((time.perf_counter() - phase_start) * 1000)
+
+    # Save cookies to DB for self-healing archiver
+    try:
+        from db.models import SystemSettings
+        from db.connection import reset_engine, init_db, get_session
+        reset_engine()
+        init_db()
+        db_session = get_session()
+        setting = db_session.query(SystemSettings).filter_by(key="sso_cookies").first()
+        if setting:
+            setting.value = json.dumps(cookies)
+            setting.updated_at = datetime.now(timezone.utc)
+        else:
+            setting = SystemSettings(key="sso_cookies", value=json.dumps(cookies))
+            db_session.add(setting)
+        db_session.commit()
+        db_session.close()
+        print("   💾 SSO cookies saved to DB (Ready for self-healing).")
+    except Exception as e:
+        print(f"   ⚠️ Warning: Failed to save SSO cookies to DB: {e}")
 
     # Inisialisasi API Client
     api = FasihApiClient(cookies)
 
     # --- FASE 2: RESOLVE METADATA SURVEY & REGION ---
     print("\n--- FASE 2: Resolving API Metadata ---")
+    phase_start = time.perf_counter()
     survey_id = await api.get_survey_id(settings.survey_name)
     if not survey_id:
         return
@@ -86,6 +113,7 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
         return
 
     prov_code, region_filter, region_full_code, region_group_id = await api.get_region_metadata(settings.filter_provinsi, settings.filter_kabupaten, survey_id)
+    timings["metadata"] = int((time.perf_counter() - phase_start) * 1000)
     
     # Init DB
     survey_slug = re.sub(r'[^a-z0-9]+', '_', settings.survey_name.lower()).strip('_')
@@ -131,8 +159,8 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
 
     all_metadata_map = {}
     
-    for f in filters_to_run:
-        print(f"\n🔄 {f['label']}")
+    async def fetch_user_metadata(f):
+        print(f"🔄 {f['label']}")
         metadata = await api.get_assignments_metadata(
             period_id, 
             prov_uuid=prov_code,
@@ -141,13 +169,18 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
             pencacah_id=f['pencacah_id'],
             region_group_id=region_group_id
         )
-        print(f"   📊 Ditemukan {len(metadata)} entries.")
-        
+        print(f"   📊 Ditemukan {len(metadata)} entries ({f['label']}).")
+        return metadata
+
+    # Fetch all user metadata in parallel
+    metadata_results = await asyncio.gather(*(fetch_user_metadata(f) for f in filters_to_run))
+    for metadata in metadata_results:
         for m in metadata:
             all_metadata_map[m['id']] = m
 
     unique_assignments = list(all_metadata_map.values())
     print(f"\n--- FASE 4: Fetch Detailed Assignment Data ---")
+    phase_start = time.perf_counter()
     print(f"   🔗 Total Assignment Unik: {len(unique_assignments)}")
     
     if dry_run:
@@ -160,25 +193,31 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
             ]
             
             # Fetch secara concurrent
-            results = await fetch_assignments_concurrent(cookies, urls_to_fetch, concurrency=20)
+            results = await fetch_assignments_concurrent(cookies, urls_to_fetch, concurrency=50)
+            timings["fetch"] = int((time.perf_counter() - phase_start) * 1000)
             
             # Upsert
-            print("\n   💾 Menyimpan ke database...")
+            print("\n   💾 Menyimpan ke database (Bulk)...")
+            phase_start = time.perf_counter()
+            
+            # Use High-Performance Batch Upserter
+            upserter = BatchUpserterBulk(session, batch_size=2000)
             for i, data in enumerate(results):
-                stats.total_fetched += 1
-                result_status = upsert_assignment(session, data, stats)
-                identity = data.get("code_identity", "?")
-                symbol = {"new": "🆕", "updated": "🔄", "skipped": "⏭️"}.get(result_status, "❓")
+                # Add survey config ID to each record for internal tracking
+                data["_survey_config_id"] = settings.id
+                upserter.add(data)
                 
-                # Print sample progress
-                if i < 3 or (i + 1) % 50 == 0 or i == len(results) - 1:
-                    print(f"     [{i+1}/{len(results)}] {symbol} {identity} ({result_status})")
-                    
-            stats.total_failed = len(unique_assignments) - len(results)
-            session.commit()
+            # Final flush
+            stats = upserter.finish()
+            stats.total_failed += len(unique_assignments) - len(results)
+            
+            # (Note: BatchUpserterBulk handles commits internally or during finish)
 
         # Logging
-        log = log_sync_run(session, started_at, stats)
+        timings["upsert"] = int((time.perf_counter() - phase_start) * 1000)
+        timings["total"] = int((time.perf_counter() - total_start) * 1000)
+        
+        log = log_sync_run(session, started_at, stats, survey_config_id=settings.id, timings=timings)
         session.close()
 
     print(f"\n🎉 Cycle selesai!")

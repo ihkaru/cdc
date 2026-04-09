@@ -25,6 +25,15 @@
           no-caps
         />
         <q-btn
+          color="green-7"
+          icon="file_download"
+          label="Export Excel"
+          @click="exportToExcel"
+          :loading="exporting"
+          unelevated
+          no-caps
+        />
+        <q-btn
           color="primary"
           icon="upload_file"
           label="Upload Label"
@@ -96,18 +105,50 @@
       <div class="q-ml-sm row">
         <q-btn outline icon="view_column" label="Columns" no-caps color="primary" class="bg-dark">
           <q-menu dark class="bg-dark border-card" :offset="[0, 8]">
-            <q-list style="min-width: 250px" class="q-py-sm">
-              <q-item-label header class="text-grey-5 q-pb-sm">Tampilkan Kolom Data</q-item-label>
-              <q-separator dark class="q-mb-sm" />
-              <q-item v-for="col in allAvailableColumns" :key="col.name" tag="label" v-ripple dense>
-                <q-item-section side top>
-                  <q-checkbox v-model="visibleColumnKeys" :val="col.name" dark @update:model-value="saveColumnPreferences" size="sm" />
-                </q-item-section>
-                <q-item-section>
-                  <q-item-label>{{ col.name }}</q-item-label>
-                  <q-item-label caption class="text-grey-6">{{ col.type }}</q-item-label>
-                </q-item-section>
-              </q-item>
+            <q-list style="min-width: 300px; max-height: 400px;" class="q-py-none">
+              <q-item-label header class="text-grey-5 q-pb-sm sticky-header bg-dark">
+                Tampilkan Kolom Data
+                <q-input
+                  v-model="colSearchQuery"
+                  dense
+                  outlined
+                  dark
+                  placeholder="Cari kolom..."
+                  class="q-mt-xs bg-dark"
+                  autofocus
+                >
+                  <template v-slot:prepend>
+                    <q-icon name="search" size="xs" />
+                  </template>
+                  <template v-slot:append v-if="colSearchQuery">
+                    <q-icon name="clear" size="xs" class="cursor-pointer" @click="colSearchQuery = ''" />
+                  </template>
+                </q-input>
+              </q-item-label>
+              
+              <q-separator dark />
+              
+              <div class="scroll" style="max-height: 300px;">
+                <q-item v-for="col in filteredAvailableColumns" :key="col.name" tag="label" v-ripple dense>
+                  <q-item-section side top>
+                    <q-checkbox v-model="visibleColumnKeys" :val="col.name" dark @update:model-value="saveColumnPreferences" size="sm" />
+                  </q-item-section>
+                  <q-item-section>
+                    <q-item-label class="text-body2">
+                      {{ col.name }}
+                      <!-- Icon Indicator for Image/Media columns -->
+                      <q-icon v-if="col.name.toLowerCase().includes('foto') || col.name.toLowerCase().includes('image') || col.name.toLowerCase().includes('media')" name="image" size="xs" color="blue-4" class="q-ml-xs">
+                        <q-tooltip>Kolom Gambar/Media</q-tooltip>
+                      </q-icon>
+                    </q-item-label>
+                    <q-item-label caption class="text-grey-6">{{ col.type }}</q-item-label>
+                  </q-item-section>
+                </q-item>
+                
+                <q-item v-if="filteredAvailableColumns.length === 0" class="text-center q-pa-md text-grey-6">
+                  <q-item-section>Kolom tidak ditemukan</q-item-section>
+                </q-item>
+              </div>
             </q-list>
           </q-menu>
         </q-btn>
@@ -127,33 +168,96 @@
         class="bg-transparent"
         :rows-per-page-options="[10, 20, 50]"
       >
-        <template v-slot:body-cell-labelData="props">
-          <q-td :props="props">
-            <div v-if="props.row.labelData && Object.keys(props.row.labelData).length > 0" class="row q-gutter-xs">
-              <q-badge
-                v-for="(val, key) in props.row.labelData"
-                :key="key"
-                color="teal"
-                rounded
-                class="q-px-sm q-py-xs"
-              >
-                {{ key }}: {{ val }}
-              </q-badge>
-            </div>
-            <span v-else class="text-grey-7">—</span>
-          </q-td>
-        </template>
-        <template v-slot:body-cell-status="props">
-          <q-td :props="props">
-            <q-badge :color="badgeColor(props.row.assignmentStatusAlias)" rounded class="q-px-sm q-py-xs">
-              {{ props.row.assignmentStatusAlias }}
-            </q-badge>
-          </q-td>
-        </template>
-        <template v-slot:body-cell-date="props">
-          <q-td :props="props">
-            {{ formatDate(props.row.dateModifiedRemote) }}
-          </q-td>
+        <template v-slot:body="props">
+          <q-tr :props="props">
+            <q-td v-for="col in props.cols" :key="col.name" :props="props">
+              <!-- Column: Label Data / Enrichment -->
+              <template v-if="col.name === 'labelData'">
+                <div v-if="props.row.labelData && Object.keys(props.row.labelData).length > 0" class="row q-gutter-xs">
+                  <q-badge
+                    v-for="(val, key) in props.row.labelData"
+                    :key="key"
+                    color="teal"
+                    rounded
+                    class="q-px-sm q-py-xs"
+                  >
+                    {{ key }}: {{ val }}
+                  </q-badge>
+                </div>
+                <span v-else class="text-grey-7">—</span>
+              </template>
+
+              <!-- Column: Status -->
+              <template v-else-if="col.name === 'status'">
+                <q-badge :color="badgeColor(props.row.assignmentStatusAlias)" rounded class="q-px-sm q-py-xs">
+                  {{ props.row.assignmentStatusAlias }}
+                </q-badge>
+              </template>
+
+              <!-- Column: Date -->
+              <template v-else-if="col.name === 'date'">
+                {{ formatDate(props.row.dateModifiedRemote) }}
+              </template>
+
+              <!-- Column: Attachments (Aggregated Media) -->
+              <template v-else-if="col.name === 'attachments'">
+                <div v-if="props.row.localImagePaths && Object.keys(props.row.localImagePaths).length > 0" class="row q-gutter-xs">
+                  <q-btn 
+                    v-for="(path, key) in props.row.localImagePaths" 
+                    :key="key"
+                    flat 
+                    dense 
+                    color="positive" 
+                    icon="image" 
+                    :label="key"
+                    type="a" 
+                    :href="`/storage/view/${path}`" 
+                    target="_blank"
+                    no-caps
+                    size="sm"
+                    class="bg-dark"
+                    style="border: 1px solid #2ecc71"
+                  >
+                    <q-tooltip>View Image (Secured in Vault): {{ key }}</q-tooltip>
+                  </q-btn>
+                </div>
+                <div v-else-if="hasUnmirroredImages(props.row)" class="row q-gutter-xs">
+                   <!-- Fallback if there are image URLs in flatData but not yet mirrored -->
+                   <q-btn
+                     v-for="img in getUnmirroredImages(props.row)"
+                     :key="img.key"
+                     flat dense color="blue-4" icon="photo_library" :label="img.key"
+                     type="a" :href="img.url" target="_blank" no-caps size="sm" class="bg-dark"
+                     style="border: 1px solid #4ebaf0"
+                   >
+                     <q-tooltip>BPS Link (Not Mirrored Yet): {{ img.key }}</q-tooltip>
+                   </q-btn>
+                </div>
+                <span v-else class="text-grey-7">—</span>
+              </template>
+
+              <!-- Generic Logic for Dynamic Columns (Detect URLs) -->
+              <template v-else>
+                <div v-if="typeof col.value === 'string' && col.value.startsWith('http')" class="ellipsis" style="max-width: 300px">
+                  <q-btn 
+                    flat 
+                    dense 
+                    :color="isMirrored(props.row, col.name) ? 'positive' : 'blue-4'" 
+                    :icon="isMirrored(props.row, col.name) ? 'check_circle' : 'open_in_new'" 
+                    :label="getImageLabel(props.row, col.name, col.value)"
+                    type="a" 
+                    :href="getImageUrl(props.row, col.name, col.value)" 
+                    target="_blank"
+                    no-caps
+                    size="sm"
+                  >
+                    <q-tooltip>{{ isMirrored(props.row, col.name) ? 'Mirrored to CDC Vault (Verified)' : 'BPS Link (Likely 403 / Expired)' }}</q-tooltip>
+                  </q-btn>
+                </div>
+                <span v-else>{{ col.value }}</span>
+              </template>
+            </q-td>
+          </q-tr>
         </template>
       </q-table>
     </q-card>
@@ -247,6 +351,7 @@ const uploading = ref(false)
 const uploadError = ref('')
 const uploadSuccess = ref('')
 const downloading = ref(false)
+const exporting = ref(false)
 
 const pagination = ref({
   page: 1,
@@ -259,6 +364,7 @@ const pagination = ref({
 const cursorHistory = ref<(string | undefined)[]>([undefined])
 
 const searchQuery = ref('')
+const colSearchQuery = ref('')
 const allAvailableColumns = ref<any[]>([])
 const visibleColumnKeys = ref<string[]>([])
 
@@ -285,6 +391,14 @@ async function fetchSchema() {
   } catch(e) { console.error('Failed to load full schema for columns') }
 }
 
+const filteredAvailableColumns = computed(() => {
+  if (!colSearchQuery.value) return allAvailableColumns.value
+  const q = colSearchQuery.value.toLowerCase()
+  return allAvailableColumns.value.filter(col => 
+    col.name.toLowerCase().includes(q)
+  )
+})
+
 function onSearch() {
   pagination.value.page = 1
   cursorHistory.value = [undefined]
@@ -296,7 +410,8 @@ const computedColumns = computed(() => {
     { name: 'identity', required: true, label: 'Code Identity', align: 'left' as const, field: 'codeIdentity' },
     { name: 'user', align: 'left' as const, label: 'Assigned User', field: 'currentUserUsername' },
     { name: 'status', align: 'left' as const, label: 'Status', field: 'assignmentStatusAlias' },
-    { name: 'date', align: 'left' as const, label: 'Last Modified', field: 'dateModifiedRemote' }
+    { name: 'date', align: 'left' as const, label: 'Last Modified', field: 'dateModifiedRemote' },
+    { name: 'attachments', align: 'left' as const, label: 'Attachments', field: 'attachments' }
   ]
 
   const dyCols = visibleColumnKeys.value
@@ -335,6 +450,46 @@ function formatDate(dateStr: string) {
   } catch {
     return dateStr
   }
+}
+
+function isMirrored(row: any, colName: string) {
+  return row.localImageMirrored && row.localImagePaths && row.localImagePaths[colName]
+}
+
+function getImageLabel(row: any, colName: string, originalUrl: string) {
+  const isImage = originalUrl.includes('foto') || colName.toLowerCase().includes('foto')
+  if (isMirrored(row, colName)) return isImage ? 'View (Vault)' : 'Link (Vault)'
+  return isImage ? 'View Image' : 'Link'
+}
+
+function getImageUrl(row: any, colName: string, originalUrl: string) {
+  if (isMirrored(row, colName)) {
+    // SeaweedFS path is bucket/key, proxy expects /storage/view/bucket/key
+    return `/storage/view/${row.localImagePaths[colName]}`
+  }
+  return originalUrl
+}
+
+function getUnmirroredImages(row: any) {
+  if (!row.flatData) return []
+  const imgs = []
+  for (const [key, value] of Object.entries(row.flatData)) {
+    if (typeof value === 'string' && value.startsWith('http')) {
+      const vLower = value.toLowerCase()
+      const kLower = key.toLowerCase()
+      if (vLower.includes('.jpg') || vLower.includes('.jpeg') || vLower.includes('.png') || 
+          kLower.includes('foto') || kLower.includes('image') || kLower.includes('media')) {
+        // Skip if this image is already in the mirrored vault
+        if (row.localImagePaths && row.localImagePaths[key]) continue
+        imgs.push({ key, url: value })
+      }
+    }
+  }
+  return imgs
+}
+
+function hasUnmirroredImages(row: any) {
+  return getUnmirroredImages(row).length > 0
 }
 
 async function loadStatsAndSurvey() {
@@ -380,6 +535,16 @@ async function onRequest(props: any) {
     
     const res = await fetch(`/api/surveys/${surveyId}/assignments?limit=${rowsPerPage}${cursorParam}${searchParam}&page=${page}`)
     const data = await res.json() as ApiResponse<any[]>
+    console.log('🔍 CDC Debug: Assignments payload:', data.data)
+    if (data.data.length > 0) {
+      const first = data.data[0]
+      console.log('🔍 CDC Debug: First record mirror status:', {
+        id: first.id,
+        localImageMirrored: first.localImageMirrored,
+        hasPaths: !!first.localImagePaths,
+        keys: first.localImagePaths ? Object.keys(first.localImagePaths) : []
+      })
+    }
     assignments.value = data.data
     pagination.value.rowsNumber = data.pagination.total
     pagination.value.page = page
@@ -407,6 +572,19 @@ async function downloadTemplate() {
     $q.notify({ type: 'negative', message: 'Gagal download template' })
   } finally {
     setTimeout(() => { downloading.value = false }, 1000)
+  }
+}
+
+async function exportToExcel() {
+  exporting.value = true
+  try {
+    const searchParam = searchQuery.value ? `?q=${encodeURIComponent(searchQuery.value)}` : ''
+    // Directly trigger download via window.location.href to handle Buffer response
+    window.location.href = `/api/surveys/${surveyId}/assignments/export${searchParam}`
+  } catch {
+    $q.notify({ type: 'negative', message: 'Gagal export data' })
+  } finally {
+    setTimeout(() => { exporting.value = false }, 2000)
   }
 }
 
@@ -468,5 +646,11 @@ onMounted(() => {
 <style scoped>
 .border-card {
   border: 1px solid #262b36;
+}
+.sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 1px solid #262b36;
 }
 </style>

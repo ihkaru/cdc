@@ -32,11 +32,53 @@ class FasihApiClient:
         self.ssl_ctx = ssl.create_default_context()
         self.ssl_ctx.check_hostname = False
         self.ssl_ctx.verify_mode = ssl.CERT_NONE
+        
+        # Use a persistent cookie jar and session
         self.jar = aiohttp.CookieJar(unsafe=True)
         self._session: Optional[aiohttp.ClientSession] = None
+        
+        # Pre-populate jar with initial cookies from Playwright
+        from yarl import URL
+        target_url = URL(TARGET_URL)
+        for name, value in self.cookies.items():
+            self.jar.update_cookies({name: value}, target_url)
 
     async def __aenter__(self):
         """Open a single persistent ClientSession for the entire sync cycle."""
+        # Initial headers bootstrap
+        headers = self._get_headers()
+
+        self._session = aiohttp.ClientSession(
+            cookie_jar=self.jar,
+            headers=headers,
+            connector=aiohttp.TCPConnector(ssl=self.ssl_ctx, limit=100, limit_per_host=30),
+            timeout=aiohttp.ClientTimeout(total=45, connect=15)
+        )
+        
+        # Optional: Bootstrap hit to ensure session and F5 cookies are active
+        try:
+            async with self._session.get(f"{TARGET_URL}/") as resp:
+                if resp.status == 200:
+                    print(f"   🌐 [API] Session bootstrapped successfully (HTTP 200)")
+                else:
+                    print(f"   ⚠️ [API] Session bootstrap returned status {resp.status}")
+        except Exception as e:
+            print(f"   ⚠️ [API] Session bootstrap failed: {e}")
+        
+        # Log active cookies sample for debugging (masked for security)
+        try:
+            sample = []
+            for c in self.jar:
+                val = c.value[:4] + "..." if len(c.value) > 4 else "***"
+                sample.append(f"{c.key}={val}")
+            print(f"   🐛 [API] Active Cookies: {', '.join(sample)}")
+        except:
+            pass
+
+        return self
+
+    def _get_headers(self) -> Dict[str, str]:
+        """Dynamically build headers with latest XSRF-TOKEN from cookie jar."""
         headers = {
             "Accept": "application/json, text/plain, */*",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -44,17 +86,22 @@ class FasihApiClient:
             "Origin": TARGET_URL,
             "X-Requested-With": "XMLHttpRequest",
         }
-        if "XSRF-TOKEN" in self.cookies:
-            headers["X-XSRF-TOKEN"] = self.cookies["XSRF-TOKEN"]
-
-        self._session = aiohttp.ClientSession(
-            cookies=self.cookies,
-            cookie_jar=self.jar,
-            headers=headers,
-            connector=aiohttp.TCPConnector(ssl=self.ssl_ctx, limit=100, limit_per_host=30),
-            timeout=aiohttp.ClientTimeout(total=45, connect=15)
-        )
-        return self
+        
+        # Try to find XSRF-TOKEN in the cookie jar
+        xsrf_token = None
+        for cookie in self.jar:
+            if cookie.key == "XSRF-TOKEN":
+                from urllib.parse import unquote
+                raw_token = cookie.value
+                xsrf_token = unquote(raw_token)
+                if raw_token != xsrf_token:
+                    print(f"   🐛 [API] Header XSRF-TOKEN unquoted: {raw_token[:5]}... -> {xsrf_token[:5]}...")
+                break
+        
+        if xsrf_token:
+            headers["X-XSRF-TOKEN"] = xsrf_token
+            
+        return headers
 
     async def __aexit__(self, *args):
         if self._session:
@@ -78,19 +125,9 @@ class FasihApiClient:
                 async def __aexit__(self, *a): pass
             return _Noop(self._session)  # type: ignore
         # Fallback for any call outside context manager
-        headers = {
-            "Accept": "application/json, text/plain, */*",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": f"{TARGET_URL}/",
-            "Origin": TARGET_URL,
-            "X-Requested-With": "XMLHttpRequest",
-        }
-        if "XSRF-TOKEN" in self.cookies:
-            headers["X-XSRF-TOKEN"] = self.cookies["XSRF-TOKEN"]
         return aiohttp.ClientSession(
-            cookies=self.cookies,
             cookie_jar=self.jar,
-            headers=headers,
+            headers=self._get_headers(),
             connector=aiohttp.TCPConnector(ssl=self.ssl_ctx, limit=100),
             timeout=aiohttp.ClientTimeout(total=45, connect=15)
         )
@@ -114,7 +151,8 @@ class FasihApiClient:
                     "keywordSearch": ""
                 }
                 
-                async with session.post(url, json=payload, headers={"Accept": "application/json"}) as resp:
+                async with session.post(url, json=payload, headers=self._get_headers()) as resp:
+
                     if resp.status != 200:
                         text = await resp.text()
                         print(f"   ❌ [API] Gagal fetch survey list (HTTP {resp.status}): {text}")
@@ -153,7 +191,8 @@ class FasihApiClient:
         
         async with await self.create_session() as session:
             url = f"{TARGET_URL}/survey/api/v1/survey-periods?surveyId={survey_id}"
-            async with session.get(url, headers={"Accept": "application/json"}) as resp:
+            async with session.get(url, headers=self._get_headers()) as resp:
+
                 if resp.status != 200:
                     print(f"   ❌ [API] Gagal (HTTP {resp.status})")
                     return None, [], None
@@ -173,7 +212,8 @@ class FasihApiClient:
                 
                 # Also check /my endpoint to see if user has a different active period
                 my_period_url = f"{TARGET_URL}/survey/api/v1/survey-periods/my?surveyId={survey_id}"
-                async with session.get(my_period_url, headers={"Accept": "application/json"}) as my_resp:
+                async with session.get(my_period_url, headers=self._get_headers()) as my_resp:
+
                     if my_resp.status == 200:
                         my_body = await my_resp.json()
                         my_periods = my_body.get("data", [])
@@ -183,7 +223,8 @@ class FasihApiClient:
                 
                 # Fetch role ID + role group ID
                 role_url = f"{TARGET_URL}/survey/api/v1/survey-roles?surveyId={survey_id}"
-                async with session.get(role_url, headers={"Accept": "application/json"}) as role_resp:
+                async with session.get(role_url, headers=self._get_headers()) as role_resp:
+
                     role_body = await role_resp.json()
                     roles = role_body.get("data", [])
                     role_ids = [r.get("id") for r in roles] if roles else []
@@ -205,7 +246,8 @@ class FasihApiClient:
             group_id = "82af087a-d063-48b9-8633-71c84c4e7422"  # Standard fallback
             try:
                 survey_url = f"{TARGET_URL}/survey/api/v1/surveys/{survey_id}"
-                async with session.get(survey_url, headers={"Accept": "application/json"}) as resp:
+                async with session.get(survey_url, headers=self._get_headers()) as resp:
+
                     if resp.status == 200:
                         s_data = await resp.json()
                         fetched_group = s_data.get("data", {}).get("regionGroupId")
@@ -219,7 +261,8 @@ class FasihApiClient:
             prov_uuid, prov_full_code = None, None
             if provinsi_name:
                 prov_url = f"{TARGET_URL}/region/api/v1/region/level1?groupId={group_id}"
-                async with session.get(prov_url, headers={"Accept": "application/json"}) as resp:
+                async with session.get(prov_url, headers=self._get_headers()) as resp:
+
                     data = await resp.json()
                     regions = data.get("data", [])
                     
@@ -240,7 +283,8 @@ class FasihApiClient:
             
             if kabupaten_name and prov_full_code:
                 kab_url = f"{TARGET_URL}/region/api/v1/region/level2?groupId={group_id}&level1FullCode={prov_full_code}"
-                async with session.get(kab_url, headers={"Accept": "application/json"}) as resp:
+                async with session.get(kab_url, headers=self._get_headers()) as resp:
+
                     data = await resp.json()
                     regions = data.get("data", [])
                     
@@ -272,7 +316,8 @@ class FasihApiClient:
         url = f"{TARGET_URL}/region/api/v1/region/level3?groupId={group_id}&level2FullCode={kab_full_code}"
         print(f"   🔍 [API] Menarik list kecamatan untuk Kab {kab_full_code}...")
         async with await self.create_session() as session:
-            async with session.get(url, headers={"Accept": "application/json"}) as resp:
+            async with session.get(url, headers=self._get_headers()) as resp:
+
                 if resp.status != 200:
                     text = await resp.text()
                     print(f"   ❌ [API] Gagal fetch kecamatan (HTTP {resp.status}): {text}")
@@ -321,7 +366,8 @@ class FasihApiClient:
                     f"{TARGET_URL}/survey/api/v1/survey-period-role-users/region"
                     f"?surveyPeriodId={period_id}&surveyRoleId={role_id}&regionCode={region_code}"
                 )
-                async with session.get(url, headers={"Accept": "application/json"}) as resp:
+                async with session.get(url, headers=self._get_headers()) as resp:
+
                     if resp.status != 200:
                         continue
                     body = await resp.json()
@@ -340,7 +386,8 @@ class FasihApiClient:
                         f"&surveyRoleId={role_id}"
                     )
                     payload = {"pageNumber": 0, "pageSize": 200, "sortBy": "ID", "sortDirection": "ASC", "keywordSearch": ""}
-                    async with session.post(dt_url, json=payload, headers={"Accept": "application/json"}) as resp:
+                    async with session.post(dt_url, json=payload, headers=self._get_headers()) as resp:
+
                         if resp.status != 200:
                             continue
                         body = await resp.json()
@@ -429,7 +476,8 @@ class FasihApiClient:
                 }
             }
 
-            async with self.session.post(url, json=payload) as resp:
+            async with self.session.post(url, json=payload, headers=self._get_headers()) as resp:
+
                 if resp.status != 200:
                     text = await resp.text()
                     print(f"   ❌ [API] Datatable pagination gagal at start={page_start} (HTTP {resp.status}): {text[:500]}")
@@ -445,11 +493,17 @@ class FasihApiClient:
                     break
 
                 for item in search_data:
-                    all_metadata.append({
-                        "id": item.get("id"),
-                        "dateModifiedRemote": item.get("dateModified"),
-                        "code_identity": item.get("codeIdentity")
-                    })
+                    # Harden ID extraction (tries multiples BPS API variations)
+                    rec_id = item.get("id") or item.get("_id") or item.get("assignmentId")
+                    # Harden Date extraction
+                    remote_date = item.get("dateModified") or item.get("updatedAt") or item.get("dateModifiedRemote")
+                    
+                    if rec_id:
+                        all_metadata.append({
+                            "id": rec_id,
+                            "dateModifiedRemote": str(remote_date) if remote_date else None,
+                            "code_identity": item.get("codeIdentity") or item.get("code_identity")
+                        })
 
                 # Update progress label
                 try:
@@ -465,5 +519,86 @@ class FasihApiClient:
                 if len(search_data) < page_size:
                     break
                 page_start += page_size
-
+        
         return all_metadata
+
+    @with_retry(retries=3, delay=2)
+    async def get_assignment_detail(self, assignment_id: str) -> Optional[Dict]:
+        """Fetch the latest assignment detail JSON (includes fresh S3 links)."""
+        url = f"{TARGET_URL}/assignment-general/api/assignment/get-by-id-with-data-for-scm?id={assignment_id}"
+        print(f"   🔄 [API] Refreshing detail for assignment: {assignment_id}...")
+        
+        async with await self.create_session() as session:
+            async with session.get(url, headers=self._get_headers()) as resp:
+
+                if resp.status != 200:
+                    text = await resp.text()
+                    print(f"   ❌ [API] Failed to fetch detail (HTTP {resp.status}): {text[:200]}")
+                    return None
+                    
+                body = await resp.json()
+                if body and body.get("success"):
+                    data = body.get("data")
+                    if data:
+                        # Log data keys to trace structure
+                        keys = list(data.keys()) if isinstance(data, dict) else "list"
+                        print(f"   ✨ [API] Detail fetch success. Top-level keys: {keys}")
+                    return data
+                
+                print(f"   ❌ [API] Detail fetch failed success=False. Body: {body}")
+                return None
+
+    @with_retry(retries=3, delay=2)
+    async def get_fresh_image_urls(self, survey_period_id: str, assignments_payload: list[dict]) -> dict:
+        """
+        Request new S3 presigned URLs for expired images.
+        Payload structure matching BPS backend:
+        [{"assignmentId": "...", "fileNames": ["filename.jpg", ...]}]
+        """
+        try:
+            url = f"{TARGET_URL}/assignment-general/api/image/presigned-url-get?surveyPeriodId={survey_period_id}"
+            
+            print(f"   🔄 [API] Requesting {sum(len(a.get('fileNames', [])) for a in assignments_payload)} fresh presigned URLs...", flush=True)
+            
+            headers = self._get_headers()
+            print(f"   🐛 [API] X-XSRF-TOKEN in header: {headers.get('X-XSRF-TOKEN', 'MISSING')[:10]}...", flush=True)
+
+            async with await self.create_session() as session:
+                async with session.post(url, json=assignments_payload, headers=headers, timeout=45) as resp:
+                    status = resp.status
+                    print(f"   🐛 [API] POST /presigned-url-get returned status {status}", flush=True)
+                    
+                    if status != 200:
+                        text = await resp.text()
+                        print(f"   ❌ [API] Failed to fetch fresh presigned URLs (HTTP {status})", flush=True)
+                        print(f"   🐛 [API] Request URL: {url}", flush=True)
+                        print(f"   🐛 [API] Error Body: {text[:500]}", flush=True)
+                        return None
+                    
+                    raw_data = await resp.json()
+                    print(f"   🐛 [API] raw_data received: {str(raw_data)[:100]}...", flush=True)
+                    
+                    # Unwrap BPS API standard response { "success": true, "data": ... }
+                    if isinstance(raw_data, dict) and "success" in raw_data and "data" in raw_data:
+                        actual_data = raw_data.get("data", [])
+                    else:
+                        actual_data = raw_data
+                        
+                    result_map = {}
+                    if isinstance(actual_data, list):
+                        for item in actual_data:
+                            if isinstance(item, dict):
+                                urls_list = item.get("presignedUrls", [])
+                                for url_obj in urls_list:
+                                    if isinstance(url_obj, dict) and "fileName" in url_obj and "presignedUrl" in url_obj:
+                                        result_map[url_obj["fileName"]] = url_obj["presignedUrl"]
+                    elif isinstance(actual_data, dict):
+                        result_map = actual_data
+                    
+                    print(f"   🐛 [API] Found {len(result_map)} urls in result_map", flush=True)
+                    return result_map
+        except Exception as e:
+            print(f"   ❌ [API] Error fetching presigned URLs: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return None

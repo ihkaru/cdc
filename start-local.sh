@@ -42,12 +42,12 @@ echo "================================================="
 echo "[1/3] Starting Database in Docker..."
 docker compose up -d postgres || { echo "❌ Database failed to start. Aborting."; exit 1; }
 
-# ─── Step 1b: VPN + RPA + Auth (optional — may fail if cookie expired) ─
-echo "      Starting VPN, RPA, and Auth Sidecar..."
-if ! docker compose up -d vpn rpa vpn-auth 2>&1; then
+# ─── Step 1b: VPN + RPA + Auth + Image Vault ──────────────────
+echo "      Starting VPN, RPA, Archiver, and S3 Stack..."
+if ! docker compose up -d vpn rpa vpn-auth master volume filer s3 archiver 2>&1; then
   echo ""
-  echo "⚠️  VPN/RPA failed to start (cookie probably expired)."
-  echo "   Dashboard will still launch — update the cookie via UI."
+  echo "⚠️  Some Docker services failed to start."
+  echo "   (VPN might fail if cookie is expired, make sure s3/archiver are building)."
   echo ""
 fi
 
@@ -71,6 +71,10 @@ if [ -f "$CDC_DIR/.env" ]; then
   # RPA runs inside Docker (network_mode: service:vpn), accessible on localhost:8000
   export RPA_URL="http://localhost:8000"
   export VPN_AUTH_URL="http://localhost:8001"
+
+  # S3 endpoint override for local dashboard access
+  export S3_ENDPOINT="http://localhost:8333"
+  echo "      S3 Endpoint overridden for local access: $S3_ENDPOINT"
 else
   echo "      WARNING: .env file not found in root directory!"
 fi

@@ -55,7 +55,8 @@ async def run_fast_sync(
     prov_code: str,
     region_filter: Optional[str],
     region_group_id: str,
-    filters_to_run: List[Dict[str, Any]]
+    filters_to_run: List[Dict[str, Any]],
+    sync_log_id: int = None
 ) -> SyncStats:
     """
     Fast sync:
@@ -140,7 +141,7 @@ async def run_fast_sync(
 
     # --- STEP 3: Bulk upsert via INSERT ... ON CONFLICT ---
     sync_state.progress.phase_label = f"💾 Bulk upserting {len(to_upsert)} records..."
-    upserter = BatchUpserterBulk(session, batch_size=2000)
+    upserter = BatchUpserterBulk(session, batch_size=2000, sync_log_id=sync_log_id)
     for row in to_upsert:
         upserter.add(row)
 

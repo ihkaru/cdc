@@ -1,7 +1,7 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
 import { surveyConfigs } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, ilike, or } from "drizzle-orm";
 
 // Simple AES encryption matching Python's crypto.py
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
@@ -22,17 +22,33 @@ function encryptPassword(plaintext: string): string {
 
 function decryptPassword(ciphertext: string): string {
     const key = getEncryptionKey();
-    const [ivHex, encHex] = ciphertext.split(":");
-    const iv = Buffer.from(ivHex, "hex");
-    const encrypted = Buffer.from(encHex, "hex");
+    const parts = ciphertext.split(":");
+    if (parts.length < 2) throw new Error("Invalid encrypted format");
+    const iv = Buffer.from(parts[0]!, "hex");
+    const encrypted = Buffer.from(parts[1]!, "hex");
     const decipher = createDecipheriv("aes-256-cbc", key, iv);
     return decipher.update(encrypted) + decipher.final("utf8");
 }
 
 export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
     // List all surveys
-    .get("/", async () => {
-        const rows = await db.select().from(surveyConfigs);
+    .get("/", async ({ query }) => {
+        const q = query.q as string | undefined;
+        let dbQuery = db.select().from(surveyConfigs);
+        
+        if (q) {
+            const searchStr = `%${q}%`;
+            // @ts-ignore - drizzle-orm type compatibility
+            dbQuery = dbQuery.where(
+                or(
+                    ilike(surveyConfigs.surveyName, searchStr),
+                    ilike(surveyConfigs.ssoUsername, searchStr),
+                    ilike(surveyConfigs.filterKabupaten, searchStr)
+                )
+            );
+        }
+
+        const rows = await dbQuery;
         return rows.map((r) => ({
             ...r,
             ssoPasswordEncrypted: undefined, // Never expose password

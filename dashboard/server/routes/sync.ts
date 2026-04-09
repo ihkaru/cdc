@@ -28,6 +28,19 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 
         if (!survey) throw new Error("Survey not found");
 
+        // Guard: Check if RPA is already busy
+        try {
+            const statusResp = await fetch(`${RPA_URL}/status`);
+            if (statusResp.ok) {
+                const status = await statusResp.json();
+                if (status.is_running && status.active_job?.survey_config_id === survey.id) {
+                    throw new Error("Sync for this survey is already running in background.");
+                }
+            }
+        } catch (e) {
+            console.warn("RPA status check failed, proceeding anyway...", e);
+        }
+
         // Decrypt password and send to RPA
         const password = decryptPassword(survey.ssoPasswordEncrypted);
 
@@ -198,7 +211,9 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 
         if (!fetchRes.ok) {
             const err = await fetchRes.json().catch(() => ({}));
-            throw new Error((err as any).detail || `Auth service error ${fetchRes.status}`);
+            const detail = (err as any).detail || `Auth service error ${fetchRes.status}`;
+            console.error(`   ❌ VPN Auto-fetch failed: ${detail}`);
+            throw new Error(detail);
         }
 
         return await fetchRes.json();

@@ -1,6 +1,10 @@
 import asyncio
 import os
 import sys
+
+# Ensure parent directory is in path for config/db imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 from api_client import FasihApiClient
 from auth import auto_login
 from playwright.async_api import async_playwright
@@ -8,12 +12,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from config.settings import Settings
+
 async def main():
-    username = os.environ.get("sso_username")
-    password = os.environ.get("sso_password")
+    settings = Settings.from_env()
+    username = settings.sso_username
+    password = settings.sso_password
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, slow_mo=50)
+        browser = await p.chromium.launch(
+            headless=True, 
+            slow_mo=50,
+            args=["--no-sandbox", "--disable-setuid-sandbox"]
+        )
         context = await browser.new_context(
             viewport={"width": 1280, "height": 800},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"

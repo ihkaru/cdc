@@ -17,25 +17,37 @@ from routes.lookup import router as lookup_router
 
 @asynccontextmanager
 async def lifespan(fastapi_app):
-    """On startup: clean up any stale 'running'/'queued' jobs left over from a previous crash/restart."""
+    """On startup: clean up stale 'running' jobs and resume 'queued' ones."""
     try:
         init_db()
         session = get_session()
+        # Only mark 'running' as failed. 'queued' jobs should be preserved and resumed.
         stale = (
             session.query(SyncLog)
-            .filter(SyncLog.status.in_(["running", "queued"]))
+            .filter(SyncLog.status == "running")
             .all()
         )
         if stale:
             for job in stale:
                 job.status = "failed"
                 job.finished_at = datetime.now(timezone.utc)
-                job.notes = "Killed by container restart"
+                job.notes = "Killed by container restart while running"
             session.commit()
-            print(f"🧹 Startup cleanup: marked {len(stale)} stale job(s) as failed.")
+            print(f"🧹 Startup cleanup: marked {len(stale)} stale RUNNING job(s) as failed.")
+        
+        # Check if we should re-trigger the worker
+        queued_count = session.query(SyncLog).filter(SyncLog.status == "queued").count()
         session.close()
+
+        if queued_count > 0:
+            from worker.queue import _queue_worker
+            import asyncio
+            print(f"🔄 Startup: Found {queued_count} queued jobs. Auto-triggering worker...")
+            asyncio.create_task(_queue_worker())
+
     except Exception as e:
-        print(f"⚠️ Startup cleanup failed: {e}")
+        print(f"⚠️ Startup cleanup/recovery failed: {e}")
+    
     yield  # Server runs here
 
 app = FastAPI(title="FASIH-SM RPA Sync API", version="1.0.0", lifespan=lifespan)

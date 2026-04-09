@@ -50,7 +50,8 @@ async def run_full_sync(
     prov_code: str,
     region_filter: Optional[str],
     region_group_id: str,
-    filters_to_run: List[Dict[str, Any]]
+    filters_to_run: List[Dict[str, Any]],
+    sync_log_id: int = None
 ) -> SyncStats:
     """
     Full sync: fan-out per-user untuk metadata, lalu fetch detail (responses) secara concurrent.
@@ -95,6 +96,9 @@ async def run_full_sync(
     print(f"\n   📊 Total unik: {len(unique_metadata)} assignments")
 
     if not unique_metadata:
+        if done_count > 0:
+            print("   ⚠️  WARNING: Metdata found in API slices but failed to map to 'id'.")
+            print("   ⚠️  This usually means BPS changed field names (multi-survey variations).")
         return SyncStats()
 
     # --- STEP 2: Bulk dedup check ---
@@ -137,10 +141,10 @@ async def run_full_sync(
     )
     sync_state.progress.assignments_fetched = len(results)
 
-    # --- STEP 4: Bulk upsert ---
+    # --- STEP 4: Bulk upsert detail results ---
     sync_state.progress.phase = "upsert"
     sync_state.progress.phase_label = f"💾 Bulk upserting {len(results)} records..."
-    upserter = BatchUpserterBulk(session, batch_size=2000)
+    upserter = BatchUpserterBulk(session, batch_size=2000, sync_log_id=sync_log_id)
     for data in results:
         data["_survey_config_id"] = survey_config_id
         upserter.add(data)

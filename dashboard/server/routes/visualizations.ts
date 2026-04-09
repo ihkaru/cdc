@@ -3,78 +3,83 @@ import { db } from "../db";
 import { visualizationConfigs, labelData, labelSchemas, assignments } from "../db/schema";
 import { eq, sql, and } from "drizzle-orm";
 
-function flattenObj(obj: any, prefix = ''): Record<string, any> {
+function flattenObj(obj: any, prefix = '', depth = 0): Record<string, any> {
     let result: Record<string, any> = {};
-    if (!obj || typeof obj !== 'object') return result;
+    if (!obj || typeof obj !== 'object' || depth > 5) return result;
+    
     for (const key in obj) {
         if (obj[key] === null || obj[key] === undefined) continue;
+        
         const newKey = prefix ? `${prefix}.${key}` : key;
-        if (typeof obj[key] === 'object' && !Array.isArray(obj[key])) {
-            Object.assign(result, flattenObj(obj[key], newKey));
+        const value = obj[key];
+
+        if (typeof value === 'object' && !Array.isArray(value)) {
+            Object.assign(result, flattenObj(value, newKey, depth + 1));
+        } else if (Array.isArray(value)) {
+            // Keep arrays as strings if they are simple, or just ignore complex ones
+            result[newKey] = JSON.stringify(value);
         } else {
-            result[newKey] = obj[key];
+            result[newKey] = value;
         }
     }
     return result;
 }
 
-// Extract variables from FASIH 'content.data' or 'pre_defined_data.predata' format
+// Extract variables aggressively from FASIH structure including deep nested fields
 function extractVariables(dataJson: any): Record<string, any> {
-    const vars: Record<string, any> = {};
-    if (!dataJson) return vars;
-
+    if (!dataJson) return {};
     const dataObj = typeof dataJson === 'string' ? JSON.parse(dataJson) : dataJson;
+    const vars: Record<string, any> = {};
 
-    // Base root metadata
-    for (const key in dataObj) {
-        if (typeof dataObj[key] !== 'object' && typeof dataObj[key] !== 'string') {
-            vars[key] = dataObj[key];
-        } else if (typeof dataObj[key] === 'string') {
-            const trimmed = dataObj[key].trim();
-            if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-                vars[key] = dataObj[key];
-            }
-        }
-    }
+    function explore(obj: any, prefix = '', depth = 0) {
+        if (!obj || typeof obj !== 'object' || depth > 5) return;
+        
+        for (const k in obj) {
+            let val = obj[k];
+            const keyName = prefix ? `${prefix}.${k}` : k;
+            
+            if (val === null || val === undefined) continue;
 
-    // Extract from pre_defined_data
-    if (dataObj.pre_defined_data) {
-        try {
-            const preObj = typeof dataObj.pre_defined_data === 'string'
-                ? JSON.parse(dataObj.pre_defined_data)
-                : dataObj.pre_defined_data;
-
-            if (preObj && Array.isArray(preObj.predata)) {
-                preObj.predata.forEach((item: any) => {
-                    if (item && item.dataKey) {
-                        vars[item.dataKey] = item.answer;
+            // Handle stringified JSON (common in FASIH 'data' or 'pre_defined_data' fields)
+            if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
+                try {
+                    const parsed = JSON.parse(val);
+                    if (parsed && typeof parsed === 'object') {
+                        explore(parsed, keyName, depth); // Explore inside parsed string content
+                        continue;
                     }
-                });
+                } catch (e) {}
             }
-        } catch (e) {
-            // ignore
+
+            if (typeof val === 'object' && !Array.isArray(val)) {
+                explore(val, keyName, depth + 1);
+            } else if (Array.isArray(val)) {
+                // FASIH Specialized: 'answers', 'predata', or 'data' arrays
+                if (k === 'answers' || k === 'predata' || k === 'data') {
+                    val.forEach((item: any) => {
+                        if (item && item.dataKey) {
+                            let ans = item.answer;
+                            // Extract URL from photo/media array if present
+                            if (Array.isArray(ans) && ans.length > 0 && ans[0]?.url) {
+                                ans = ans[0].url;
+                            }
+                            vars[item.dataKey] = ans;
+                        }
+                    });
+                }
+            } else {
+                // Scalar values
+                const isUrl = typeof val === 'string' && val.startsWith('http');
+                const isImageKey = /foto|image|img|photo/i.test(k);
+                
+                if (isUrl || isImageKey || depth < 2) {
+                    vars[keyName] = val;
+                }
+            }
         }
     }
 
-    // Extract from content (for other survey phases)
-    if (dataObj.content) {
-        try {
-            const contentObj = typeof dataObj.content === 'string'
-                ? JSON.parse(dataObj.content)
-                : dataObj.content;
-
-            if (contentObj && Array.isArray(contentObj.data)) {
-                contentObj.data.forEach((item: any) => {
-                    if (item && item.dataKey) {
-                        vars[item.dataKey] = item.answer;
-                    }
-                });
-            }
-        } catch (e) {
-            // ignore
-        }
-    }
-
+    explore(dataObj);
     return vars;
 }
 
@@ -414,19 +419,22 @@ export const visualizationsRoutes = new Elysia({ prefix: "/api/surveys" })
         columns.set("codeIdentity", "dimension");
         columns.set("current_user_fullname", "dimension");
 
-        // 3. Inspect assignments flatData
+        // 3. Inspect assignments (flatData + sample dataJson for nested fields like photos)
         const assignmentSamples = await db
-            .select({ flatData: assignments.flatData })
+            .select({ flatData: assignments.flatData, dataJson: assignments.dataJson })
             .from(assignments)
             .where(eq(assignments.surveyConfigId, params.id))
-            .limit(150);
+            .limit(100);
 
         const dataValues = new Map<string, any[]>();
         for (const row of assignmentSamples) {
-            const vars = (row.flatData as Record<string, any>) || {};
-            for (const key in vars) {
+            const flat = (row.flatData as Record<string, any>) || {};
+            const deep = extractVariables(row.dataJson);
+            const combined = { ...deep, ...flat };
+
+            for (const key in combined) {
                 if (!dataValues.has(key)) dataValues.set(key, []);
-                dataValues.get(key)!.push(vars[key]);
+                dataValues.get(key)!.push(combined[key]);
             }
         }
 

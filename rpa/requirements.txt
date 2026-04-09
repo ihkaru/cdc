@@ -8,3 +8,5 @@ cryptography>=42.0.0
 pydantic>=2.0.0
 aiohttp>=3.9.0
 uvloop>=0.21.0
+aioboto3>=12.0.0
+aiobotocore>=2.11.0

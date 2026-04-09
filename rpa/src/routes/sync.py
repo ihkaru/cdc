@@ -184,3 +184,89 @@ async def auto_fetch_vpn(req: VpnCookieRequest):
             raise HTTPException(status_code=500, detail=f"Database error: {e}")
     else:
         raise HTTPException(status_code=400, detail="Gagal mendapatkan VPN cookie dari Keycloak SSO")
+
+
+@router.post("/sync/refresh-assignment/{assignment_id}")
+async def refresh_assignment(assignment_id: str):
+    """
+    Refetch assignment detail from BPS and update the local database.
+    Used by the archiver to heal expired 403 links.
+    """
+    from db.models import Assignment, SystemSettings
+    from api_client import FasihApiClient
+    
+    reset_engine()
+    init_db()
+    session = get_session()
+    
+    try:
+        # Get SSO cookies from SystemSettings
+        cookie_setting = session.query(SystemSettings).filter_by(key="sso_cookies").first()
+        if not cookie_setting:
+            raise HTTPException(status_code=401, detail="No active SSO session. Please trigger a sync first.")
+            
+        cookies = json.loads(cookie_setting.value)
+        
+        async with FasihApiClient(cookies) as api:
+            new_data = await api.get_assignment_detail(assignment_id)
+            if not new_data:
+                raise HTTPException(status_code=404, detail="Failed to fetch fresh data from BPS")
+            
+            # Update the assignment in DB
+            assignment = session.query(Assignment).get(assignment_id)
+            if assignment:
+                assignment.data_json = new_data
+                session.commit()
+                print(f"   ✅ Successfully refreshed assignment {assignment_id} in DB")
+                return {"status": "success", "message": f"Assignment {assignment_id} refreshed"}
+            else:
+                raise HTTPException(status_code=404, detail="Assignment not found in local DB")
+                
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+from pydantic import BaseModel
+
+class AssignmentFileNamesPayload(BaseModel):
+    assignmentId: str
+    fileNames: list[str]
+
+class RefreshImageUrlsRequest(BaseModel):
+    survey_period_id: str
+    assignments_payload: list[AssignmentFileNamesPayload]
+
+@router.post("/sync/refresh-image-urls")
+async def refresh_image_urls(req: RefreshImageUrlsRequest):
+    """
+    Get fresh S3 Presigned URLs directly from BPS /presigned-url-get endpoint.
+    Returns: { "s3_key_1": "https://fresh_url...", ... }
+    """
+    from db.models import SystemSettings
+    from api_client import FasihApiClient
+    
+    reset_engine()
+    init_db()
+    session = get_session()
+    
+    try:
+        cookie_setting = session.query(SystemSettings).filter_by(key="sso_cookies").first()
+        if not cookie_setting:
+            raise HTTPException(status_code=401, detail="No active SSO session. Please trigger a sync first.")
+            
+        cookies = json.loads(cookie_setting.value)
+        
+        async with FasihApiClient(cookies) as api:
+            payload_dicts = [item.dict() for item in req.assignments_payload]
+            fresh_urls = await api.get_fresh_image_urls(req.survey_period_id, payload_dicts)
+            if fresh_urls is None:
+                raise HTTPException(status_code=500, detail="Failed to fetch fresh presigned URLs from BPS")
+            
+            return {"status": "success", "data": fresh_urls}
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()

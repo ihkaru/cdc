@@ -7,8 +7,110 @@
         <p class="text-grey-5 q-mt-xs">Riwayat eksekusi RPA untuk survey ini</p>
       </div>
       <q-space />
-      <q-btn flat dense round icon="refresh" @click="fetchLogs" :loading="loading" />
+      <div class="q-gutter-x-sm">
+        <q-btn 
+          color="accent" 
+          icon="download" 
+          label="Export Log" 
+          no-caps 
+          unelevated 
+          :loading="exporting"
+          @click="exportLogs" 
+        />
+        <q-btn 
+          color="primary" 
+          icon="content_copy" 
+          label="Copy for AI" 
+          no-caps 
+          unelevated 
+          @click="copyForAI" 
+        />
+        <q-btn flat dense round icon="refresh" @click="fetchLogsAndStatus" :loading="loading" />
+      </div>
     </div>
+
+    <!-- Mirroring Vault Status Card -->
+    <q-card v-if="mirroringStatus" class="q-mb-md bg-dark border-card vault-card" flat bordered>
+      <q-card-section>
+        <div class="row items-center q-mb-sm">
+          <q-icon name="cloud_done" color="positive" size="sm" class="q-mr-sm" />
+          <span class="text-weight-bold text-white">CDC Image Vault Status</span>
+          <q-space />
+          <span class="text-caption text-grey-5">
+            {{ mirroringStatus.mirrored }} / {{ mirroringStatus.total - mirroringStatus.skipped }} Assignments Processed
+          </span>
+        </div>
+        
+        <q-linear-progress
+          :value="mirroringStatus.total - mirroringStatus.skipped > 0 ? mirroringStatus.mirrored / (mirroringStatus.total - mirroringStatus.skipped) : 0"
+          color="positive"
+          track-color="grey-9"
+          rounded
+          size="10px"
+          class="q-mb-sm"
+        />
+        
+        <div class="row items-center justify-between">
+          <div class="text-caption text-grey-6 italic">
+            Robot Archiver bekerja di background untuk mengamankan link foto BPS ke penyimpanan permanen.
+          </div>
+          <q-btn 
+            v-if="mirroringStatus.skipped > 0"
+            flat 
+            dense 
+            color="warning" 
+            size="sm" 
+            label="Lihat Data Tanpa Foto" 
+            icon="visibility_off"
+            @click="showSkippedDialog = true"
+            no-caps
+          >
+            <q-badge color="orange" floating>{{ mirroringStatus.skipped }}</q-badge>
+          </q-btn>
+        </div>
+      </q-card-section>
+    </q-card>
+
+    <!-- Skipped Assignments Dialog -->
+    <q-dialog v-model="showSkippedDialog">
+      <q-card style="min-width: 600px; max-width: 90vw" class="bg-dark text-white">
+        <q-card-section class="row items-center">
+          <div class="text-h6">Data Tanpa Foto (Source BPS NULL)</div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+
+        <q-card-section class="q-pt-none">
+          <div class="text-caption text-grey-5 q-mb-md">
+            Identitas berikut tidak memiliki data foto di dalam server FASIH-SM BPS (link NULL dari asal). 
+            Ini bukan kesalahan sistem sinkronisasi.
+          </div>
+          
+          <q-table
+            dark
+            dense
+            flat
+            bordered
+            :rows="mirroringStatus?.skippedList || []"
+            :columns="[
+              { name: 'codeIdentity', label: 'Code Identity', field: 'codeIdentity', align: 'left', sortable: true },
+              { name: 'user', label: 'User Pencacah', field: 'user', align: 'left', sortable: true },
+              { name: 'status', label: 'Status BPS', field: 'status', align: 'left', sortable: true }
+            ]"
+            row-key="id"
+            binary-state-sort
+            class="bg-transparent"
+            :pagination="{ rowsPerPage: 10 }"
+          >
+            <template v-slot:body-cell-status="props">
+              <q-td :props="props">
+                <q-badge color="grey-8">{{ props.row.status }}</q-badge>
+              </q-td>
+            </template>
+          </q-table>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
 
     <!-- Live Progress Card — shows only when a job is running -->
     <q-card v-if="liveStatus?.is_running" class="q-mb-md live-card" flat>
@@ -112,25 +214,82 @@
             <q-item-label v-if="log.notes && log.status !== 'success'" class="text-caption text-negative q-mt-xs" style="word-break: break-all; max-width: 500px">
               {{ log.notes }}
             </q-item-label>
+
+            <!-- Timing Breakdown Chart -->
+            <div v-if="log.timings && log.status === 'success'" class="q-mt-sm" style="max-width: 300px">
+              <div class="row q-gutter-x-xs items-center q-mb-xs">
+                <span class="text-caption text-grey-5">Performance:</span>
+                <span class="text-caption text-weight-bold text-white">{{ log.timings.total || 0 }}ms</span>
+              </div>
+              <div class="row no-wrap rounded-borders overflow-hidden" style="height: 6px; background: #333">
+                <div 
+                  v-for="phase in timingPhases" 
+                  :key="phase.key"
+                  :style="{
+                    width: getPhaseWidth(log, phase.key),
+                    background: phase.color
+                  }"
+                >
+                   <q-tooltip>{{ phase.label }}: {{ log.timings[phase.key] || 0 }}ms</q-tooltip>
+                </div>
+              </div>
+              <div class="row q-gutter-x-sm q-mt-xs">
+                <div v-for="phase in timingPhases" :key="phase.key" class="row items-center q-gutter-x-xs">
+                   <div :style="{ width: '8px', height: '8px', background: phase.color, borderRadius: '2px' }"></div>
+                   <span style="font-size: 9px" class="text-grey-5">{{ phase.alias }}</span>
+                </div>
+              </div>
+            </div>
           </q-item-section>
           
-          <q-item-section side v-if="log.status === 'success'">
-            <div class="row q-gutter-x-sm text-center">
-              <div>
-                <div class="text-caption text-grey">Fetched</div>
-                <div class="text-weight-bold text-white">{{ log.totalFetched }}</div>
+          <q-item-section side v-if="log.status === 'success' || log.status === 'running'">
+            <div class="row q-gutter-x-md no-wrap items-center">
+              <div class="row q-gutter-x-sm text-center">
+                <div>
+                  <div class="text-caption text-grey">Fetched</div>
+                  <div class="text-weight-bold text-white">{{ log.totalFetched }}</div>
+                </div>
+                <div>
+                  <div class="text-caption text-grey">New</div>
+                  <div class="text-weight-bold text-positive">{{ log.totalNew }}</div>
+                </div>
+                <div>
+                  <div class="text-caption text-grey">Updated</div>
+                  <div class="text-weight-bold text-warning">{{ log.totalUpdated }}</div>
+                </div>
+                <div v-if="log.totalSkipped > 0">
+                  <div class="text-caption text-grey">Skip</div>
+                  <div class="text-weight-bold text-grey-4">{{ log.totalSkipped }}</div>
+                </div>
               </div>
-              <div>
-                <div class="text-caption text-grey">New</div>
-                <div class="text-weight-bold text-positive">{{ log.totalNew }}</div>
-              </div>
-              <div>
-                <div class="text-caption text-grey">Updated</div>
-                <div class="text-weight-bold text-warning">{{ log.totalUpdated }}</div>
-              </div>
-              <div>
-                <div class="text-caption text-grey">Skipped</div>
-                <div class="text-weight-bold text-grey-4">{{ log.totalSkipped }}</div>
+
+              <!-- Vertical Separator -->
+              <div style="width: 1px; height: 30px; background: #333"></div>
+
+              <!-- Image Mirroring Progress -->
+              <div style="min-width: 140px">
+                <div class="row items-center justify-between q-mb-xs">
+                  <div class="text-caption text-grey">🖼️ Images</div>
+                  <div class="text-caption text-weight-bold" :class="log.totalImages > 0 && log.imagesMirrored >= log.totalImages ? 'text-positive' : 'text-blue'">
+                    <template v-if="log.totalImages > 0">
+                      {{ log.imagesMirrored }} / {{ log.totalImages }}
+                    </template>
+                    <template v-else-if="log.status === 'success'">
+                      No media
+                    </template>
+                    <template v-else>
+                      -
+                    </template>
+                  </div>
+                </div>
+                <q-linear-progress
+                  v-if="log.totalImages > 0"
+                  :value="Math.min(1, log.imagesMirrored / log.totalImages)"
+                  :color="log.imagesMirrored >= log.totalImages ? 'positive' : 'blue'"
+                  track-color="grey-10"
+                  rounded
+                  size="6px"
+                />
               </div>
             </div>
           </q-item-section>
@@ -143,13 +302,17 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useQuasar, copyToClipboard } from 'quasar'
 
 const route = useRoute()
+const $q = useQuasar()
 const logs = ref<any[]>([])
 const loading = ref(true)
+const exporting = ref(false)
 const liveStatus = ref<any>(null)
+const mirroringStatus = ref<any>(null)
+const showSkippedDialog = ref(false)
 let pollTimer: any = null
-let startedAt: Date | null = null
 
 const phases = [
   { key: 'login', icon: 'lock', label: 'Login SSO' },
@@ -180,6 +343,19 @@ const elapsedLabel = computed(() => {
   return `${Math.floor(sec / 60)}m ${sec % 60}s`
 })
 
+const timingPhases = [
+  { key: 'login', label: 'Login SSO', alias: 'SSO', color: '#3498db' },
+  { key: 'metadata', label: 'Metadata Resolve', alias: 'Meta', color: '#9b59b6' },
+  { key: 'fetch', label: 'API Fetching', alias: 'Fetch', color: '#e67e22' },
+  { key: 'upsert', label: 'Database Save', alias: 'DB', color: '#2ecc71' },
+]
+
+function getPhaseWidth(log: any, key: string) {
+  if (!log.timings || !log.timings.total) return '0%'
+  const val = log.timings[key] || 0
+  return `${(val / log.timings.total) * 100}%`
+}
+
 function formatDate(dateStr: string) {
   if (!dateStr) return '-'
   const utcDateStr = dateStr.endsWith('Z') ? dateStr : `${dateStr}Z`
@@ -204,37 +380,76 @@ function statusColor(status: string) {
   return status === 'success' ? 'positive' : status === 'running' ? 'primary' : status === 'queued' ? 'grey' : 'negative'
 }
 
-async function fetchLogs() {
+// Unified State Fetch: Replaces pollStatus, fetchLogs, fetchMirroring
+async function fetchDashboardState() {
   try {
-    const res = await fetch(`/api/surveys/${route.params.id}/logs`)
-    logs.value = await res.json()
+    const res = await fetch(`/api/surveys/${route.params.id}/sync-dashboard-state`)
+    const data = await res.json()
+    
+    // Smooth update to avoid UI flickering
+    liveStatus.value = data.robotStatus
+    mirroringStatus.value = data.mirroring
+    logs.value = data.logs
   } catch (e) {
-    console.error(e)
+    console.error('Failed to fetch unified dashboard state', e)
   } finally {
     loading.value = false
   }
 }
 
-async function pollStatus() {
-  try {
-    const res = await fetch('/api/surveys/sync/status')
-    const data = await res.json()
-    liveStatus.value = data
+async function fetchLogsAndStatus() {
+  loading.value = true
+  await fetchDashboardState()
+}
 
-    // If a job just finished, refresh the log list
-    if (!data.is_running && liveStatus.value?.is_running === false) {
-      await fetchLogs()
-    }
+async function exportLogs() {
+  exporting.value = true
+  try {
+    window.location.href = `/api/surveys/${route.params.id}/logs/export`
   } catch {
-    liveStatus.value = null
+    $q.notify({ type: 'negative', message: 'Gagal ekspor log' })
+  } finally {
+    setTimeout(() => { exporting.value = false }, 1000)
   }
 }
 
+
+
+function copyForAI() {
+  if (!logs.value.length) return
+  
+  let md = `# Sync Log Report - Survey ID: ${route.params.id}\n`
+  md += `Generated at: ${new Date().toLocaleString()}\n\n`
+  
+  if (mirroringStatus.value) {
+    const s = mirroringStatus.value
+    md += `## Image Vault Status\n`
+    md += `- Combined Progress: ${s.mirrored} / ${s.total - s.skipped} assignments processed\n`
+    md += `- Skipped (No Image): ${s.skipped}\n`
+    md += `- Completion: ${(((s.mirrored) / (s.total - s.skipped)) * 100).toFixed(1)}%\n\n`
+  }
+  
+  md += `## Execution History (Last 5 cycles)\n\n`
+  md += `| Time | Status | New | Upd | Skip | Timing (L/M/F/D) |\n`
+  md += `|---|---|---|---|---|---|\n`
+  
+  logs.value.slice(0, 5).forEach(l => {
+    const t = l.timings || {}
+    const tStr = `${t.login || 0}/${t.metadata || 0}/${t.fetch || 0}/${t.upsert || 0}ms`
+    md += `| ${formatDate(l.startedAt)} | ${l.status} | ${l.totalNew} | ${l.totalUpdated} | ${l.totalSkipped} | ${tStr} |\n`
+  })
+  
+  md += `\n*Timing Legend: L=Login, M=Metadata, F=Fetch, D=Database Save*`
+  
+  copyToClipboard(md).then(() => {
+    $q.notify({ type: 'positive', message: 'Log report copied to clipboard for AI analysis', icon: 'auto_awesome' })
+  })
+}
+
 onMounted(async () => {
-  await fetchLogs()
-  await pollStatus()
-  // Poll every 3s for live updates
-  pollTimer = setInterval(pollStatus, 3000)
+  await fetchLogsAndStatus()
+  // Poll every 3s for comprehensive dashboard state
+  pollTimer = setInterval(fetchDashboardState, 3000)
 })
 
 onBeforeUnmount(() => {
@@ -249,6 +464,10 @@ onBeforeUnmount(() => {
 .live-card {
   background: linear-gradient(135deg, #0f1823 0%, #0a1628 100%);
   border: 1px solid #1e3a5f;
+}
+.vault-card {
+  background: linear-gradient(135deg, #0f231a 0%, #0a2816 100%);
+  border: 1px solid #1e5f3e;
 }
 .rotate-anim {
   animation: rotation 2s infinite linear;

@@ -42,6 +42,10 @@ export default configure(function (/* ctx */) {
                 '/api': {
                     target: 'http://localhost:3000',
                     changeOrigin: true
+                },
+                '/storage': {
+                    target: 'http://localhost:3000',
+                    changeOrigin: true
                 }
             }
         },

@@ -9,6 +9,8 @@
     "db:push": "bunx drizzle-kit push"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1027.0",
+    "@aws-sdk/s3-request-presigner": "^3.1027.0",
     "@elysiajs/cors": "^1.4.1",
     "@elysiajs/static": "^1.4.7",
     "drizzle-orm": "^0.45.1",

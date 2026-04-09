@@ -26,7 +26,7 @@ export const labelsRoutes = new Elysia({ prefix: "/api/surveys" })
             .from(labelSchemas)
             .where(eq(labelSchemas.surveyConfigId, params.id))
             .limit(1);
-        return rows[0] || null;
+        return rows[0] || new Response("null", { headers: { "Content-Type": "application/json" } });
     })
 
     // Get all label data for a survey

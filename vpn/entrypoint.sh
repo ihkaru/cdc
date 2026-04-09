@@ -112,16 +112,7 @@ while true; do
         sleep 1
     fi
 
-    # --- SMART Pre-flight Check (Double VPN Detection) ---
-    echo "🔍 Checking if FASIH-SM is already reachable (Transparent Mode)..."
-    if curl -fks --connect-timeout 5 https://fasih-sm.bps.go.id/oauth_login.html | grep -q "Login SSO BPS"; then
-        echo "✅ FASIH-SM is ALREADY reachable via Host VPN / LAN."
-        echo "💤 Entering Transparent Standby Mode. Monitoring connectivity..."
-        while curl -fks --connect-timeout 5 https://fasih-sm.bps.go.id/oauth_login.html | grep -q "Login SSO BPS"; do
-            sleep 30
-        done
-        echo "⚠️  Connection lost! Scaling up dedicated VPN tunnel..."
-    fi
+
 
     # Priority: database > env var
     COOKIE=""

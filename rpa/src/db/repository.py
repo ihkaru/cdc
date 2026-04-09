@@ -18,6 +18,8 @@ class SyncStats:
         self.total_updated = 0
         self.total_skipped = 0
         self.total_failed = 0
+        self.total_images = 0
+        self.images_mirrored = 0
 
     def __repr__(self):
         return (
@@ -25,7 +27,8 @@ class SyncStats:
             f"New={self.total_new} | "
             f"Updated={self.total_updated} | "
             f"Skipped={self.total_skipped} | "
-            f"Failed={self.total_failed}"
+            f"Failed={self.total_failed} | "
+            f"Images={self.images_mirrored}/{self.total_images}"
         )
 
 
@@ -68,7 +71,7 @@ def extract_flat_data(data: dict) -> dict:
     return flat
 
 
-def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] = None) -> str:
+def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] = None, sync_log_id: int = None) -> str:
     """
     Upsert satu assignment ke database.
     
@@ -123,6 +126,7 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
             flat_data=flat_data,
             date_modified_remote=date_modified,
             synced_to_api=False,
+            sync_log_id=sync_log_id,
         )
         session.add(assignment)
         if stats:
@@ -130,7 +134,7 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
         return "new"
 
     elif existing.date_modified_remote != date_modified:
-        # UPDATE — data berubah
+        # UPDATE — data berubah dari remote (status/tanggal berubah)
         existing.code_identity = (
             data.get("code_identity") or 
             data.get("assignment", {}).get("codeIdentity") or 
@@ -151,11 +155,15 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
             data.get("assignment", {}).get("currentUserUsername") or 
             existing.current_user_username
         )
+        existing.sync_log_id = sync_log_id
         existing.data_json = data_json_str
         existing.flat_data = flat_data
         existing.date_modified_remote = date_modified
         existing.date_synced = datetime.now(timezone.utc)
-        existing.synced_to_api = False  # Perlu dikirim ulang
+        existing.synced_to_api = False
+        # Reset mirrored flag so archiver re-processes with fresh presigned URLs
+        existing.local_image_mirrored = False
+        existing.local_image_paths = {}
         if stats:
             stats.total_updated += 1
         return "updated"
@@ -207,6 +215,7 @@ def log_sync_run(
     stats: SyncStats,
     notes: str = "",
     survey_config_id: str = "",
+    timings: dict = None,
 ) -> SyncLog:
     """Catat log satu cycle sinkronisasi."""
     log = SyncLog(
@@ -218,11 +227,20 @@ def log_sync_run(
         total_updated=stats.total_updated,
         total_skipped=stats.total_skipped,
         total_failed=stats.total_failed,
+        total_images=stats.total_images,
+        images_mirrored=stats.images_mirrored,
         notes=notes,
+        timings=timings
     )
     session.add(log)
     session.commit()
     return log
+
+
+def patch_sync_log(session: Session, log_id: int, **kwargs):
+    """Update fields in an existing SyncLog entry (status, counts, etc)."""
+    session.query(SyncLog).filter(SyncLog.id == log_id).update(kwargs)
+    session.commit()
 
 
 class BatchUpserter:
@@ -274,65 +292,46 @@ class BatchUpserterBulk:
     Benchmark: ~50-200x faster than per-row ORM for large datasets.
     """
 
-    def __init__(self, session: Session, batch_size: int = 2000):
+    def __init__(self, session: Session, batch_size: int = 2000, sync_log_id: int = None):
         self.session = session
         self.batch_size = batch_size
+        self.sync_log_id = sync_log_id
         self._buffer: list[dict] = []
         self.stats = SyncStats()
 
-    def _build_row(self, data: dict) -> dict | None:
-        """Convert raw API data dict into a flat row dict for bulk insert."""
-        record_id = data.get("_id") or data.get("id") or data.get("assignment", {}).get("id")
-        if not record_id:
-            return None
+    def add(self, row: dict):
+        # Transform row data for column naming to match DB
+        # This part handles the mapping from API-style keys to DB-style keys
+        # as pg_insert expects exact DB column names
 
+        self.stats.total_fetched += 1
         date_modified = (
-            data.get("date_modified") or
-            data.get("dateModifiedRemote") or
-            data.get("assignment", {}).get("dateModifiedRemote") or
+            row.get("date_modified") or 
+            row.get("dateModifiedRemote") or 
+            row.get("assignment", {}).get("dateModifiedRemote") or
             ""
         )
-        data_json_str = json.dumps(data, ensure_ascii=False)
-        flat_data = extract_flat_data(data)
-
-        return {
-            "id": record_id,
-            "survey_config_id": data.get("_survey_config_id", ""),
-            "code_identity": (
-                data.get("code_identity") or
-                data.get("assignment", {}).get("codeIdentity") or
-                ""
-            ),
-            "survey_period_id": (
-                data.get("survey_period_id") or
-                data.get("assignment", {}).get("surveyPeriodId") or
-                ""
-            ),
-            "assignment_status_alias": (
-                data.get("assignment_status_alias") or
-                data.get("assignment", {}).get("assignmentStatusAlias") or
-                ""
-            ),
-            "current_user_username": (
-                data.get("current_user_username") or
-                data.get("assignment", {}).get("currentUserUsername") or
-                ""
-            ),
-            "data_json": data_json_str,
-            "flat_data": flat_data,
+        
+        db_row = {
+            "id": row.get("_id") or row.get("id") or row.get("assignment", {}).get("id"),
+            "survey_config_id": row.get("_survey_config_id", ""),
+            "code_identity": row.get("code_identity") or row.get("assignment", {}).get("codeIdentity") or "",
+            "survey_period_id": row.get("survey_period_id") or row.get("assignment", {}).get("surveyPeriodId") or "",
+            "assignment_status_alias": row.get("assignment_status_alias") or row.get("assignment", {}).get("assignmentStatusAlias") or "",
+            "current_user_username": row.get("current_user_username") or row.get("assignment", {}).get("currentUserUsername") or "",
+            "data_json": json.dumps(row, ensure_ascii=False),
+            "flat_data": extract_flat_data(row),
             "date_modified_remote": date_modified,
             "date_synced": datetime.now(timezone.utc),
             "synced_to_api": False,
+            "sync_log_id": self.sync_log_id
         }
-
-    def add(self, data: dict):
-        """Buffer a record."""
-        self.stats.total_fetched += 1
-        row = self._build_row(data)
-        if row is None:
+        
+        if not db_row["id"]:
             self.stats.total_failed += 1
             return
-        self._buffer.append(row)
+
+        self._buffer.append(db_row)
         if len(self._buffer) >= self.batch_size:
             self.flush()
 
@@ -351,7 +350,9 @@ class BatchUpserterBulk:
                 for col in [
                     "code_identity", "survey_period_id", "assignment_status_alias",
                     "current_user_username", "data_json", "flat_data",
-                    "date_modified_remote", "date_synced", "synced_to_api"
+                    "date_modified_remote", "date_synced", "synced_to_api", "sync_log_id",
+                    # Reset mirrored flag so archiver re-processes with fresh presigned URLs
+                    "local_image_mirrored", "local_image_paths",
                 ]
             }
 
@@ -359,7 +360,8 @@ class BatchUpserterBulk:
                 index_elements=["id"],
                 set_=update_cols,
                 where=(
-                    # Only update if date_modified_remote changed — skip identical rows
+                    # Only update rows where the remote data actually changed
+                    # (new status, date, or fresh presigned URLs from FASIH)
                     Assignment.date_modified_remote != stmt.excluded.date_modified_remote
                 )
             )
@@ -379,8 +381,9 @@ class BatchUpserterBulk:
             # Fallback to per-row ORM if bulk insert fails (e.g. SQLite in test mode)
             print(f"   ⚠️ Bulk upsert failed ({e}), falling back to per-row ORM...")
             self.session.rollback()
+            self.session.rollback()
             for row_data in self._buffer:
-                upsert_assignment(self.session, row_data, self.stats)
+                upsert_assignment(self.session, row_data, stats=self.stats, sync_log_id=self.sync_log_id)
             self.session.commit()
 
         self._buffer.clear()

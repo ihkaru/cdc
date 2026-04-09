@@ -52,15 +52,18 @@ class Assignment(Base):
     survey_period_id = Column(String, comment="UUID periode survey")
     assignment_status_alias = Column(String, comment="Status: OPEN, SUBMITTED, dll")
     current_user_username = Column(String, comment="Username pencacah/pengawas")
-    data_json = Column(Text, comment="Full JSON payload dari API")
+    data_json = Column(JSON, comment="Full JSON payload dari API")
     flat_data = Column(JSON, default={}, comment="Flattened metric columns")
     date_modified_remote = Column(String, comment="date_modified dari API")
+    sync_log_id = Column(Integer, ForeignKey("sync_logs.id", ondelete="SET NULL"), index=True, comment="ID log sinkronisasi terakhir")
     date_synced = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
     synced_to_api = Column(Boolean, default=False, comment="Sudah dikirim ke API downstream?")
+    local_image_mirrored = Column(Boolean, default=False, comment="Sudah di-mirror ke S3 lokal?")
+    local_image_paths = Column(JSON, default={}, comment="Map S3 paths for images")
 
     def __repr__(self):
         return f"<Assignment(id={self.id[:8]}..., code={self.code_identity})>"
@@ -80,8 +83,11 @@ class SyncLog(Base):
     total_updated = Column(Integer, default=0)
     total_skipped = Column(Integer, default=0)
     total_failed = Column(Integer, default=0)
+    total_images = Column(Integer, default=0)
+    images_mirrored = Column(Integer, default=0)
     status = Column(String, default="running")
     notes = Column(Text)
+    timings = Column(JSON, comment="Phase durations in ms")
 
     def __repr__(self):
         return f"<SyncLog(id={self.id}, status={self.status})>"

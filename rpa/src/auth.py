@@ -3,12 +3,14 @@ Auth — Automated Login SSO BPS via Keycloak
 """
 import os
 from datetime import datetime
+from typing import Tuple, Dict, Optional
 from playwright.async_api import Page
+
 
 TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
 
 
-async def auto_login(page: Page, username: str, password: str) -> bool:
+async def auto_login(page: Page, username: str, password: str) -> Tuple[bool, Dict[str, str]]:
     """
     Otomasi login SSO BPS:
     1. Buka halaman login FASIH
@@ -17,7 +19,7 @@ async def auto_login(page: Page, username: str, password: str) -> bool:
     4. Submit dan tunggu redirect ke dashboard
 
     Returns:
-        bool: True jika login berhasil
+        Tuple[bool, Dict]: (Success status, Cookies dictionary)
     """
     FASIH_HOST = TARGET_URL.split("//")[-1]  # fasih-sm.bps.go.id
 
@@ -67,7 +69,7 @@ async def auto_login(page: Page, username: str, password: str) -> bool:
                 if err_el:
                     err_text = await err_el.inner_text()
                     print(f"   ❌ Keycloak error: {err_text.strip()}")
-                    return False
+                    return False, {}
             except:
                 pass
 
@@ -80,7 +82,7 @@ async def auto_login(page: Page, username: str, password: str) -> bool:
             # Loop selesai tanpa break = timeout
             current_url = page.url
             print(f"   ❌ Login timeout setelah {deadline}s. URL terakhir: {current_url}")
-            return False
+            return False, {}
 
         # Tunggu halaman FASIH sepenuhnya dimuat (non-blocking)
         try:
@@ -92,14 +94,19 @@ async def auto_login(page: Page, username: str, password: str) -> bool:
         current_url = page.url
         if "oauth_login" in current_url or "sso.bps.go.id" in current_url:
             print("   ❌ Login gagal — masih di halaman login. Cek username/password.")
-            return False
+            return False, {}
 
         print("   ✅ Login berhasil!")
-        return True
+        
+        # Ekstrak semua cookies (termasuk F5 security cookies & XSRF)
+        cookies_list = await page.context.cookies()
+        cookies_dict = {c['name']: c['value'] for c in cookies_list}
+        
+        return True, cookies_dict
 
     except Exception as e:
         print(f"   ❌ Login error: {e}")
-        return False
+        return False, {}
 
 
 
@@ -143,8 +150,12 @@ async def fetch_vpn_cookie(username: str, password: str) -> str | None:
             
             start_time = datetime.now()
             print(f"🔐 [{start_time.strftime('%H:%M:%S')}] Membuka portal VPN BPS...")
-            # Use 'load' instead of 'networkidle' as the portal might have slow background trackers
-            await page.goto("https://akses.bps.go.id/remote/saml/start", wait_until="load", timeout=60000)
+            # Use 'domcontentloaded' - 'load' will timeout on FortiGate portals with slow tracker scripts
+            await page.goto(
+                "https://akses.bps.go.id/remote/saml/start",
+                wait_until="domcontentloaded",
+                timeout=90000
+            )
             
             print(f"   [{datetime.now().strftime('%H:%M:%S')}] Menunggu halaman SSO BPS (Keycloak)...")
             await page.wait_for_url("**/sso.bps.go.id/**", timeout=60000)
@@ -157,9 +168,18 @@ async def fetch_vpn_cookie(username: str, password: str) -> str | None:
             print(f"   [{datetime.now().strftime('%H:%M:%S')}] Mengklik 'Log In'...")
             await page.click("input#kc-login")
             
-            print(f"   [{datetime.now().strftime('%H:%M:%S')}] Menunggu redirect kembali ke portal VPN (bisa memakan waktu 1-2 menit)...")
-            # SAML redirect can be slow, increase timeout to 120s
-            await page.wait_for_url("https://akses.bps.go.id/**", timeout=120000)
+            print(f"   [{datetime.now().strftime('%H:%M:%S')}] Menunggu redirect kembali ke portal VPN (bisa memakan waktu 1-3 menit)...")
+            # SAML redirect can be slow, increase timeout to 180s for extreme cases
+            try:
+                await page.wait_for_url("https://akses.bps.go.id/**", timeout=180000)
+            except Exception as e:
+                # Capture Keycloak error before failing
+                err_el = await page.query_selector("#input-error, .alert-error")
+                if err_el:
+                    txt = await err_el.inner_text()
+                    raise Exception(f"Keycloak Error: {txt.strip()}")
+                raise e
+
             await page.wait_for_load_state("load")
             
             # Ekstrak cookies dari context VPN

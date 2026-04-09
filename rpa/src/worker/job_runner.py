@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from playwright.async_api import async_playwright
 
 from db.connection import init_db, get_session, reset_engine
-from db.models import SyncLog
+from db.models import SyncLog, SystemSettings, Assignment
 from db.repository import SyncStats
 
 from state import sync_state
@@ -81,6 +81,23 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                 await browser.close()
                 browser = None  # To avoid closing twice in finally
                 
+                # Save cookies to DB for self-healing archiver (Multi-survey support)
+                try:
+                    import json
+                    db_session = get_session()
+                    setting = db_session.query(SystemSettings).filter_by(key="sso_cookies").first()
+                    if setting:
+                        setting.value = json.dumps(cookie_dict)
+                        setting.updated_at = datetime.now(timezone.utc)
+                    else:
+                        setting = SystemSettings(key="sso_cookies", value=json.dumps(cookie_dict))
+                        db_session.add(setting)
+                    db_session.commit()
+                    db_session.close()
+                    print("   💾 SSO cookies saved to DB (Ready for multi-survey self-healing).")
+                except Exception as db_e:
+                    print(f"   ⚠️ Warning: Failed to save SSO cookies to DB: {db_e}")
+
                 async with FasihApiClient(cookie_dict) as api:
 
                     print("\n--- FASE 2: Resolving API Metadata ---")
@@ -131,7 +148,8 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                     _progress("fetch_assignments", f"⚡ Memulai fetch {users_count} petugas secara concurrent...", users_total=users_count, users_done=0)
 
                     if SKIP_DETAIL_FETCH:
-                        stats = await run_fast_sync(
+                        # Fast sync stats
+                        run_stats = await run_fast_sync(
                             session=session,
                             api_client=api,
                             survey_id=survey_id,
@@ -140,10 +158,12 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                             prov_code=prov_uuid,
                             region_filter=region_filter,
                             region_group_id=region_group_id,
-                            filters_to_run=filters_to_run
+                            filters_to_run=filters_to_run,
+                            sync_log_id=sync_log.id
                         )
                     else:
-                        stats = await run_full_sync(
+                        # Full sync stats (Full results are in run_stats.total_fetched)
+                        run_stats = await run_full_sync(
                             session=session,
                             api_client=api,
                             cookie_dict=cookie_dict,
@@ -153,13 +173,43 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                             prov_code=prov_uuid,
                             region_filter=region_filter,
                             region_group_id=region_group_id,
-                            filters_to_run=filters_to_run
+                            filters_to_run=filters_to_run,
+                            sync_log_id=sync_log.id
                         )
-
+                    
+                    stats = run_stats
 
             finally:
                 if 'browser' in locals() and browser:
                     await browser.close()
+
+        # Calculate total images found in this run
+        total_images_in_run = 0
+        from extractors.json_logic import extract_variables_from_json
+        import json
+        
+        # We find assignments updated in this survey_config during this specific sync
+        # Since we don't have the full list of objects easily from BulkUpserter,
+        # we query the DB for the survey_config_id and date_synced (approximate)
+        # OR better: we query all assignments for this survey_config that are NOT mirrored yet
+        # but belong to this sync window.
+        
+        # Simplified: Just count all un-mirrored images for this survey_config 
+        # to give a realistic "Remaining Work" for the archiver.
+        upserted_assignments = session.query(Assignment).filter(
+            Assignment.survey_config_id == req.survey_config_id,
+            Assignment.local_image_mirrored == False
+        ).all()
+        
+        for a in upserted_assignments:
+            data = json.loads(a.data_json)
+            vars_map = extract_variables_from_json(data)
+            for k, v in vars_map.items():
+                if isinstance(v, str) and v.startswith("http"):
+                    is_image = any(ext in v.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']) or \
+                               any(kw in k.lower() or kw in v.lower() for kw in ['foto', 'image', 'media'])
+                    if is_image:
+                        total_images_in_run += 1
 
         # Update sync log → success
         log = session.query(SyncLog).get(sync_log.id)
@@ -169,6 +219,8 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
         log.total_updated = stats.total_updated
         log.total_skipped = stats.total_skipped
         log.total_failed = stats.total_failed
+        log.total_images = total_images_in_run
+        log.images_mirrored = 0 # Will be updated by archiver in background
         log.status = "success"
         session.commit()
 

@@ -26,6 +26,9 @@ export const assignments = pgTable("assignments", {
   dateModifiedRemote: text("date_modified_remote"),
   dateSynced: timestamp("date_synced", { withTimezone: true }).defaultNow(),
   syncedToApi: boolean("synced_to_api").default(false),
+  localImageMirrored: boolean("local_image_mirrored").default(false),
+  localImagePaths: jsonb("local_image_paths").default({}),
+  syncLogId: integer("sync_log_id").references(() => syncLogs.id, { onDelete: "set null" }),
 }, (table) => [
   index("idx_assignments_survey_config_id").on(table.surveyConfigId),
   index("idx_assignments_survey_date").on(table.surveyConfigId, table.dateSynced),
@@ -44,8 +47,11 @@ export const syncLogs = pgTable("sync_logs", {
   totalUpdated: integer("total_updated").default(0),
   totalSkipped: integer("total_skipped").default(0),
   totalFailed: integer("total_failed").default(0),
+  totalImages: integer("total_images").default(0),
+  imagesMirrored: integer("images_mirrored").default(0),
   status: text("status").default("running"),
   notes: text("notes"),
+  timings: jsonb("timings"),
 }, (table) => [
   index("idx_sync_logs_survey").on(table.surveyConfigId),
   index("idx_sync_logs_status").on(table.status),

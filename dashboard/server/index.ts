@@ -7,6 +7,8 @@ import { logsRoutes } from "./routes/logs";
 import { syncRoutes } from "./routes/sync";
 import { labelsRoutes } from "./routes/labels";
 import { visualizationsRoutes } from "./routes/visualizations";
+import { storageRoutes } from "./routes/storage";
+import { syncStateRoutes } from "./routes/sync-state";
 
 const app = new Elysia()
     .use(cors())
@@ -16,6 +18,8 @@ const app = new Elysia()
     .use(syncRoutes)
     .use(labelsRoutes)
     .use(visualizationsRoutes)
+    .use(storageRoutes)
+    .use(syncStateRoutes)
     // Serve static files and fallback to index.html for SPA
     .get("*", async ({ path }) => {
         const filePath = path === "/" ? "/index.html" : path;
