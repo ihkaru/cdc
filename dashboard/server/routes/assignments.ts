@@ -365,12 +365,15 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
 
             const result = rows.map(r => {
                 const pending = Number(r.open || 0) + Number(r.rejected || 0);
+                const totalStr = Number(r.total || 0);
+                const openStr = Number(r.open || 0);
                 return {
                     username: r.username || 'Unassigned',
                     pending,
-                    total: Number(r.total || 0),
-                    open: Number(r.open || 0),
+                    total: totalStr,
+                    open: openStr,
                     rejected: Number(r.rejected || 0),
+                    completed: totalStr - openStr,
                 };
             }).sort((a, b) => b.pending - a.pending);
 

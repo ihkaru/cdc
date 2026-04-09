@@ -295,6 +295,11 @@
             <span class="text-negative">{{ props.row.rejected }}</span>
           </q-td>
         </template>
+        <template v-slot:body-cell-completed="props">
+          <q-td :props="props">
+            <span class="text-positive">{{ props.row.completed }}</span>
+          </q-td>
+        </template>
       </q-table>
     </q-card>
 
@@ -477,6 +482,7 @@ const workloadCols = [
   { name: 'pending', label: 'Pending Action', field: 'pending', align: 'center' as const, sortable: true, sortOrder: 'dd' as const },
   { name: 'open', label: 'Open / Draft', field: 'open', align: 'center' as const, sortable: true },
   { name: 'rejected', label: 'Rejected', field: 'rejected', align: 'center' as const, sortable: true },
+  { name: 'completed', label: 'Completed / Submitted', field: 'completed', align: 'center' as const, sortable: true },
   { name: 'total', label: 'Total Handled', field: 'total', align: 'center' as const, sortable: true }
 ]
 
