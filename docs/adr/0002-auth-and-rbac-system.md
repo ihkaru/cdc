@@ -4,7 +4,7 @@
 Proposed
 
 ## Context
-Aplikasi CDC akan di-deploy secara publik. Diperlukan sistem keamanan yang membatasi akses API dan UI hanya untuk user terautentikasi dengan hak akses yang tepat. Data pegawai dari `data-pegawai.php` akan digunakan sebagai sumber identitas awal.
+Aplikasi FasihNexus akan di-deploy secara publik. Diperlukan sistem keamanan yang membatasi akses API dan UI hanya untuk user terautentikasi dengan hak akses yang tepat. Data pegawai dari `data-pegawai.php` akan digunakan sebagai sumber identitas awal.
 
 ## Decision
 1.  **Auth Engine**: Menggunakan **Better Auth** untuk manajemen sesi berbasis database (HttpOnly Cookies).

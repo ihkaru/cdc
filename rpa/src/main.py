@@ -1,5 +1,5 @@
 """
-FASIH-SM RPA Sync — Main Orchestrator (API First)
+FasihNexus Sync Engine — Main Orchestrator (API First)
 
 Fully automated robot yang:
 1. Login SSO BPS otomatis via Playwright (Headless) untuk mendapatkan Cookie.
@@ -52,7 +52,7 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
     await ensure_connected()
     
     print("\n" + "=" * 60)
-    print(f"🤖 FASIH-SM API Sync — Cycle dimulai")
+    print(f"🤖 FasihNexus Sync Engine — Cycle dimulai")
     print(f"   Waktu: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"   Survey: {settings.survey_name}")
     print(f"   Rotasi: {settings.filter_rotation}")
@@ -316,7 +316,7 @@ def run_scheduler(settings: Settings):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="FASIH-SM RPA Sync — Sinkronisasi data otomatis")
+    parser = argparse.ArgumentParser(description="FasihNexus Sync Engine — Sinkronisasi data otomatis")
     parser.add_argument("--once", action="store_true", help="Jalankan 1 cycle saja")
     parser.add_argument("--test-login", action="store_true", help="Test login saja")
     parser.add_argument("--dry-run", action="store_true", help="Enumerate filter tanpa fetch")

@@ -1,11 +1,11 @@
-# CDC — FASIH-SM Data Sync Platform
+# FasihNexus — FASIH-SM Data Sync Platform
 
 Platform otomasi sinkronisasi data survei dari aplikasi **FASIH-SM** (fasih-sm.bps.go.id) milik BPS. Sistem berjalan sebagai multi-container Docker dan terdiri dari 5 komponen utama.
 
 ## Fitur Utama
 
 - 🔄 **Sinkronisasi Otomatis** — Robot RPA login ke FASIH-SM via SSO dan mengambil data assignment survei
-- 🖼️ **CDC Image Vault** — Archiver otomatis meng-mirror foto BPS (presigned S3 URL yang kadaluarsa ≤7 hari) ke penyimpanan permanen lokal
+- 🖼️ **Image Vault** — Archiver otomatis meng-mirror foto BPS (presigned S3 URL yang kadaluarsa ≤7 hari) ke penyimpanan permanen lokal
 - 📊 **Dashboard BI** — Visualisasi scorecard, bar chart, tabel data, dan peta titik sebaran (WebGL MapLibre)
 - 🏷️ **Label Management** — Upload/download label Excel dengan schema dinamis per survey
 - 📥 **Export Excel** — Export data assignment beserta vault URL gambar yang permanen
@@ -53,7 +53,7 @@ Platform otomasi sinkronisasi data survei dari aplikasi **FASIH-SM** (fasih-sm.b
 - **Frontend**: Vue 3 + Quasar Framework (SPA)
 - **ORM**: Drizzle ORM (PostgreSQL)
 
-### 4. `archiver` — CDC Image Vault
+### 4. `archiver` — Image Vault
 - **Fungsi**: Meng-mirror foto dari BPS S3 (presigned URL ekspiri) ke SeaweedFS lokal
 - **Mekanisme Healing**: Jika URL expired (403), archiver memanggil FASIH API dengan SSO cookies tersimpan untuk mendapat URL segar
 - **Optimasi**: SQL pre-filter `LIKE '%bps.go.id%'` — hanya memproses assignment yang benar-benar punya gambar

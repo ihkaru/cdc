@@ -4,7 +4,7 @@
       <q-page class="flex flex-center login-bg">
         <q-card class="login-card shadow-24">
           <q-card-section class="bg-primary text-white q-pa-lg text-center">
-            <div class="text-h4 text-weight-bolder">CDC</div>
+            <div class="text-h4 text-weight-bolder">FasihNexus</div>
             <div class="text-subtitle2 op-80">FASIH-SM Sync Platform</div>
           </q-card-section>
 

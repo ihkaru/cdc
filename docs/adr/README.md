@@ -1,6 +1,6 @@
 # Architecture Decision Records (ADR)
 
-Index of architectural decisions for the CDC Platform.
+Index of architectural decisions for the FasihNexus Platform.
 
 | ID | Title | Status | Date |
 |----|-------|--------|------|

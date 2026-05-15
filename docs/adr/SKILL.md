@@ -1,6 +1,6 @@
-# ADR Skill - CDC Edition
+# ADR Skill - FasihNexus Edition
 
-Use this skill to capture, draft, and review Architecture Decision Records (ADRs) as executable specifications for the CDC repo.
+Use this skill to capture, draft, and review Architecture Decision Records (ADRs) as executable specifications for the FasihNexus repo.
 
 ## Workflow
 

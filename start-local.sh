@@ -2,7 +2,7 @@
 # start-local.sh - Start Development Environment with Local HMR
 # Uses process groups and PID files for clean shutdown without zombie processes.
 
-CDC_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PID_DIR="/tmp/fasih-nexus-local"
 mkdir -p "$PID_DIR"
 
@@ -50,9 +50,9 @@ docker compose stop dashboard
 
 # ─── Step 2: Environment variables ──────────────────────────────
 echo "[3/3] Preparing Local Environment Variables..."
-if [ -f "$CDC_DIR/.env" ]; then
+if [ -f "$PROJECT_DIR/.env" ]; then
   set -a
-  source "$CDC_DIR/.env"
+  source "$PROJECT_DIR/.env"
   set +a
 
   # Default Better Auth Secret if not set
@@ -79,7 +79,7 @@ echo "================================================="
 echo " Starting Backend (Elysia) and Frontend (Quasar) "
 echo "================================================="
 
-cd "$CDC_DIR/dashboard" || { echo "dashboard directory not found"; exit 1; }
+cd "$PROJECT_DIR/dashboard" || { echo "dashboard directory not found"; exit 1; }
 
 echo "[4/4] Migrating Database Schema locally..."
 DATABASE_URL="$LOCAL_DB_URL" bunx drizzle-kit push

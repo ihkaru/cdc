@@ -1,10 +1,10 @@
-# ADR-0001: Baseline Architecture & Turbo Concurrency Implementation
+# ADR-0001: Index of architectural decisions for the FasihNexus Platform.
 
 ## Status
 Accepted
 
 ## Context
-Repo CDC (Data Sync Platform) harus menangani sinkronisasi data dari FASIH BPS dengan volume besar (>80.000 record). Sebelumnya, sinkronisasi berjalan sekuensial dan lambat, serta sering mengalami session drop jika concurrency terlalu tinggi atau tidak terarah.
+Repo FasihNexus (Data Sync Platform) harus menangani sinkronisasi data dari FASIH BPS dengan volume besar (>80.000 record). Sebelumnya, sinkronisasi berjalan sekuensial dan lambat, serta sering mengalami session drop jika concurrency terlalu tinggi atau tidak terarah.
 
 ## Decision
 Kami menetapkan arsitektur baseline dan pola sinkronisasi sebagai berikut:
