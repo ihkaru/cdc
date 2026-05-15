@@ -34,7 +34,7 @@ function parseCookies(cookieHeader: string | null): Record<string, string> {
 export const getAuthContext = async (request: Request) => {
     const cookieHeader = request.headers.get("cookie");
     const cookies = parseCookies(cookieHeader);
-    const sessionToken = cookies["cdc_auth.session_token"];
+    const sessionToken = cookies["__Secure-cdc_auth.session_token"] || cookies["cdc_auth.session_token"];
 
     if (!sessionToken) {
         return { user: null, roles: [] };
