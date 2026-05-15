@@ -1,5 +1,5 @@
 # Project Snapshot: FasihNexus
-Generated at: Fri May 15 09:54:18 PM WIB 2026
+Generated at: Fri May 15 09:58:07 PM WIB 2026
 
 ## 📂 Project Structure
 ```text
@@ -350,6 +350,7 @@ Sistem menggunakan bash scripts sebagai entrypoint development:
 4. **VPN Restart**: Jika container VPN restart, session di Fortinet mungkin menggantung. User perlu update cookie via Dashboard.
 5. **Path Patching di Python**: Skrip RPA (`main.py`, `archiver.py`) memiliki blok *self-healing* `sys.path.append` untuk memastikan modul `db` dan `pages` terbaca dengan benar terlepas dari working directory.
 6. **Internal Scheduler Delay**: RPA scheduler sengaja menunggu 30 detik saat startup agar VPN tunnel stabil sebelum mulai query database.
+7. **VPN Health Dependency**: Service yang menumpang di VPN (`rpa`, `archiver`, `vpn-auth`) WAJIB menggunakan `condition: service_healthy` pada `depends_on: vpn` untuk memastikan tunnel sudah benar-benar established sebelum aplikasi mulai berjalan.
 
 ---
 **Status**: Production Hardened (Hybrid Network Bridge Model).
@@ -367,9 +368,8 @@ services:
       - coolify
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=coolify" # FORCE Traefik to use the public network IP
+      - "traefik.docker.network=coolify"
       - "coolify.managed=true"
-      # Note: Route rules and SSL will be automatically handled by Coolify UI
     environment:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
       - RPA_URL=http://vpn:8000
@@ -398,7 +398,7 @@ services:
       - /dev/net/tun
       - /dev/ppp
     dns:
-      - 127.0.0.11 # CRITICAL: Ensures sharing containers can resolve Docker internal DNS (s3, postgres)
+      - 127.0.0.11
     networks:
       - fasih_internal
     labels:
@@ -419,13 +419,13 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s # Ditingkatkan dari 30s untuk toleransi SAML tunnel
     restart: unless-stopped
     stop_grace_period: 15s
 
-  # --- RPA Engines (Behind VPN) ---
+  # --- RPA Engines (Sharing VPN Namespace) ---
   rpa:
-    build: ./rpa
+    build: ./rpa # REBUILD setiap autodeploy
     container_name: fasih-nexus-rpa
     network_mode: "service:vpn"
     labels:
@@ -440,11 +440,11 @@ services:
       - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
     depends_on:
       vpn:
-        condition: service_started
+        condition: service_healthy # TUNGGU TUNNEL AKTIF
     restart: unless-stopped
 
   vpn-auth:
-    image: fasih-nexus-rpa:latest
+    build: ./rpa # PAKSA REBUILD (menggunakan context rpa)
     container_name: fasih-nexus-vpn-auth
     network_mode: "service:vpn"
     labels:
@@ -455,12 +455,12 @@ services:
       - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
-        condition: service_started
+        condition: service_healthy # TUNGGU TUNNEL AKTIF
     command: python -m uvicorn src.app:app --host 0.0.0.0 --port 8001
     restart: unless-stopped
 
   archiver:
-    image: fasih-nexus-rpa:latest
+    build: ./rpa # PAKSA REBUILD (menggunakan context rpa)
     container_name: fasih-nexus-archiver
     network_mode: "service:vpn"
     labels:
@@ -474,7 +474,7 @@ services:
       - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
-        condition: service_started
+        condition: service_healthy # TUNGGU TUNNEL AKTIF
     command: python src/archiver.py
     restart: unless-stopped
 
@@ -531,6 +531,7 @@ services:
       - "coolify.managed=false"
     depends_on:
       - master
+      - volume # FIX: Tunggu volume server ready
       - postgres
     environment:
       - WEED_FILER_POSTGRES_ENABLED=true

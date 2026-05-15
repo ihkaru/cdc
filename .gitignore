@@ -10,7 +10,6 @@ venv/
 # Security
 **/.env
 new_vpn_cookie.txt
-GEMINI.md
 
 # Debug & temp scripts (root level)
 archiver_logs.txt
