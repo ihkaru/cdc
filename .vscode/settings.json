@@ -1,0 +1,7 @@
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}/rpa/venv/bin/python",
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/rpa/src"
+    ],
+    "python.terminal.activateEnvInCurrentTerminal": true
+}
