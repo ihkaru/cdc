@@ -252,13 +252,17 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
         return await fetchRes.json();
     });
 
+// Use 127.0.0.1 instead of localhost for local dev to avoid IPv6 issues
+const RPA_API_URL = RPA_URL.replace("localhost", "127.0.0.1");
+const VPN_AUTH_API_URL = VPN_AUTH_URL.replace("localhost", "127.0.0.1");
+
 // ===== VPN Auto-Pilot Background Loop =====
 // Check VPN status periodically. If disconnected, trigger RPA to auto-fetch the cookie.
 const checkVpnAndFetchCookie = async () => {
     try {
         // Use a strict timeout for the health check to avoid blocking the loop
-        const statusRes = await fetch(`${RPA_URL}/vpn/check`, { 
-            signal: AbortSignal.timeout(10000) 
+        const statusRes = await fetch(`${RPA_API_URL}/vpn/check`, { 
+            signal: AbortSignal.timeout(15000) 
         }).then(r => r.json()).catch(() => ({ connected: false })) as any;
 
         if (!statusRes.connected) {
@@ -276,11 +280,11 @@ const checkVpnAndFetchCookie = async () => {
                 return;
             }
 
-            console.log(`   🔑 Borrowing credentials from: ${survey.ssoUsername} (Survey: ${survey.surveyName})`);
-            const password = decryptPassword(survey.ssoPasswordEncrypted);
-            
-            const fetchRes = await fetch(`${VPN_AUTH_URL}/vpn/auto-fetch`, {
-                method: "POST",
+        console.log(`   🔑 Borrowing credentials from: ${survey.ssoUsername} (Survey: ${survey.surveyName})`);
+        const password = decryptPassword(survey.ssoPasswordEncrypted);
+        
+        const fetchRes = await fetch(`${VPN_AUTH_API_URL}/vpn/auto-fetch`, {
+            method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     sso_username: survey.ssoUsername,

@@ -23,7 +23,10 @@ export const auth = betterAuth({
     // RBAC Configuration
     // For now, we will handle RBAC via custom middleware using the schema we built.
     secret: process.env.BETTER_AUTH_SECRET || "fallback-secret-for-dev-only",
-    trustedOrigins: [process.env.PUBLIC_BASE_URL || "http://localhost:3000"],
+    trustedOrigins: [
+        process.env.PUBLIC_BASE_URL || "http://localhost:9000",
+        "http://localhost:3000"
+    ],
     advanced: {
         cookiePrefix: "cdc_auth",
     }

@@ -1,7 +1,7 @@
 <template>
   <q-page padding>
     <div class="row items-center q-mb-lg q-gutter-x-md">
-      <q-btn round flat icon="arrow_back" :to="`/survey/${surveyId}`" />
+      <q-btn round flat icon="arrow_back" :to="`/surveys/${surveyId}`" />
       <div class="col">
         <h1 class="text-h4 text-weight-bold q-my-none">Custom Visualizations</h1>
         <p class="text-grey-5 q-mt-xs">{{ surveyName || 'Loading...' }}</p>

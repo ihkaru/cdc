@@ -84,6 +84,8 @@ cd "$PROJECT_DIR/dashboard" || { echo "dashboard directory not found"; exit 1; }
 echo "[4/4] Migrating Database Schema locally..."
 DATABASE_URL="$LOCAL_DB_URL" bunx drizzle-kit push
 
+echo "      ENCRYPTION_KEY status: ${ENCRYPTION_KEY:+LOADED (Length: ${#ENCRYPTION_KEY})}"
+
 # ─── Start Backend (Bun) as its own process group ───────────────
 setsid bun run dev &
 BACKEND_PID=$!

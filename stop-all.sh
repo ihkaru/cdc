@@ -34,6 +34,8 @@ fi
 echo "[2/3] Cleaning up any orphaned local processes (safety net)..."
 pkill -f "quasar dev" 2>/dev/null || true
 pkill -f "bun run dev" 2>/dev/null || true
+pkill -f "server/index.ts" 2>/dev/null || true
+pkill -f "elysia" 2>/dev/null || true
 
 # ─── Step 3: Stop Docker containers ────────────────────────────
 echo "[3/3] Stopping Docker services..."

@@ -11,7 +11,7 @@ import { storageRoutes } from "./routes/storage";
 import { syncStateRoutes } from "./routes/sync-state";
 
 import { auth } from "./auth";
-import { authMiddleware } from "./middleware/auth";
+import { authMiddleware, getAuthContext } from "./middleware/auth";
 
 // Best practice per dokumentasi resmi better-auth:
 // Gunakan .mount(auth.handler) agar semua HTTP method (GET, POST, dll)
@@ -65,7 +65,9 @@ const app = new Elysia()
     }))
     .get("/api/health", () => ({ status: "ok", timestamp: new Date().toISOString() }))
     .use(authRoutes)
-    .use(authMiddleware)
+    .derive(async ({ request }) => {
+        return await getAuthContext(request);
+    })
     // Global Security Gate & Headers
     .onBeforeHandle(({ path, user, set }: any) => {
         // 1. Security Headers
@@ -76,9 +78,11 @@ const app = new Elysia()
 
         // 2. Global Auth Check (BOLA Prevention)
         const isPublicAuth = path.startsWith("/api/auth/") || path === "/api/health";
+        // Status endpoints are public — they're read-only UI indicators with no sensitive data
+        const isPublicStatus = path === "/api/surveys/sync/status" || path === "/api/surveys/vpn/status";
         const isProtectedApi = path.startsWith("/api/") || path.startsWith("/storage/");
 
-        if (isProtectedApi && !isPublicAuth && !user) {
+        if (isProtectedApi && !isPublicAuth && !isPublicStatus && !user) {
             console.warn(`[Security] Unauthorized access attempt to ${path}`);
             set.status = 401;
             return { error: "Unauthorized" };

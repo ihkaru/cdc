@@ -11,7 +11,15 @@
           color="accent"
           icon="insights"
           label="Visualizations"
-          :to="`/survey/${surveyId}/visualizations`"
+          :to="`/surveys/${surveyId}/visualizations`"
+          unelevated
+          no-caps
+        />
+        <q-btn
+          color="deep-orange"
+          icon="history"
+          label="Logs"
+          :to="`/surveys/${surveyId}/logs`"
           unelevated
           no-caps
         />

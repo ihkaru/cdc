@@ -13,9 +13,18 @@ grep -v "bps.go.id" /etc/hosts > /tmp/hosts && cat /tmp/hosts > /etc/hosts
 # Inject postgres IP into /etc/hosts so it survives openfortivpn overwriting /etc/resolv.conf
 # This allows the RPA container (which shares the vpn network) to still reach the database
 POSTGRES_IP=$(getent hosts postgres | awk '{print $1}')
+GATEWAY_IP=$(ip route | grep default | awk '{print $3}')
+
 if [ -n "$POSTGRES_IP" ]; then
     echo "📌 Mapping postgres -> $POSTGRES_IP in /etc/hosts"
     echo "$POSTGRES_IP postgres" >> /etc/hosts
+fi
+
+# 🛠️ HARD FIX: Ensure internal Docker network stays on eth0
+# Even if VPN adds broad routes, we want 172.16.0.0/12 to stay local
+if [ -n "$GATEWAY_IP" ]; then
+    echo "🛣️  Hard-pinning Docker internal network (172.16.0.0/12) to eth0 via $GATEWAY_IP"
+    ip route add 172.16.0.0/12 dev eth0 via "$GATEWAY_IP" 2>/dev/null || true
 fi
 
 # Helper function to handle graceful shutdown

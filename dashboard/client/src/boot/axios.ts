@@ -10,7 +10,10 @@ declare module '@vue/runtime-core' {
 }
 
 // Be careful when using SSR for client-side API calls
-const api = axios.create({ baseURL: '/api' })
+const api = axios.create({ 
+  baseURL: '/api',
+  withCredentials: true
+})
 
 export default boot(({ app, router }) => {
   // Add interceptor for 401 Unauthorized

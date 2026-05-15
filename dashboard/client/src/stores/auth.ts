@@ -4,7 +4,10 @@ import { api } from 'boot/axios'
 
 // Better Auth Client Initialization
 const authClient = createAuthClient({
-  baseURL: window.location.origin + '/api/auth'
+  baseURL: window.location.origin + '/api/auth',
+  advanced: {
+    cookiePrefix: "cdc_auth",
+  }
 })
 
 export const useAuthStore = defineStore('auth', {
@@ -29,9 +32,14 @@ export const useAuthStore = defineStore('auth', {
         if (res?.data) {
           this.user = res.data.user
           console.log('[AuthStore] User found:', this.user.email);
-          // Fetch roles from our custom endpoint
-          const rolesRes = await api.get('/me/roles')
-          this.roles = rolesRes.data.roles
+          // FIX: Use authClient.$fetch instead of Axios to fetch roles.
+          // Axios cannot reliably send HttpOnly cookies across the dev proxy
+          // port boundary (9000 → 3000). authClient.$fetch uses the same
+          // cookie transport mechanism as getSession() which is proven to work.
+          const rolesRes = await authClient.$fetch<{ roles: string[] }>('/api/me/roles', {
+            credentials: 'include'
+          })
+          this.roles = (rolesRes as any)?.roles ?? []
           console.log('[AuthStore] Roles fetched:', this.roles);
         } else {
           console.log('[AuthStore] No session data');
@@ -40,8 +48,15 @@ export const useAuthStore = defineStore('auth', {
         }
       } catch (err) {
         console.error('[AuthStore] Fetch session error:', err);
-        this.user = null
-        this.roles = []
+        // Don't block auth on roles failure — user is still authenticated
+        // If roles fail, keep the user logged in with empty roles
+        if (this.user) {
+          console.warn('[AuthStore] Roles fetch failed but user is authenticated, proceeding with empty roles');
+          this.roles = []
+        } else {
+          this.user = null
+          this.roles = []
+        }
       } finally {
         this.isInitialized = true
       }

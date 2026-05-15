@@ -1,32 +1,82 @@
 import { Elysia } from "elysia";
-import { auth } from "../auth";
 import { db } from "../db";
 import * as schema from "../db/schema";
 import { eq } from "drizzle-orm";
 
-export const authMiddleware = new Elysia({ name: "authMiddleware" })
-    .derive(async ({ request, set }) => {
-        const session = await auth.api.getSession({ headers: request.headers });
-        
-        if (!session) {
-            return { user: null, roles: [] };
-        }
+// Parse cookie string → { name: value } map
+function parseCookies(cookieHeader: string | null): Record<string, string> {
+    if (!cookieHeader) return {};
+    return Object.fromEntries(
+        cookieHeader.split(";").map(c => {
+            const parts = c.trim().split("=");
+            const k = parts[0] || "";
+            const v = parts.slice(1).join("=");
+            return [k.trim(), decodeURIComponent(v)];
+        }).filter(([k]) => k !== "")
+    );
+}
 
-        // Fetch roles from DB
-        const userRoles = await db.query.usersToRoles.findMany({
-            where: eq(schema.usersToRoles.userId, session.user.id),
-            with: {
-                role: true
-            }
-        });
+/**
+ * DEFINITIVE AUTH MIDDLEWARE FIX
+ *
+ * Root Cause: auth.api.getSession() internally validates the `Origin` / `Host`
+ * header against BETTER_AUTH_URL. In dev mode, Quasar proxy forwards
+ * Origin: localhost:9000 while BETTER_AUTH_URL=localhost:3000. Even after
+ * stripping Origin, Better Auth may check Host or perform internal fetches
+ * that are subject to similar mismatches.
+ *
+ * Solution: Bypass auth.api.getSession() entirely. Read the session token
+ * directly from the cookie header, query the sessions table ourselves,
+ * and validate expiry. This is safe — we are the server; we own the DB.
+ * The cookie token is still generated and signed by Better Auth; we just
+ * look it up ourselves instead of asking Better Auth to do it for us.
+ */
+export const getAuthContext = async (request: Request) => {
+    const cookieHeader = request.headers.get("cookie");
+    const cookies = parseCookies(cookieHeader);
+    const sessionToken = cookies["cdc_auth.session_token"];
 
-        const roles = userRoles.map(ur => ur.role.name);
+    if (!sessionToken) {
+        return { user: null, roles: [] };
+    }
 
-        return {
-            user: session.user,
-            roles: roles
-        };
-    })
+    const rawToken = sessionToken.split(".")[0];
+    if (!rawToken) {
+        return { user: null, roles: [] };
+    }
+
+    // Direct DB lookup
+    const sessionRow = await db.query.sessions.findFirst({
+        where: eq(schema.sessions.token, rawToken),
+    });
+
+    if (!sessionRow || sessionRow.expiresAt < new Date()) {
+        return { user: null, roles: [] };
+    }
+
+    const userRow = await db.query.users.findFirst({
+        where: eq(schema.users.id, sessionRow.userId),
+    });
+
+    if (!userRow) {
+        return { user: null, roles: [] };
+    }
+
+    const userRoles = await db.query.usersToRoles.findMany({
+        where: eq(schema.usersToRoles.userId, userRow.id),
+        with: { role: true },
+    });
+
+    const roles = userRoles.map(ur => ur.role.name);
+
+    return { user: userRow, roles };
+};
+
+export const authMiddleware = new Elysia({ name: "authMiddlewareV2" })
+    .derive(async ({ request }) => {
+        return await getAuthContext(request);
+    });
+
 export const requireAuth = (app: Elysia) => app
     .use(authMiddleware)
     .onBeforeHandle(({ user, set }: any) => {

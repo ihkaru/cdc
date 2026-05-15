@@ -28,7 +28,7 @@
         color="primary"
         icon="add"
         label="Add Survey"
-        to="/survey/new"
+        to="/surveys/new"
         unelevated
         :disable="!vpnStatus?.connected"
       >
@@ -83,7 +83,7 @@
     <q-card v-else-if="surveys.length === 0" class="text-center q-pa-xl bg-dark text-grey-5 border-card" flat bordered>
       <q-icon name="assignment" size="4rem" class="q-mb-md opacity-50" />
       <p class="text-h6 q-mb-md">No surveys configured yet.</p>
-      <q-btn color="primary" to="/survey/new" class="q-mt-sm" unelevated>Add your first survey</q-btn>
+      <q-btn color="primary" to="/surveys/new" class="q-mt-sm" unelevated>Add your first survey</q-btn>
     </q-card>
 
     <div v-else class="row q-col-gutter-lg">
@@ -128,12 +128,12 @@
               >
                 <q-tooltip v-if="!vpnStatus?.connected">VPN tidak terhubung</q-tooltip>
               </q-btn>
-              <q-btn class="col" color="grey-9" text-color="white" :to="`/survey/${s.id}`" label="View Data" unelevated />
+              <q-btn class="col" color="grey-9" text-color="white" :to="`/surveys/${s.id}`" label="View Data" unelevated />
             </div>
             <div class="row q-gutter-x-sm row-sm-btns">
-              <q-btn class="col" size="sm" color="accent" text-color="white" :to="`/survey/${s.id}/visualizations`" label="Viz" outline />
-              <q-btn class="col" size="sm" color="grey-9" text-color="white" :to="`/survey/${s.id}/logs`" label="Logs" outline />
-              <q-btn class="col" size="sm" color="grey-9" text-color="white" :to="`/survey/${s.id}/edit`" label="Edit" outline />
+              <q-btn class="col" size="sm" color="accent" text-color="white" :to="`/surveys/${s.id}/visualizations`" label="Viz" outline />
+              <q-btn class="col" size="sm" color="grey-9" text-color="white" :to="`/surveys/${s.id}/logs`" label="Logs" outline />
+              <q-btn class="col" size="sm" color="grey-9" text-color="white" :to="`/surveys/${s.id}/edit`" label="Edit" outline />
               <q-btn class="col" size="sm" color="negative" @click="deleteSurvey(s.id)" label="Del" outline />
             </div>
           </q-card-actions>

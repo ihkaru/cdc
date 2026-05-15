@@ -26,17 +26,26 @@ async function seed() {
     console.log("✅ Roles created.");
 
     // 2. Read and Parse data-pegawai.php
-    // We assume the script is run from server/db/ or similar, but we'll use process.cwd() or relative to root
-    const phpPath = path.join(process.cwd(), 'docs/references/data-pegawai.php');
-    if (!fs.existsSync(phpPath)) {
-        console.error(`❌ Employee data file not found at: ${phpPath}`);
-        // Fallback for different run contexts
-        const fallbackPath = path.join(__dirname, '../../docs/references/data-pegawai.php');
-        if (!fs.existsSync(fallbackPath)) {
-            throw new Error(`Critical: data-pegawai.php not found anywhere!`);
+    // We relocated the file to dashboard/server/db/seed_data/ to ensure it's available in Docker build
+    const possiblePaths = [
+        path.join(__dirname, 'seed_data', 'data-pegawai.php'),
+        path.join(process.cwd(), 'server', 'db', 'seed_data', 'data-pegawai.php'),
+        path.join(process.cwd(), 'docs', 'references', 'data-pegawai.php'), // fallback
+    ];
+
+    let phpPath = "";
+    for (const p of possiblePaths) {
+        if (fs.existsSync(p)) {
+            phpPath = p;
+            break;
         }
     }
-    const phpContent = fs.readFileSync(fs.existsSync(phpPath) ? phpPath : path.join(__dirname, '../../docs/references/data-pegawai.php'), 'utf-8');
+
+    if (!phpPath) {
+        throw new Error(`Critical: data-pegawai.php not found in any of: ${possiblePaths.join(', ')}`);
+    }
+
+    const phpContent = fs.readFileSync(phpPath, 'utf-8');
     
     // Regex for: "nama" => "...", "email" => "..."
     const pegawaiRegex = /"nama"\s*=>\s*"([^"]+)",[\s\S]*?"email"\s*=>\s*"([^"]+)"/g;
