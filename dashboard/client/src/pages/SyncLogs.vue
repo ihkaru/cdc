@@ -448,8 +448,8 @@ function copyForAI() {
 
 onMounted(async () => {
   await fetchLogsAndStatus()
-  // Poll every 3s for comprehensive dashboard state
-  pollTimer = setInterval(fetchDashboardState, 3000)
+  // Poll every 10s for dashboard state
+  pollTimer = setInterval(fetchDashboardState, 10000)
 })
 
 onBeforeUnmount(() => {

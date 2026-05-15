@@ -270,8 +270,8 @@ function deleteSurvey(id: string) {
 
 onMounted(() => {
   loadData()
-  // Poll status every 5s when syncing, 30s otherwise
-  pollTimer = setInterval(refreshStatus, 5000)
+  // Poll status every 10s
+  pollTimer = setInterval(refreshStatus, 10000)
 })
 
 onBeforeUnmount(() => {

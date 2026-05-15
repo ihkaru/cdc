@@ -73,7 +73,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
     // Get RPA sync status
     .get("/sync/status", async () => {
         try {
-            const response = await fetch(`${RPA_URL}/status`, { signal: AbortSignal.timeout(5000) });
+            const response = await fetch(`${RPA_URL}/status`, { signal: AbortSignal.timeout(15000) });
             return await response.json();
         } catch {
             return { is_running: false, error: "RPA service unavailable" };
@@ -83,7 +83,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
     // Get VPN connection status from RPA
     .get("/vpn/status", async () => {
         try {
-            const response = await fetch(`${RPA_URL}/vpn/check`, { signal: AbortSignal.timeout(5000) });
+            const response = await fetch(`${RPA_URL}/vpn/check`, { signal: AbortSignal.timeout(15000) });
             return await response.json();
         } catch {
             return { connected: false, error: "RPA service unavailable" };
