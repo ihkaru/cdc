@@ -1,6 +1,7 @@
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
 WORKDIR /app
 
 # System deps for Playwright Chromium
