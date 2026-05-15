@@ -145,14 +145,14 @@ export const verifications = pgTable("verifications", {
 // --- RBAC ---
 
 export const roles = pgTable("roles", {
-  id: uuid("id").primaryKey().defaultRandom(),
+  id: text("id").primaryKey(),
   name: text("name").notNull().unique(), // e.g. "admin", "user"
   description: text("description"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
 export const permissions = pgTable("permissions", {
-  id: uuid("id").primaryKey().defaultRandom(),
+  id: text("id").primaryKey(),
   name: text("name").notNull().unique(), // e.g. "survey:write", "user:manage"
   description: text("description"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
@@ -160,14 +160,14 @@ export const permissions = pgTable("permissions", {
 
 export const usersToRoles = pgTable("users_to_roles", {
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  roleId: uuid("role_id").notNull().references(() => roles.id, { onDelete: "cascade" }),
+  roleId: text("role_id").notNull().references(() => roles.id, { onDelete: "cascade" }),
 }, (t) => ({
   pk: primaryKey({ columns: [t.userId, t.roleId] }),
 }));
 
 export const rolesToPermissions = pgTable("roles_to_permissions", {
-  roleId: uuid("role_id").notNull().references(() => roles.id, { onDelete: "cascade" }),
-  permissionId: uuid("permission_id").notNull().references(() => permissions.id, { onDelete: "cascade" }),
+  roleId: text("role_id").notNull().references(() => roles.id, { onDelete: "cascade" }),
+  permissionId: text("permission_id").notNull().references(() => permissions.id, { onDelete: "cascade" }),
 }, (t) => ({
   pk: primaryKey({ columns: [t.roleId, t.permissionId] }),
 }));

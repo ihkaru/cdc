@@ -12,11 +12,13 @@ async function seed() {
 
     // 1. Create Roles & Permissions
     const [adminRole] = await db.insert(schema.roles).values({
+        id: crypto.randomUUID(),
         name: "admin",
         description: "Full access to system"
     }).onConflictDoUpdate({ target: schema.roles.name, set: { description: "Full access" } }).returning();
 
     const [userRole] = await db.insert(schema.roles).values({
+        id: crypto.randomUUID(),
         name: "user",
         description: "Standard access"
     }).onConflictDoUpdate({ target: schema.roles.name, set: { description: "Standard access" } }).returning();
@@ -24,7 +26,17 @@ async function seed() {
     console.log("✅ Roles created.");
 
     // 2. Read and Parse data-pegawai.php
-    const phpContent = fs.readFileSync(path.join(__dirname, '../../../docs/references/data-pegawai.php'), 'utf-8');
+    // We assume the script is run from server/db/ or similar, but we'll use process.cwd() or relative to root
+    const phpPath = path.join(process.cwd(), 'docs/references/data-pegawai.php');
+    if (!fs.existsSync(phpPath)) {
+        console.error(`❌ Employee data file not found at: ${phpPath}`);
+        // Fallback for different run contexts
+        const fallbackPath = path.join(__dirname, '../../docs/references/data-pegawai.php');
+        if (!fs.existsSync(fallbackPath)) {
+            throw new Error(`Critical: data-pegawai.php not found anywhere!`);
+        }
+    }
+    const phpContent = fs.readFileSync(fs.existsSync(phpPath) ? phpPath : path.join(__dirname, '../../docs/references/data-pegawai.php'), 'utf-8');
     
     // Regex for: "nama" => "...", "email" => "..."
     const pegawaiRegex = /"nama"\s*=>\s*"([^"]+)",[\s\S]*?"email"\s*=>\s*"([^"]+)"/g;

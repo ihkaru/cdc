@@ -11,9 +11,20 @@ echo "🚀 Starting Dashboard Container Entrypoint..."
 echo "📦 Syncing database schema (drizzle-kit push)..."
 # We use push for simplicity in this dev/stage environment.
 # In strict production, we would use 'migrate'.
+SYNC_SUCCESS=false
 for i in {1..10}; do
-  bunx drizzle-kit push && break || echo "   ⏳ DB not ready, retrying ($i/10)..." && sleep 5
+  if bunx drizzle-kit push; then
+    SYNC_SUCCESS=true
+    break
+  fi
+  echo "   ⏳ DB not ready or sync failed, retrying ($i/10)..."
+  sleep 5
 done
+
+if [ "$SYNC_SUCCESS" = false ]; then
+  echo "❌ Database schema sync failed after 10 attempts. Exiting."
+  exit 1
+fi
 
 # 3. Check if Seeding is needed
 # We can check if a flag file exists or just run it (the seeder is idempotent).
