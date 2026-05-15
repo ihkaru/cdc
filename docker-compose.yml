@@ -57,6 +57,7 @@ services:
 
   rpa:
     build: ./rpa
+    image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-rpa
     init: true
     network_mode: "service:vpn"
@@ -83,7 +84,7 @@ services:
     restart: unless-stopped
 
   vpn-auth:
-    build: ./rpa
+    image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-vpn-auth
     environment:
       - DATABASE_URL=${DATABASE_URL}
@@ -95,7 +96,7 @@ services:
     command: uvicorn src.app:app --host 0.0.0.0 --port 8000
 
   archiver:
-    build: ./rpa
+    image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-archiver
     environment:
       - DATABASE_URL=${DATABASE_URL}
