@@ -43,6 +43,7 @@ def status():
 
     return StatusResponse(
         is_running=sync_state.is_running,
+        is_vpn_fetching=sync_state.is_vpn_fetching,
         current_survey=sync_state.current_survey,
         current_survey_config_id=sync_state.current_survey_config_id,
         current_job_id=sync_state.current_job_id,
@@ -159,8 +160,15 @@ async def check_vpn():
 @router.post("/vpn/auto-fetch")
 async def auto_fetch_vpn(req: VpnCookieRequest):
     """Otomasi ambil VPN cookie dan simpan ke database."""
-    print(f"🔄 Memulai auto-fetch VPN cookie untuk user {req.sso_username}...")
-    cookie = await fetch_vpn_cookie(req.sso_username, req.sso_password)
+    if sync_state.is_vpn_fetching:
+        return {"status": "already_fetching", "message": "Proses auto-fetch VPN sedang berjalan..."}
+
+    sync_state.is_vpn_fetching = True
+    try:
+        print(f"🔄 Memulai auto-fetch VPN cookie untuk user {req.sso_username}...")
+        cookie = await fetch_vpn_cookie(req.sso_username, req.sso_password)
+    finally:
+        sync_state.is_vpn_fetching = False
     
     if cookie:
         try:

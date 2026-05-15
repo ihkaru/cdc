@@ -10,7 +10,7 @@
         <!-- VPN Status Chip (clickable to open cookie dialog) -->
         <q-chip
           v-if="vpnStatus"
-          :color="vpnStatus.connected ? 'positive' : 'negative'"
+          :color="vpnStatus.is_fetching ? 'amber-9' : (vpnStatus.connected ? 'positive' : 'negative')"
           text-color="white"
           size="sm"
           outline
@@ -18,9 +18,13 @@
           @click="showCookieDialog = true"
           class="q-mr-md cursor-pointer"
         >
-          <q-icon :name="vpnStatus.connected ? 'vpn_lock' : 'vpn_off'" class="q-mr-xs" />
-          VPN: {{ vpnStatus.connected ? 'Connected' : 'Disconnected' }}
-          <q-tooltip>Click to update VPN cookie</q-tooltip>
+          <q-spinner-dots v-if="vpnStatus.is_fetching" size="1em" class="q-mr-xs" />
+          <q-icon v-else :name="vpnStatus.connected ? 'vpn_lock' : 'vpn_off'" class="q-mr-xs" />
+          
+          <template v-if="vpnStatus.is_fetching">VPN: Fetching...</template>
+          <template v-else>VPN: {{ vpnStatus.connected ? 'Connected' : 'Disconnected' }}</template>
+          
+          <q-tooltip>{{ vpnStatus.is_fetching ? 'Robot sedang mengambil cookie baru...' : 'Click to update VPN cookie' }}</q-tooltip>
         </q-chip>
 
         <q-btn flat dense label="Surveys" to="/surveys" class="q-mr-sm" />

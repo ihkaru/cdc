@@ -81,7 +81,7 @@ async def ensure_connected():
     4. Poll for reconnect, up to 60s.
     """
     reachable, reason = await check_fasih_reachable()
-
+    
     if reachable:
         return True
 

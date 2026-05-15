@@ -2,6 +2,7 @@
 Repository — operasi CRUD dan upsert untuk Assignment
 """
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -103,6 +104,13 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
             stats.total_failed += 1
         return "failed"
 
+    # Ensure UUID object for PostgreSQL
+    try:
+        db_uuid = uuid.UUID(str(record_id))
+    except (ValueError, TypeError):
+        if stats: stats.total_failed += 1
+        return "failed"
+
     # Hubungi Date Modified dari berbagai kemungkinan
     date_modified_raw = (
         data.get("date_modified") or 
@@ -114,22 +122,28 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
     data_json_str = json.dumps(data, ensure_ascii=False)
     flat_data = extract_flat_data(data)
 
-    existing = session.get(Assignment, record_id)
+    existing = session.get(Assignment, db_uuid)
 
     if existing is None:
         # INSERT baru
+        
+        # Helper to safely parse UUID or return None
+        def safe_uuid(val):
+            if not val: return None
+            try: return uuid.UUID(str(val))
+            except: return None
+
         assignment = Assignment(
-            id=record_id,
-            survey_config_id=data.get("_survey_config_id", ""),
+            id=db_uuid,
+            survey_config_id=safe_uuid(data.get("_survey_config_id")),
             code_identity=(
                 data.get("code_identity") or 
                 data.get("assignment", {}).get("codeIdentity") or 
                 ""
             ),
-            survey_period_id=(
+            survey_period_id=safe_uuid(
                 data.get("survey_period_id") or 
-                data.get("assignment", {}).get("surveyPeriodId") or 
-                ""
+                data.get("assignment", {}).get("surveyPeriodId")
             ),
             assignment_status_alias=(
                 data.get("assignment_status_alias") or 
@@ -378,7 +392,15 @@ class BatchUpserterBulk:
             "sync_log_id": self.sync_log_id
         }
         
-        if not db_row["id"]:
+        # PostgreSQL requires explicit UUID objects for bulk insert
+        try:
+            db_row["id"] = uuid.UUID(str(db_row["id"]))
+            if db_row.get("survey_config_id"):
+                db_row["survey_config_id"] = uuid.UUID(str(db_row["survey_config_id"]))
+            if db_row.get("survey_period_id"):
+                db_row["survey_period_id"] = uuid.UUID(str(db_row["survey_period_id"]))
+        except (ValueError, TypeError) as e:
+            print(f"   ⚠️ Skipping record with invalid UUID: {db_row['id']} ({e})")
             self.stats.total_failed += 1
             return
 
@@ -445,3 +467,23 @@ class BatchUpserterBulk:
         return self.stats
 
 
+
+def get_system_setting(session: Session, key: str) -> Optional[str]:
+    """Ambil nilai dari system_settings."""
+    from .models import SystemSettings
+    setting = session.get(SystemSettings, key)
+    return setting.value if setting else None
+
+
+def set_system_setting(session: Session, key: str, value: str):
+    """Simpan atau update nilai di system_settings."""
+    from .models import SystemSettings
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    stmt = pg_insert(SystemSettings).values(key=key, value=value)
+    upsert_stmt = stmt.on_conflict_do_update(
+        index_elements=["key"],
+        set_={"value": value, "updated_at": datetime.now(timezone.utc)}
+    )
+    session.execute(upsert_stmt)
+    session.commit()

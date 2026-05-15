@@ -30,7 +30,7 @@ from playwright.async_api import async_playwright
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from config.settings import Settings
-from auth import auto_login
+from auth import auto_login, launch_stealth_browser, new_stealth_context
 from api_client import FasihApiClient
 from pages.detail_page import fetch_assignments_concurrent
 from db.connection import init_db, get_session
@@ -59,49 +59,68 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
     print(f"   Dry run: {dry_run}")
     print("=" * 60)
 
-    # --- FASE 1: LOGIN SSO via PLAYWRIGHT ---
-    print("\n--- FASE 1: Login SSO BPS ---")
+    # --- FASE 1: SESSION VALIDATION & LOGIN ---
+    print("\n--- FASE 1: Session Validation & Login ---")
     phase_start = time.perf_counter()
     cookies = {}
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, slow_mo=50)
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 800},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        page = await context.new_page()
+    
+    # Try CACHED cookies first
+    from db.connection import get_session
+    from db.repository import get_system_setting, set_system_setting
+    
+    db_session = get_session()
+    cache_key = f"sso_cookies_{settings.sso_username}"
+    cached_json = get_system_setting(db_session, cache_key)
+    db_session.close()
 
-        login_ok, cookies_dict = await auto_login(page, settings.sso_username, settings.sso_password)
-        if not login_ok or not cookies_dict:
-            print("❌ Login gagal atau cookies tidak didapatkan! Cycle dibatalkan.")
-            await browser.close()
-            return
+    if cached_json:
+        try:
+            print(f"   🍪 Ditemukan cached cookies untuk {settings.sso_username}. Memvalidasi...")
+            temp_cookies = json.loads(cached_json)
+            # Test session dengan API ringan
+            api_test = FasihApiClient(temp_cookies)
+            # Mencoba fetch survey ID sebagai probe
+            survey_id_probe = await api_test.get_survey_id(settings.survey_name)
+            await api_test.close()
             
-        cookies = cookies_dict
-        await browser.close()
-        
-    print(f"   🔑 Didapatkan {len(cookies)} cookies. Melanjutkan ke mode API murni.")
-    timings["login"] = int((time.perf_counter() - phase_start) * 1000)
+            if survey_id_probe:
+                print(f"   ⚡ Sesi CACHE valid! Melewati login browser (Playwright skipped).")
+                cookies = temp_cookies
+            else:
+                print(f"   ⚠️ Sesi CACHE kadaluwarsa. Memerlukan login browser.")
+        except Exception as e:
+            print(f"   ⚠️ Gagal menggunakan cached cookies: {e}")
 
-    # Save cookies to DB for self-healing archiver
-    try:
-        from db.models import SystemSettings
-        from db.connection import reset_engine, init_db, get_session
-        reset_engine()
-        init_db()
-        db_session = get_session()
-        setting = db_session.query(SystemSettings).filter_by(key="sso_cookies").first()
-        if setting:
-            setting.value = json.dumps(cookies)
-            setting.updated_at = datetime.now(timezone.utc)
-        else:
-            setting = SystemSettings(key="sso_cookies", value=json.dumps(cookies))
-            db_session.add(setting)
-        db_session.commit()
-        db_session.close()
-        print("   💾 SSO cookies saved to DB (Ready for self-healing).")
-    except Exception as e:
-        print(f"   ⚠️ Warning: Failed to save SSO cookies to DB: {e}")
+    # Fallback to Playwright if no valid cookies
+    if not cookies:
+        print("   🎭 Memulai Playwright browser untuk login SSO...")
+        async with async_playwright() as p:
+            browser = await launch_stealth_browser(p)
+            context = await new_stealth_context(
+                browser,
+                viewport={"width": 1280, "height": 800}
+            )
+            page = await context.new_page()
+
+            login_ok, cookies_dict, err_msg = await auto_login(page, settings.sso_username, settings.sso_password)
+            if not login_ok or not cookies_dict:
+                print("❌ Login gagal atau cookies tidak didapatkan! Cycle dibatalkan.")
+                await browser.close()
+                return
+                
+            cookies = cookies_dict
+            await browser.close()
+        
+        # Save fresh cookies to DB
+        try:
+            db_session = get_session()
+            set_system_setting(db_session, cache_key, json.dumps(cookies))
+            db_session.close()
+            print(f"   💾 Sesi baru disimpan ke cache untuk {settings.sso_username}")
+        except Exception as e:
+            print(f"   ⚠️ Gagal menyimpan cookies ke DB: {e}")
+
+    timings["login"] = int((time.perf_counter() - phase_start) * 1000)
 
     # Inisialisasi API Client
     api = FasihApiClient(cookies)
@@ -267,11 +286,11 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
 async def test_login(settings: Settings):
     print("🧪 Test Mode: Login saja")
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, slow_mo=100)
-        context = await browser.new_context(viewport={"width": 1280, "height": 800})
+        browser = await launch_stealth_browser(p)
+        context = await new_stealth_context(browser, viewport={"width": 1280, "height": 800})
         page = await context.new_page()
 
-        ok, cookies = await auto_login(page, settings.sso_username, settings.sso_password)
+        ok, cookies, err_msg = await auto_login(page, settings.sso_username, settings.sso_password)
         if ok:
             print(f"✅ Login berhasil! Didapatkan {len(cookies)} cookies.")
         else:

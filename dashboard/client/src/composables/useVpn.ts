@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 
-export const vpnStatus = ref<{ connected: boolean; info?: string; reason?: string } | null>(null)
+export const vpnStatus = ref<{ connected: boolean; info?: string; reason?: string; is_fetching?: boolean } | null>(null)
 
 export function useVpn() {
   async function checkVPN() {

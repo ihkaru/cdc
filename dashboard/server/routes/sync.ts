@@ -20,16 +20,21 @@ function decryptPassword(ciphertext: string): string {
 
 import { requireAuth } from "../middleware/auth";
 
+const lastLookup = new Map<string, number>();
+
 export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
     .use(requireAuth)
     // Trigger sync for a survey
-    .post("/:id/sync", async ({ params }) => {
+    .post("/:id/sync", async ({ params, set }) => {
         const [survey] = await db
             .select()
             .from(surveyConfigs)
             .where(eq(surveyConfigs.id, params.id));
 
-        if (!survey) throw new Error("Survey not found");
+        if (!survey) {
+            set.status = 404;
+            return { error: "Survey not found" };
+        }
 
         // Guard: Check if RPA is already busy
         try {
@@ -37,7 +42,8 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
             if (statusResp.ok) {
                 const status = await statusResp.json() as any;
                 if (status.is_running && status.active_job?.survey_config_id === survey.id) {
-                    throw new Error("Sync for this survey is already running in background.");
+                    set.status = 409;
+                    return { error: "Sync for this survey is already running in background." };
                 }
             }
         } catch (e) {
@@ -64,7 +70,8 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
-            throw new Error((err as any).detail || `RPA responded with ${response.status}`);
+            set.status = response.status === 401 ? 401 : 400;
+            return { error: (err as any).detail || `RPA responded with ${response.status}` };
         }
 
         return await response.json();
@@ -83,8 +90,18 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
     // Get VPN connection status from RPA
     .get("/vpn/status", async () => {
         try {
-            const response = await fetch(`${RPA_URL}/vpn/check`, { signal: AbortSignal.timeout(15000) });
-            return await response.json();
+            const [checkRes, statusRes] = await Promise.all([
+                fetch(`${RPA_URL}/vpn/check`, { signal: AbortSignal.timeout(10000) }),
+                fetch(`${RPA_URL}/status`, { signal: AbortSignal.timeout(5000) })
+            ]);
+            
+            const vpnInfo = await checkRes.json() as any;
+            const rpaInfo = await statusRes.json() as any;
+
+            return { 
+                ...vpnInfo, 
+                is_fetching: rpaInfo.is_vpn_fetching 
+            };
         } catch {
             return { connected: false, error: "RPA service unavailable" };
         }
@@ -103,10 +120,11 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
     })
 
     // Update VPN cookie (store in PostgreSQL for VPN container to read)
-    .post("/vpn/cookie", async ({ body }) => {
+    .post("/vpn/cookie", async ({ body, set }) => {
         const { cookie } = body as { cookie: string };
         if (!cookie || cookie.trim().length < 10) {
-            throw new Error("Cookie is empty or too short");
+            set.status = 400;
+            return { error: "Cookie is empty or too short" };
         }
         await db
             .insert(systemSettings)
@@ -129,26 +147,26 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
     // ===== FASIH Lookup (untuk wizard Add Survey) =====
 
     // Simple in-memory rate limiter for proxy lookups
-    .state("lastLookup", new Map<string, number>())
-    .onBeforeHandle(({ user, path, getValues, set }: any) => {
+    .onBeforeHandle(({ user, path, set }: any) => {
         if (path.includes("/fasih/")) {
             const now = Date.now();
-            const last = (getValues("lastLookup") as Map<string, number>).get(user!.id) || 0;
+            const last = lastLookup.get(user!.id) || 0;
             if (now - last < 5000) { // 5 seconds throttle
                 set.status = 429;
                 return { error: "Too many requests. Please wait 5s." };
             }
-            (getValues("lastLookup") as Map<string, number>).set(user!.id, now);
+            lastLookup.set(user!.id, now);
         }
     })
 
     // Lookup surveys + provinces dari FASIH API (memerlukan SSO login ~15 detik)
-    .post("/fasih/lookup", async ({ body }) => {
+    .post("/fasih/lookup", async ({ body, set }) => {
         const { ssoUsername, ssoPassword } = body as { ssoUsername: string; ssoPassword: string };
         
         // Input Validation
         if (!ssoUsername || !ssoUsername.includes("@bps.go.id")) {
-            throw new Error("Invalid SSO Username format");
+            set.status = 400;
+            return { error: "Invalid SSO Username format" };
         }
 
         const response = await fetch(`${RPA_URL}/lookup/metadata`, {
@@ -172,13 +190,14 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
                     detail = "RPA service is unavailable or VPN is disconnected.";
                 }
             }
-            throw new Error(detail);
+            set.status = response.status === 401 ? 401 : 400;
+            return { error: detail };
         }
         return await response.json();
     })
 
     // Lookup kabupaten untuk satu provinsi
-    .post("/fasih/kabupaten", async ({ body }) => {
+    .post("/fasih/kabupaten", async ({ body, set }) => {
         const { ssoUsername, ssoPassword, provFullCode } = body as {
             ssoUsername: string;
             ssoPassword: string;
@@ -187,10 +206,12 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 
         // Input Validation
         if (!ssoUsername || !ssoUsername.includes("@bps.go.id")) {
-            throw new Error("Invalid SSO Username format");
+            set.status = 400;
+            return { error: "Invalid SSO Username format" };
         }
         if (!provFullCode || !/^\d+$/.test(provFullCode)) {
-            throw new Error("Invalid Province Code format");
+            set.status = 400;
+            return { error: "Invalid Province Code format" };
         }
 
         const response = await fetch(`${RPA_URL}/lookup/kabupaten`, {
@@ -214,13 +235,14 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
                     detail = "RPA service or VPN is down.";
                 }
             }
-            throw new Error(detail);
+            set.status = response.status === 401 ? 401 : 400;
+            return { error: detail };
         }
         return await response.json();
     })
     
     // Explicitly trigger VPN auto-fetch from UI
-    .post("/vpn/auto-fetch", async () => {
+    .post("/vpn/auto-fetch", async ({ set }) => {
         console.log("👆 UI Manual Trigger: VPN Auto-Fix requested.");
         
         const [survey] = await db
@@ -229,7 +251,10 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
             .where(eq(surveyConfigs.isActive, true))
             .limit(1);
 
-        if (!survey) throw new Error("No active survey to borrow credentials from");
+        if (!survey) {
+            set.status = 404;
+            return { error: "No active survey to borrow credentials from" };
+        }
 
         const password = decryptPassword(survey.ssoPasswordEncrypted);
         
@@ -240,14 +265,15 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
                 sso_username: survey.ssoUsername,
                 sso_password: password
             }),
-            signal: AbortSignal.timeout(45000)
+            signal: AbortSignal.timeout(300000)
         });
 
         if (!fetchRes.ok) {
             const err = await fetchRes.json().catch(() => ({}));
             const detail = (err as any).detail || `Auth service error ${fetchRes.status}`;
             console.error(`   ❌ VPN Auto-fetch failed: ${detail}`);
-            throw new Error(detail);
+            set.status = fetchRes.status === 401 ? 401 : 400;
+            return { error: detail };
         }
 
         return await fetchRes.json();
@@ -291,7 +317,7 @@ const checkVpnAndFetchCookie = async () => {
                     sso_username: survey.ssoUsername,
                     sso_password: password
                 }),
-                signal: AbortSignal.timeout(45000)
+                signal: AbortSignal.timeout(300000)
             });
 
             if (fetchRes.ok) {

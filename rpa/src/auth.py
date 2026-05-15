@@ -9,17 +9,26 @@ from playwright.async_api import Page
 
 TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
 
+async def launch_stealth_browser(p):
+    return await p.chromium.launch(
+        headless=True,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-setuid-sandbox"
+        ]
+    )
 
-async def auto_login(page: Page, username: str, password: str) -> Tuple[bool, Dict[str, str]]:
-    """
-    Otomasi login SSO BPS:
-    1. Buka halaman login FASIH
-    2. Klik "Login SSO BPS"
-    3. Isi username + password di form Keycloak
-    4. Submit dan tunggu redirect ke dashboard
+async def new_stealth_context(browser, **kwargs):
+    kwargs.setdefault("ignore_https_errors", True)
+    kwargs.setdefault("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    context = await browser.new_context(**kwargs)
+    await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    return context
+
 
     Returns:
-        Tuple[bool, Dict]: (Success status, Cookies dictionary)
+        Tuple[bool, Dict, str]: (Success status, Cookies dictionary, Error message if any)
     """
     FASIH_HOST = TARGET_URL.split("//")[-1]  # fasih-sm.bps.go.id
 
@@ -30,8 +39,14 @@ async def auto_login(page: Page, username: str, password: str) -> Tuple[bool, Di
 
         # --- Step 2: Klik tombol "Login SSO BPS" ---
         print("   Mengklik 'Login SSO BPS'...")
-        await page.wait_for_selector("a.login-button", state="visible", timeout=15000)
-        await page.click("a.login-button:has-text('Login SSO BPS')")
+        # Coba CSS selector dulu, fallback ke text selector jika FASIH mengubah class
+        try:
+            await page.wait_for_selector("a.login-button", state="visible", timeout=30000)
+            await page.click("a.login-button:has-text('Login SSO BPS')")
+        except Exception:
+            # Fallback: cari via teks langsung — lebih robust terhadap perubahan HTML
+            print("   ⚠️ CSS selector gagal, mencoba text selector...")
+            await page.click("text='Login SSO BPS'")
 
         # --- Step 3: Tunggu redirect ke Keycloak SSO ---
         print("   Menunggu halaman SSO BPS (Keycloak)...")
@@ -68,8 +83,9 @@ async def auto_login(page: Page, username: str, password: str) -> Tuple[bool, Di
                 err_el = await page.query_selector("#input-error, .alert-error, [class*='error-message']")
                 if err_el:
                     err_text = await err_el.inner_text()
-                    print(f"   ❌ Keycloak error: {err_text.strip()}")
-                    return False, {}
+                    msg = err_text.strip().replace("\n", " ")
+                    print(f"   ❌ Keycloak error: {msg}")
+                    return False, {}, msg
             except:
                 pass
 
@@ -82,7 +98,7 @@ async def auto_login(page: Page, username: str, password: str) -> Tuple[bool, Di
             # Loop selesai tanpa break = timeout
             current_url = page.url
             print(f"   ❌ Login timeout setelah {deadline}s. URL terakhir: {current_url}")
-            return False, {}
+            return False, {}, "Login timeout"
 
         # Tunggu halaman FASIH sepenuhnya dimuat (non-blocking)
         try:
@@ -96,17 +112,22 @@ async def auto_login(page: Page, username: str, password: str) -> Tuple[bool, Di
             print("   ❌ Login gagal — masih di halaman login. Cek username/password.")
             return False, {}
 
-        print("   ✅ Login berhasil!")
+        print("   ✅ Login berhasil! Fishing for API session maturation...")
         
-        # Ekstrak semua cookies (termasuk F5 security cookies & XSRF)
-        cookies_list = await page.context.cookies()
-        cookies_dict = {c['name']: c['value'] for c in cookies_list}
-        
-        return True, cookies_dict
+        # Navigate to a simple API endpoint to force XSRF-TOKEN generation
+        try:
+            await page.goto(f"{TARGET_URL}/region/api/v1/region/level1?groupId=82af087a-d063-48b9-8633-71c84c4e7422", wait_until="networkidle", timeout=15000)
+            print("   🎣 [Auth] API Maturation page loaded.")
+        except:
+            print("   ⚠️ [Auth] API Maturation page timeout (non-critical).")
 
+        # Ekstrak semua cookies (termasuk F5 security cookies & XSRF)
+        cookies = await page.context.cookies()
+        cookies_dict = {c['name']: c['value'] for c in cookies}
+        return True, cookies_dict, ""
     except Exception as e:
-        print(f"   ❌ Login error: {e}")
-        return False, {}
+        print(f"   ❌ auto_login exception: {e}")
+        return False, {}, str(e)
 
 
 
@@ -141,11 +162,8 @@ async def fetch_vpn_cookie(username: str, password: str) -> str | None:
     try:
         # Gunakan async_playwright secara lokal untuk isolated browser session
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox"]
-            )
-            context = await browser.new_context(ignore_https_errors=True)
+            browser = await launch_stealth_browser(p)
+            context = await new_stealth_context(browser)
             page = await context.new_page()
             
             start_time = datetime.now()

@@ -9,7 +9,7 @@ from db.repository import SyncStats
 
 from state import sync_state
 from schemas import SyncRequest
-from auth import auto_login
+from auth import auto_login, launch_stealth_browser, new_stealth_context
 from api_client import FasihApiClient
 from pages.survey_navigator import find_survey_id, navigate_to_data_tab
 from pages.filter_rotator import iterate_filters, get_total_entries
@@ -60,14 +60,10 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
         # Global timeout to prevent infinite hang (e.g. DNS or asyncio deadlock)
         async with asyncio.timeout(1200): # 20 minutes
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                context = await browser.new_context(
-                    viewport={"width": 1280, "height": 800},
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/120.0.0.0 Safari/537.36"
-                    ),
+                browser = await launch_stealth_browser(p)
+                context = await new_stealth_context(
+                    browser,
+                    viewport={"width": 1280, "height": 800}
                 )
 
                 try:
@@ -75,9 +71,9 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
 
                     # Login
                     _progress("login", "🔐 Login SSO BPS via Playwright...")
-                    login_ok, cookie_dict = await auto_login(page, req.sso_username, req.sso_password)
+                    login_ok, cookie_dict, err_msg = await auto_login(page, req.sso_username, req.sso_password)
                     if not login_ok:
-                        raise Exception("Login gagal")
+                        raise Exception(f"Login gagal: {err_msg}")
 
                     # Close browser right after login!
                     await browser.close()
