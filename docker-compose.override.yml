@@ -1,0 +1,30 @@
+# This file is automatically merged with docker-compose.yml by Docker.
+# It contains local development specific configurations (ports, volumes, etc.)
+
+services:
+  dashboard:
+    ports:
+      - "3000:3000"
+    # Local development volumes for hot-reloading (uncomment if needed)
+    # volumes:
+    #   - ./dashboard:/app
+
+  vpn:
+    ports:
+      - "8000:8000"
+
+  vpn-auth:
+    ports:
+      - "8001:8000"
+
+  postgres:
+    ports:
+      - "5432:5432"
+
+  master:
+    ports:
+      - "9333:9333"
+
+  s3:
+    ports:
+      - "8333:8333"

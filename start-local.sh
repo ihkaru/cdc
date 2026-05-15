@@ -38,21 +38,14 @@ echo "================================================="
 echo " Starting Local Development Environment (HMR) "
 echo "================================================="
 
-# ─── Step 1: Database (required) ────────────────────────────────
-echo "[1/3] Starting Database in Docker..."
-docker compose up -d postgres || { echo "❌ Database failed to start. Aborting."; exit 1; }
+# ─── Step 1: Infrastructure (DB, VPN, S3) ───────────────────────
+echo "[1/3] Starting Infrastructure in Docker..."
+# Docker will automatically pick up docker-compose.override.yml 
+# so ports 5432, 8000, 8333 will be exposed to localhost automatically.
+docker compose up -d postgres vpn rpa vpn-auth master volume filer s3 archiver || { echo "❌ Infra failed to start. Aborting."; exit 1; }
 
-# ─── Step 1b: VPN + RPA + Auth + Image Vault ──────────────────
-echo "      Starting VPN, RPA, Archiver, and S3 Stack..."
-if ! docker compose up -d vpn rpa vpn-auth master volume filer s3 archiver 2>&1; then
-  echo ""
-  echo "⚠️  Some Docker services failed to start."
-  echo "   (VPN might fail if cookie is expired, make sure s3/archiver are building)."
-  echo ""
-fi
-
-# Ensure dashboard container is stopped to free up port 3000
-echo "[2/3] Stopping Dashboard Docker container (if running)..."
+# Ensure dashboard container is stopped in Docker to free up port 3000 for local Bun/Quasar
+echo "[2/3] Ensuring Dashboard Docker container is stopped..."
 docker compose stop dashboard
 
 # ─── Step 2: Environment variables ──────────────────────────────
@@ -61,6 +54,9 @@ if [ -f "$CDC_DIR/.env" ]; then
   set -a
   source "$CDC_DIR/.env"
   set +a
+
+  # Default Better Auth Secret if not set
+  export BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET:-a_very_long_random_string_for_local_dev}"
 
   # Override DATABASE_URL to use localhost instead of docker alias
   # Using 127.0.0.1 to avoid Docker IPv6 vs IPv4 binding mismatches
