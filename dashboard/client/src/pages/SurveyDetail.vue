@@ -485,7 +485,7 @@ const computedColumns = computed(() => {
 const workloadCols = [
   { name: 'index', label: '#', field: 'index', align: 'left' as const },
   { name: 'username', label: 'Assigned User', field: 'username', align: 'left' as const, sortable: true },
-  { name: 'pending', label: 'Pending Action', field: 'pending', align: 'center' as const, sortable: true, sortOrder: 'dd' as const },
+  { name: 'pending', label: 'Pending Action', field: 'pending', align: 'center' as const, sortable: true, sortOrder: 'da' as const },
   { name: 'open', label: 'Open / Draft', field: 'open', align: 'center' as const, sortable: true },
   { name: 'rejected', label: 'Rejected', field: 'rejected', align: 'center' as const, sortable: true },
   { name: 'completed', label: 'Completed / Submitted', field: 'completed', align: 'center' as const, sortable: true },

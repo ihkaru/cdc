@@ -66,7 +66,7 @@ const app = new Elysia()
     .use(authRoutes)
     .use(authMiddleware)
     // Global Security Gate & Headers
-    .onBeforeHandle(({ path, user, set }) => {
+    .onBeforeHandle(({ path, user, set }: any) => {
         // 1. Security Headers
         set.headers["X-Frame-Options"] = "DENY";
         set.headers["X-Content-Type-Options"] = "nosniff";
