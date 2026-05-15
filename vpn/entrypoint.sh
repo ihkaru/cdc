@@ -3,6 +3,13 @@
 # Base config
 mkdir -p /etc/openfortivpn
 
+# Add public DNS fallback so we can always resolve akses.bps.go.id for auto-reconnect
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+
+# Clean up any stale BPS domain pinnings that might poison public resolution
+grep -v "bps.go.id" /etc/hosts > /tmp/hosts && cat /tmp/hosts > /etc/hosts
+
 # Inject postgres IP into /etc/hosts so it survives openfortivpn overwriting /etc/resolv.conf
 # This allows the RPA container (which shares the vpn network) to still reach the database
 POSTGRES_IP=$(getent hosts postgres | awk '{print $1}')
@@ -56,7 +63,7 @@ apply_smart_routing() {
                 # DNS might take a few seconds to stabilize after ppp0 is up
                 TARGET_IP=""
                 for j in 1 2 3 4 5; do
-                    TARGET_IP=$(getent hosts "$TARGET_DOMAIN" | awk '{print $1}')
+                    TARGET_IP=$(getent hosts "$TARGET_DOMAIN" | awk 'NR==1 {print $1}')
                     [ -n "$TARGET_IP" ] && break
                     sleep 2
                 done
@@ -69,14 +76,6 @@ apply_smart_routing() {
                     grep -v "$TARGET_DOMAIN" /etc/hosts > /tmp/hosts && cat /tmp/hosts > /etc/hosts
                     echo "$TARGET_IP $TARGET_DOMAIN" >> /etc/hosts
                     echo "📌 Pinned $TARGET_DOMAIN -> $TARGET_IP in /etc/hosts"
-                    
-                    # Also pin sso.bps.go.id for login flows
-                    SSO_IP=$(getent hosts "sso.bps.go.id" | awk '{print $1}')
-                    if [ -n "$SSO_IP" ]; then
-                        grep -v "sso.bps.go.id" /etc/hosts > /tmp/hosts && cat /tmp/hosts > /etc/hosts
-                        echo "$SSO_IP sso.bps.go.id" >> /etc/hosts
-                        echo "📌 Pinned sso.bps.go.id -> $SSO_IP in /etc/hosts"
-                    fi
                     
                     # Check if already routed via ppp0
                     if ! ip route get "$TARGET_IP" 2>/dev/null | grep -q "dev ppp0"; then

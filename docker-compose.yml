@@ -7,6 +7,7 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - RPA_URL=http://vpn:8000
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
     depends_on:
       postgres:
         condition: service_healthy

@@ -29,7 +29,9 @@ class Settings:
 
     # Database
     db_path: str = "data/fasih_sync.db"
-
+    # Performance
+    fetch_concurrency: int = 5
+    
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
@@ -41,6 +43,7 @@ class Settings:
             filter_rotation=os.getenv("FILTER_ROTATION", "pengawas"),
             interval_minutes=int(os.getenv("INTERVAL_MINUTES", "30")),
             db_path=os.getenv("DB_PATH", "data/fasih_sync.db"),
+            fetch_concurrency=int(os.getenv("FETCH_CONCURRENCY", "5")),
         )
 
     def validate(self) -> list[str]:

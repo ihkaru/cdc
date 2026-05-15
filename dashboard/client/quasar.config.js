@@ -7,6 +7,8 @@ export default configure(function (/* ctx */) {
             errors: true,
         },
         boot: [
+            'pinia',
+            'axios'
         ],
         css: [
             'app.scss'

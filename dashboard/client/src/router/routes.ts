@@ -4,14 +4,19 @@ const routes: RouteRecordRaw[] = [
     {
         path: '/',
         component: () => import('layouts/MainLayout.vue'),
+        meta: { requiresAuth: true },
         children: [
-            { path: '', component: () => import('pages/SurveyList.vue') },
-            { path: 'survey/new', component: () => import('pages/SurveyForm.vue') },
-            { path: 'survey/:id/edit', component: () => import('pages/SurveyForm.vue') },
-            { path: 'survey/:id', component: () => import('pages/SurveyDetail.vue') },
-            { path: 'survey/:id/logs', component: () => import('pages/SyncLogs.vue') },
-            { path: 'survey/:id/visualizations', component: () => import('pages/SurveyVisualizations.vue') },
+            { path: '', component: () => import('pages/IndexPage.vue') },
+            { path: 'surveys', component: () => import('pages/SurveyList.vue') },
+            { path: 'surveys/new', component: () => import('pages/SurveyForm.vue') },
+            { path: 'surveys/:id', component: () => import('pages/SurveyDetail.vue') },
+            { path: 'surveys/:id/edit', component: () => import('pages/SurveyForm.vue') },
+            { path: 'logs', component: () => import('pages/SyncLogs.vue') },
         ],
+    },
+    {
+        path: '/login',
+        component: () => import('pages/LoginPage.vue')
     },
     {
         path: '/:catchAll(.*)*',

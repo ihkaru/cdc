@@ -23,7 +23,40 @@
           <q-tooltip>Click to update VPN cookie</q-tooltip>
         </q-chip>
 
-        <q-btn flat dense label="Surveys" to="/" />
+        <q-btn flat dense label="Surveys" to="/surveys" class="q-mr-sm" />
+        <q-btn flat dense label="Sync Logs" to="/logs" class="q-mr-md" />
+
+        <q-space />
+
+        <q-btn-dropdown flat round dense v-if="auth.user">
+          <template v-slot:label>
+            <q-avatar color="primary" text-color="white" size="sm">
+              {{ auth.user.name.charAt(0) }}
+            </q-avatar>
+          </template>
+          <q-list class="bg-grey-10 text-white" style="min-width: 200px">
+            <q-item>
+              <q-item-section avatar>
+                <q-avatar color="primary" text-color="white">
+                  {{ auth.user.name.charAt(0) }}
+                </q-avatar>
+              </q-item-section>
+              <q-item-section>
+                <q-item-label>{{ auth.user.name }}</q-item-label>
+                <q-item-label caption class="text-grey-5">{{ auth.user.email }}</q-item-label>
+              </q-item-section>
+            </q-item>
+            <q-separator dark />
+            <q-item clickable v-close-popup @click="onLogout">
+              <q-item-section avatar>
+                <q-icon name="logout" color="negative" />
+              </q-item-section>
+              <q-item-section class="text-negative">
+                Logout
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </q-btn-dropdown>
       </q-toolbar>
     </q-header>
 
@@ -118,8 +151,24 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { vpnStatus, useVpn } from '../composables/useVpn'
+import { useAuthStore } from 'src/stores/auth'
 
+import { useQuasar } from 'quasar'
+
+const $q = useQuasar()
 const { checkVPN } = useVpn()
+const auth = useAuthStore()
+
+async function onLogout() {
+  $q.loading.show({
+    message: 'Logging out...'
+  })
+  try {
+    await auth.logout()
+  } finally {
+    $q.loading.hide()
+  }
+}
 
 const showCookieDialog = ref(false)
 const cookieInput = ref('')

@@ -71,6 +71,24 @@ def extract_flat_data(data: dict) -> dict:
     return flat
 
 
+def normalize_bps_date(date_str: any) -> str:
+    if not date_str:
+        return ""
+    s = str(date_str).strip()
+    if s.isdigit() and len(s) == 14:
+        return s
+    from datetime import datetime, timedelta
+    try:
+        # Format: 'Dec 9, 2025, 11:07:12 AM'
+        dt = datetime.strptime(s, "%b %d, %Y, %I:%M:%S %p")
+        # Convert WIB to UTC (Assuming BPS local is WIB/UTC+7)
+        dt_utc = dt - timedelta(hours=7)
+        return dt_utc.strftime("%Y%m%d%H%M%S")
+    except:
+        import re
+        return re.sub(r'\D', '', s)[:14]
+
+
 def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] = None, sync_log_id: int = None) -> str:
     """
     Upsert satu assignment ke database.
@@ -86,12 +104,13 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
         return "failed"
 
     # Hubungi Date Modified dari berbagai kemungkinan
-    date_modified = (
+    date_modified_raw = (
         data.get("date_modified") or 
         data.get("dateModifiedRemote") or 
         data.get("assignment", {}).get("dateModifiedRemote") or
         ""
     )
+    date_modified = normalize_bps_date(date_modified_raw)
     data_json_str = json.dumps(data, ensure_ascii=False)
     flat_data = extract_flat_data(data)
 
@@ -196,17 +215,48 @@ def mark_synced(session: Session, ids: list[str]):
 def get_existing_modifications_by_ids(session: Session, ids: list[str]) -> dict[str, str]:
     """
     Ambil mapping {id: date_modified_remote} untuk list ID tertentu.
-    Digunakan untuk mengecek apakah data di DB sudah up-to-date sebelum fetching dari API.
+    Digunakan untuk delta check sebelum fetching detail dari API.
+
+    Untuk dataset besar (>10k IDs), gunakan get_existing_modifications_by_ids_batched.
     """
     if not ids:
         return {}
-    
+
     results = (
         session.query(Assignment.id, Assignment.date_modified_remote)
         .filter(Assignment.id.in_(ids))
         .all()
     )
-    return {r.id: r.date_modified_remote for r in results}
+    return {str(r.id): r.date_modified_remote for r in results}
+
+
+def get_existing_modifications_by_ids_batched(
+    session: Session, ids: list[str], chunk_size: int = 10_000
+) -> dict[str, str]:
+    """
+    Versi chunked dari get_existing_modifications_by_ids untuk dataset besar (300k+).
+
+    Memecah list ID menjadi chunk maksimal chunk_size agar tidak membuat
+    satu IN clause raksasa yang bisa timeout atau OOM di PostgreSQL.
+
+    Returns:
+        dict {assignment_id (str): date_modified_remote (str | None)}
+    """
+    if not ids:
+        return {}
+
+    result: dict[str, str] = {}
+    for i in range(0, len(ids), chunk_size):
+        chunk = ids[i : i + chunk_size]
+        rows = (
+            session.query(Assignment.id, Assignment.date_modified_remote)
+            .filter(Assignment.id.in_(chunk))
+            .all()
+        )
+        result.update({str(r.id): r.date_modified_remote for r in rows})
+
+    return result
+
 
 
 def log_sync_run(
@@ -305,12 +355,13 @@ class BatchUpserterBulk:
         # as pg_insert expects exact DB column names
 
         self.stats.total_fetched += 1
-        date_modified = (
+        date_modified_raw = (
             row.get("date_modified") or 
             row.get("dateModifiedRemote") or 
             row.get("assignment", {}).get("dateModifiedRemote") or
             ""
         )
+        date_modified = normalize_bps_date(date_modified_raw)
         
         db_row = {
             "id": row.get("_id") or row.get("id") or row.get("assignment", {}).get("id"),

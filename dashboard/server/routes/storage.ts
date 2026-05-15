@@ -11,16 +11,26 @@ const s3Client = new S3Client({
   forcePathStyle: true,
 });
 
+import { requireAuth } from "../middleware/auth";
+
 export const storageRoutes = new Elysia({ prefix: "/storage" })
+  .use(requireAuth)
   .get("/view/*", async ({ params, set }) => {
     try {
       const path = params["*"];
+      
+      // Path Traversal Protection
+      if (path.includes("..") || path.includes("./") || path.includes("//")) {
+          set.status = 400;
+          return "Illegal path sequence detected";
+      }
+
       const [bucket, ...rest] = path.split("/");
       const key = rest.join("/");
 
       if (!bucket || !key) {
           set.status = 400;
-          return "Invalid path";
+          return "Invalid path format. Expected {bucket}/{key}";
       }
 
       const command = new GetObjectCommand({

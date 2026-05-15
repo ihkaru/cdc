@@ -103,6 +103,9 @@ class FasihApiClient:
             
         return headers
 
+    async def close(self):
+        await self.__aexit__()
+
     async def __aexit__(self, *args):
         if self._session:
             await self._session.close()
@@ -111,7 +114,12 @@ class FasihApiClient:
     @property
     def session(self) -> aiohttp.ClientSession:
         if not self._session:
-            raise RuntimeError("FasihApiClient must be used as an async context manager: async with FasihApiClient(cookies) as api:")
+            self._session = aiohttp.ClientSession(
+                cookie_jar=self.jar,
+                headers=self._get_headers(),
+                connector=aiohttp.TCPConnector(ssl=self.ssl_ctx, limit=100, limit_per_host=30),
+                timeout=aiohttp.ClientTimeout(total=45, connect=15)
+            )
         return self._session
 
     # Keep backward-compat for old code that calls create_session()
@@ -247,7 +255,6 @@ class FasihApiClient:
             try:
                 survey_url = f"{TARGET_URL}/survey/api/v1/surveys/{survey_id}"
                 async with session.get(survey_url, headers=self._get_headers()) as resp:
-
                     if resp.status == 200:
                         s_data = await resp.json()
                         fetched_group = s_data.get("data", {}).get("regionGroupId")
@@ -256,13 +263,14 @@ class FasihApiClient:
                             print(f"   ✅ [API] Extracted dynamic regionGroupId: {group_id}")
             except Exception as e:
                 print(f"   ⚠️ [API] Failed fetching dynamic regionGroupId, using fallback: {e}")
-        async with await self.create_session() as session:
+
             # Get Provincial Region Code (UUID + fullCode)
             prov_uuid, prov_full_code = None, None
             if provinsi_name:
                 prov_url = f"{TARGET_URL}/region/api/v1/region/level1?groupId={group_id}"
                 async with session.get(prov_url, headers=self._get_headers()) as resp:
-
+                    if resp.status != 200:
+                        raise Exception(f"HTTP {resp.status} while fetching level 1 regions")
                     data = await resp.json()
                     regions = data.get("data", [])
                     
@@ -279,12 +287,12 @@ class FasihApiClient:
                             break
                             
             # Get Kabupaten Region UUID
-            kab_uuid = None
-            
+            kab_uuid, kab_full_code = None, None
             if kabupaten_name and prov_full_code:
                 kab_url = f"{TARGET_URL}/region/api/v1/region/level2?groupId={group_id}&level1FullCode={prov_full_code}"
                 async with session.get(kab_url, headers=self._get_headers()) as resp:
-
+                    if resp.status != 200:
+                        raise Exception(f"HTTP {resp.status} while fetching level 2 regions")
                     data = await resp.json()
                     regions = data.get("data", [])
                     
@@ -300,32 +308,31 @@ class FasihApiClient:
                             print(f"   ✅ [API] Match Kabupaten: {r.get('name')} → UUID: {kab_uuid}, Code: {kab_full_code}")
                             break
             
-            # Return (prov_uuid, region_uuid_for_filter, region_full_code)
-            # region_uuid_for_filter = kabupaten UUID jika ada, else provinsi UUID
-            # region_full_code = kabupaten code jika ada, else provinsi code
             region_uuid_for_filter = kab_uuid if kab_uuid else prov_uuid
             region_full_code = kab_full_code if kab_full_code else prov_full_code
-            
             return prov_uuid, region_uuid_for_filter, region_full_code, group_id
             
         return None, None, None, group_id
 
     @with_retry(retries=3, delay=5)
-    async def get_kecamatans(self, group_id: str, kab_full_code: str) -> List[Dict]:
-        """Dapatkan list kecamatan (level 3) dalam suatu kabupaten."""
-        url = f"{TARGET_URL}/region/api/v1/region/level3?groupId={group_id}&level2FullCode={kab_full_code}"
-        print(f"   🔍 [API] Menarik list kecamatan untuk Kab {kab_full_code}...")
+    async def get_sub_regions(self, level: int, group_id: str, parent_full_code: str) -> List[Dict]:
+        """
+        Dapatkan list sub-region (level X) berdasarkan parent full code.
+        Bisa berupa Kecamatan (Level 3), Desa (Level 4), atau SLS (Level 5).
+        """
+        url = f"{TARGET_URL}/region/api/v1/region/level{level}?groupId={group_id}&level{level-1}FullCode={parent_full_code}"
+        print(f"   🔍 [API] Menarik list region Level {level} untuk Parent {parent_full_code}...")
         async with await self.create_session() as session:
             async with session.get(url, headers=self._get_headers()) as resp:
-
                 if resp.status != 200:
-                    text = await resp.text()
-                    print(f"   ❌ [API] Gagal fetch kecamatan (HTTP {resp.status}): {text}")
-                    return []
+                    raise Exception(f"HTTP {resp.status} while fetching level {level} regions")
                 data = await resp.json()
-                kec_list = data.get("data", [])
-                print(f"   ✅ [API] Ditemukan {len(kec_list)} kecamatan.")
-                return kec_list
+                return data.get("data", [])
+
+    @with_retry(retries=3, delay=5)
+    async def get_kecamatans(self, group_id: str, kab_full_code: str) -> List[Dict]:
+        """Deprecated: use get_sub_regions(3, ...) instead."""
+        return await self.get_sub_regions(3, group_id, kab_full_code)
 
     @with_retry(retries=3, delay=5)
     async def get_users_by_region(
@@ -369,7 +376,7 @@ class FasihApiClient:
                 async with session.get(url, headers=self._get_headers()) as resp:
 
                     if resp.status != 200:
-                        continue
+                        raise Exception(f"HTTP {resp.status} while resolving survey ID")
                     body = await resp.json()
                     for user in body.get("data", []):
                         _add_user(user, user.get('isPencacah', False))
@@ -414,7 +421,7 @@ class FasihApiClient:
 
     @with_retry(retries=3, delay=5)
     async def get_assignments_metadata(self, period_id: str, prov_uuid: Optional[str] = None, kab_uuid: Optional[str] = None, 
-                                       kec_uuid: Optional[str] = None,
+                                       kec_uuid: Optional[str] = None, desa_uuid: Optional[str] = None,
                                        pengawas_id: Optional[str] = None, pencacah_id: Optional[str] = None, region_group_id: Optional[str] = None) -> List[Dict]:
         """Tarik Assignment Datatable hingga habis per filter combo.
         Menggunakan format assignmentExtraParam yang sesuai dengan payload UI Angular."""
@@ -438,7 +445,10 @@ class FasihApiClient:
                     {"data": "data7", "name": "", "searchable": True, "orderable": True, "search": {"value": "", "regex": False}},
                     {"data": "data8", "name": "", "searchable": True, "orderable": True, "search": {"value": "", "regex": False}},
                     {"data": "data9", "name": "", "searchable": True, "orderable": True, "search": {"value": "", "regex": False}},
-                    {"data": "data10", "name": "", "searchable": True, "orderable": True, "search": {"value": "", "regex": False}}
+                    {"data": "data10", "name": "", "searchable": True, "orderable": True, "search": {"value": "", "regex": False}},
+                    {"data": "dateModified", "name": "", "searchable": False, "orderable": True, "search": {"value": "", "regex": False}},
+                    {"data": "date_modified", "name": "", "searchable": False, "orderable": True, "search": {"value": "", "regex": False}},
+                    {"data": "dateModifiedRemote", "name": "", "searchable": False, "orderable": True, "search": {"value": "", "regex": False}}
                 ],
                 "order": [{"column": 0, "dir": "asc"}],
                 "start": page_start,
@@ -448,30 +458,17 @@ class FasihApiClient:
                     "region1Id": prov_uuid,
                     "region2Id": kab_uuid,
                     "region3Id": kec_uuid,
-                    "region4Id": None,
-                    "region5Id": None,
-                    "region6Id": None,
-                    "region7Id": None,
-                    "region8Id": None,
-                    "region9Id": None,
-                    "region10Id": None,
+                    "region4Id": desa_uuid,
+                    # BUG FIX: currentUserId="" menyebabkan server memfilter per-user → return 0
+                    # Hanya kirim jika ada user ID spesifik, atau omit (None = tanpa filter user)
+                    "userIdResponsibility": None,
+                    "currentUserId": pencacah_id or pengawas_id or None,
                     "surveyPeriodId": period_id,
                     "assignmentErrorStatusType": -1,
                     "assignmentStatusAlias": None,
-                    "data1": None,
-                    "data2": None,
-                    "data3": None,
-                    "data4": None,
-                    "data5": None,
-                    "data6": None,
-                    "data7": None,
-                    "data8": None,
-                    "data9": None,
-                    "data10": None,
-                    "userIdResponsibility": None,
-                    "currentUserId": pencacah_id or pengawas_id or "",
-                    "regionId": None,
-                    "filterTargetType": None,
+                    # BUG FIX: None menyebabkan server tidak apply filter yang benar
+                    # "TARGET_ONLY" = hanya assignment yang assigned ke user ini
+                    "filterTargetType": "TARGET_ONLY",
                     "regionGroupId": region_group_id
                 }
             }
@@ -492,16 +489,48 @@ class FasihApiClient:
                 if not search_data:
                     break
 
+                _first_item_logged = False
                 for item in search_data:
+                    # Debug: print semua keys dari item pertama untuk diagnosa field name
+                    if not _first_item_logged and page_start == 0:
+                        print(f"   🔬 [DEBUG] Datatable item keys: {list(item.keys())}")
+                        _first_item_logged = True
+
                     # Harden ID extraction (tries multiples BPS API variations)
                     rec_id = item.get("id") or item.get("_id") or item.get("assignmentId")
-                    # Harden Date extraction
-                    remote_date = item.get("dateModified") or item.get("updatedAt") or item.get("dateModifiedRemote")
+                    # Harden Date extraction — coba semua kemungkinan nama field
+                    remote_date_raw = (
+                        item.get("dateModified") or
+                        item.get("updatedAt") or
+                        item.get("dateModifiedRemote") or
+                        item.get("date_modified") or
+                        item.get("modifiedAt") or
+                        item.get("lastModified") or
+                        item.get("modified_at")
+                    )
+                    
+                    # Normalisasi: Handle both 'Dec 9, 2025, 11:07:12 AM' (Local) and '20251209040712' (UTC)
+                    def _norm_date(d_raw):
+                        if not d_raw: return ""
+                        s = str(d_raw).strip()
+                        if s.isdigit() and len(s) == 14: return s
+                        from datetime import datetime, timedelta
+                        try:
+                            # Format: 'Dec 9, 2025, 11:07:12 AM'
+                            dt = datetime.strptime(s, "%b %d, %Y, %I:%M:%S %p")
+                            # Convert WIB to UTC (Assuming BPS local is WIB/UTC+7)
+                            dt_utc = dt - timedelta(hours=7)
+                            return dt_utc.strftime("%Y%m%d%H%M%S")
+                        except:
+                            import re
+                            return re.sub(r'\D', '', s)[:14]
+
+                    remote_date = _norm_date(remote_date_raw)
                     
                     if rec_id:
                         all_metadata.append({
                             "id": rec_id,
-                            "dateModifiedRemote": str(remote_date) if remote_date else None,
+                            "dateModifiedRemote": remote_date,
                             "code_identity": item.get("codeIdentity") or item.get("code_identity")
                         })
 

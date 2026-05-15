@@ -5,7 +5,10 @@ import { eq, and, desc, sql } from "drizzle-orm";
 
 const RPA_URL = process.env.RPA_URL || "http://vpn:8000";
 
+import { requireAuth } from "../middleware/auth";
+
 export const syncStateRoutes = new Elysia({ prefix: "/api/surveys" })
+    .use(requireAuth)
     .get("/:id/sync-dashboard-state", async ({ params }) => {
         const surveyId = params.id;
 

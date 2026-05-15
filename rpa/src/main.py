@@ -34,7 +34,8 @@ from auth import auto_login
 from api_client import FasihApiClient
 from pages.detail_page import fetch_assignments_concurrent
 from db.connection import init_db, get_session
-from db.repository import upsert_assignment, log_sync_run, SyncStats, BatchUpserterBulk
+from db.repository import upsert_assignment, log_sync_run, SyncStats, BatchUpserterBulk, get_existing_modifications_by_ids_batched
+from connectivity import ensure_connected
 
 
 async def run_sync_cycle(settings: Settings, dry_run: bool = False):
@@ -45,6 +46,10 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
     stats = SyncStats()
     timings = {}
     total_start = time.perf_counter()
+    
+    # --- FASE 0: KONEKTIVITAS VPN ---
+    print("\n--- FASE 0: Memastikan Konektivitas VPN ---")
+    await ensure_connected()
     
     print("\n" + "=" * 60)
     print(f"🤖 FASIH-SM API Sync — Cycle dimulai")
@@ -108,7 +113,7 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
     if not survey_id:
         return
 
-    period_id, role_ids = await api.get_survey_period_and_roles(survey_id)
+    period_id, role_ids, role_group_id = await api.get_survey_period_and_roles(survey_id)
     if not period_id or not role_ids:
         return
 
@@ -132,7 +137,9 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
     # --- FASE 3: ROTASI & FETCH ASSIGNMENTS ---
     print("\n--- FASE 3: Extract Assignment Metadata ---")
     
-    pengawas_list, pencacah_list = await api.get_users_by_region(period_id, role_ids, region_filter)
+    pengawas_list, pencacah_list = await api.get_users_by_region(
+        period_id, role_ids, region_filter or region_full_code or "", role_group_id
+    )
     
     # Tentukan strategi iterasi berdasarkan setelan config rotasi
     filters_to_run = []
@@ -187,29 +194,58 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
         stats.total_fetched = len(unique_assignments)
     else:
         if unique_assignments:
-            urls_to_fetch = [
-                f"{os.getenv('TARGET_URL', 'https://fasih-sm.bps.go.id')}/survey-collection/assignment-detail/{m['id']}/{survey_id}" 
-                for m in unique_assignments
-            ]
-            
-            # Fetch secara concurrent
-            results = await fetch_assignments_concurrent(cookies, urls_to_fetch, concurrency=50)
-            timings["fetch"] = int((time.perf_counter() - phase_start) * 1000)
-            
-            # Upsert
-            print("\n   💾 Menyimpan ke database (Bulk)...")
-            phase_start = time.perf_counter()
-            
-            # Use High-Performance Batch Upserter
-            upserter = BatchUpserterBulk(session, batch_size=2000)
-            for i, data in enumerate(results):
-                # Add survey config ID to each record for internal tracking
-                data["_survey_config_id"] = settings.id
-                upserter.add(data)
-                
-            # Final flush
-            stats = upserter.finish()
-            stats.total_failed += len(unique_assignments) - len(results)
+            # ── DELTA SYNC: Skip detail fetch untuk records yang tidak berubah ──
+            # Bandingkan dateModifiedRemote dari datatable dengan yang tersimpan di DB.
+            # get_existing_modifications_by_ids_batched menggunakan chunking 10k agar
+            # aman untuk 300k+ IDs tanpa membuat IN clause raksasa.
+            all_ids = [m["id"] for m in unique_assignments]
+            existing_dates = get_existing_modifications_by_ids_batched(session, all_ids)
+
+            to_fetch = []
+            _debug_logged = False
+            for m in unique_assignments:
+                rec_id = m["id"]
+                remote_date = m.get("dateModifiedRemote")
+                if rec_id not in existing_dates:
+                    to_fetch.append(m)
+                elif existing_dates[rec_id] != remote_date:
+                    if not _debug_logged and existing_dates[rec_id] and remote_date:
+                        print(f"   🔬 [TIMESTAMP DEBUG] DB date: {repr(existing_dates[rec_id])} vs API date: {repr(remote_date)}")
+                        _debug_logged = True
+                    to_fetch.append(m)
+            skipped_delta = len(unique_assignments) - len(to_fetch)
+
+            print(f"\n   🔄 Delta check: {len(to_fetch)} perlu di-fetch, "
+                  f"{skipped_delta} di-skip (tidak berubah sejak sync terakhir)")
+
+            # Jika semua sudah up-to-date, tidak perlu fetch apapun
+            if not to_fetch:
+                print("   ✅ Semua data sudah up-to-date — tidak ada yang perlu di-sync!")
+                stats.total_skipped = len(unique_assignments)
+                timings["fetch"] = 0
+            else:
+                urls_to_fetch = [
+                    f"{os.getenv('TARGET_URL', 'https://fasih-sm.bps.go.id')}/survey-collection/assignment-detail/{m['id']}/{survey_id}"
+                    for m in to_fetch
+                ]
+
+                # Fetch secara concurrent — concurrency=100 optimal untuk VPN BPS
+                # (lebih tinggi berisiko 429, lebih rendah terlalu lambat)
+                results = await fetch_assignments_concurrent(cookies, urls_to_fetch, concurrency=settings.fetch_concurrency)
+                timings["fetch"] = int((time.perf_counter() - phase_start) * 1000)
+
+                # Upsert
+                print("\n   💾 Menyimpan ke database (Bulk)...")
+                phase_start = time.perf_counter()
+
+                upserter = BatchUpserterBulk(session, batch_size=2000)
+                for i, data in enumerate(results):
+                    data["_survey_config_id"] = getattr(settings, "id", "default")
+                    upserter.add(data)
+
+                stats = upserter.finish()
+                stats.total_skipped += skipped_delta
+                stats.total_failed += len(to_fetch) - len(results)
             
             # (Note: BatchUpserterBulk handles commits internally or during finish)
 
@@ -217,8 +253,12 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
         timings["upsert"] = int((time.perf_counter() - phase_start) * 1000)
         timings["total"] = int((time.perf_counter() - total_start) * 1000)
         
-        log = log_sync_run(session, started_at, stats, survey_config_id=settings.id, timings=timings)
+        log = log_sync_run(session, started_at, stats, survey_config_id=getattr(settings, "id", "default"), timings=timings)
         session.close()
+        
+    # Graceful shutdown of persistent API session
+    if 'api' in locals():
+        await api.close()
 
     print(f"\n🎉 Cycle selesai!")
     print(f"   {stats}")

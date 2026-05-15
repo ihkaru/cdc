@@ -1,4 +1,7 @@
-import { pgTable, text, integer, boolean, timestamp, uuid, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, boolean, timestamp, uuid, jsonb, index, primaryKey } from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
+
+// --- EXISTING TABLES ---
 
 export const surveyConfigs = pgTable("survey_configs", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -62,7 +65,6 @@ export const labelSchemas = pgTable("label_schemas", {
   surveyConfigId: uuid("survey_config_id")
     .references(() => surveyConfigs.id, { onDelete: "cascade" }).notNull(),
   columns: jsonb("columns").notNull(),
-  // columns: [{ name: "wilayah", type: "dimension" }, { name: "target", type: "measure" }]
   uploadedAt: timestamp("uploaded_at", { withTimezone: true }).defaultNow(),
 });
 
@@ -72,7 +74,6 @@ export const labelData = pgTable("label_data", {
     .references(() => surveyConfigs.id, { onDelete: "cascade" }).notNull(),
   codeIdentity: text("code_identity").notNull(),
   data: jsonb("data").notNull(),
-  // data: { "wilayah": "Jawa Barat", "target": 100, "skor": 85 }
 }, (table) => [
   index("idx_label_data_survey_code").on(table.surveyConfigId, table.codeIdentity),
 ]);
@@ -82,17 +83,116 @@ export const visualizationConfigs = pgTable("visualization_configs", {
   surveyConfigId: uuid("survey_config_id")
     .references(() => surveyConfigs.id, { onDelete: "cascade" }).notNull(),
   name: text("name").notNull(),
-  chartType: text("chart_type").notNull(), // "scorecard" | "bar_vertical" | "bar_horizontal"
+  chartType: text("chart_type").notNull(),
   config: jsonb("config").notNull(),
-  // Scorecard: { metricColumn, aggregation, label }
-  // Bar: { xColumn, yColumn, aggregation, groupBy? }
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
-// Key-value store for system-wide settings (e.g. VPN cookie)
 export const systemSettings = pgTable("system_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
+
+// --- AUTH & RBAC TABLES ---
+
+export const users = pgTable("users", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  emailVerified: boolean("email_verified").notNull().default(false),
+  image: text("image"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const sessions = pgTable("sessions", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const accounts = pgTable("accounts", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  accountId: text("account_id").notNull(),
+  providerId: text("provider_id").notNull(),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
+  refreshTokenExpiresAt: timestamp("refresh_token_expires_at", { withTimezone: true }),
+  scope: text("scope"),
+  password: text("password"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const verifications = pgTable("verifications", {
+  id: text("id").primaryKey(),
+  identifier: text("identifier").notNull(),
+  value: text("value").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// --- RBAC ---
+
+export const roles = pgTable("roles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(), // e.g. "admin", "user"
+  description: text("description"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const permissions = pgTable("permissions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(), // e.g. "survey:write", "user:manage"
+  description: text("description"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const usersToRoles = pgTable("users_to_roles", {
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  roleId: uuid("role_id").notNull().references(() => roles.id, { onDelete: "cascade" }),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.userId, t.roleId] }),
+}));
+
+export const rolesToPermissions = pgTable("roles_to_permissions", {
+  roleId: uuid("role_id").notNull().references(() => roles.id, { onDelete: "cascade" }),
+  permissionId: uuid("permission_id").notNull().references(() => permissions.id, { onDelete: "cascade" }),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.roleId, t.permissionId] }),
+}));
+
+// --- RELATIONS ---
+
+export const usersRelations = relations(users, ({ many }) => ({
+  roles: many(usersToRoles),
+}));
+
+export const rolesRelations = relations(roles, ({ many }) => ({
+  users: many(usersToRoles),
+  permissions: many(rolesToPermissions),
+}));
+
+export const permissionsRelations = relations(permissions, ({ many }) => ({
+  roles: many(rolesToPermissions),
+}));
+
+export const usersToRolesRelations = relations(usersToRoles, ({ one }) => ({
+  user: one(users, { fields: [usersToRoles.userId], references: [users.id] }),
+  role: one(roles, { fields: [usersToRoles.roleId], references: [roles.id] }),
+}));
+
+export const rolesToPermissionsRelations = relations(rolesToPermissions, ({ one }) => ({
+  role: one(roles, { fields: [rolesToPermissions.roleId], references: [roles.id] }),
+  permission: one(permissions, { fields: [rolesToPermissions.permissionId], references: [permissions.id] }),
+}));

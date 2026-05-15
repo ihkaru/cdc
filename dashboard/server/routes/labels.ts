@@ -17,7 +17,10 @@ function detectColumnType(values: any[]): "dimension" | "measure" {
     return numericCount / nonEmpty.length > 0.8 ? "measure" : "dimension";
 }
 
+import { requireAuth } from "../middleware/auth";
+
 export const labelsRoutes = new Elysia({ prefix: "/api/surveys" })
+    .use(requireAuth)
 
     // Get label schema for a survey
     .get("/:id/labels/schema", async ({ params }) => {

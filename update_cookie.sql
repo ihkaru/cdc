@@ -1,0 +1,4 @@
+INSERT INTO system_settings (key, value, updated_at) 
+VALUES ('vpn_cookie', 'TS0151fc2b=0167a1c8619f161022f197fa5942583220ab4529aabba97d73e311eb841bea0c7f07512a62c50453538290c1b40adde95f76ae155d; SVPNCOOKIE=Ck5/t9f/L8rtwKETg/LzGKMn9W93wxxldbalOPkJidSHhZXFcp9k5kLE3Dul4nAFCiVBmvPyh/m11cwpfohUWsSJt9EKcEKsDYLql43juwPlUGqRm3cRhSkoPuGCv1w2ziM500GvskYdxtp/exhWCpmwa10XGZQce5qeYt17e42O/xaP+Zlxzyo+W4JryEbGgNbziOgRq3LLP27MaccpOteaWj/M6euo5ET6mCwEHEKgZGg1rgwCFiHtdjYitMfpfQB60QjzwO/MfNgBJcn4q1aT/PSa9W+CGoWtJiroctjEWwSDfy1YT1zLj6DX2vCFF7jBzsD6NjYOy1pXnZ8QFpAdH5Hb2HRB6Fa+Fm9Bpc305m/hHSK47iKd', NOW()) 
+ON CONFLICT (key) DO UPDATE 
+SET value = EXCLUDED.value, updated_at = NOW();

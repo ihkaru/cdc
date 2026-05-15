@@ -61,7 +61,10 @@ function extractVariables(dataJson: any): Record<string, any> {
     return vars;
 }
 
+import { requireAuth } from "../middleware/auth";
+
 export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
+    .use(requireAuth)
     // Get assignments for a survey (paginated — supports both offset and cursor)
     .get(
         "/:id/assignments",

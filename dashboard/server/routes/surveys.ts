@@ -30,7 +30,10 @@ function decryptPassword(ciphertext: string): string {
     return decipher.update(encrypted) + decipher.final("utf8");
 }
 
+import { requireAuth } from "../middleware/auth";
+
 export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
+    .use(requireAuth)
     // List all surveys
     .get("/", async ({ query }) => {
         const q = query.q as string | undefined;
@@ -66,6 +69,7 @@ export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
     })
 
     // Create survey
+    .guard({ role: "admin" })
     .post(
         "/",
         async ({ body }) => {
@@ -99,6 +103,7 @@ export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
     )
 
     // Update survey
+    .guard({ role: "admin" })
     .put(
         "/:id",
         async ({ params, body }) => {
@@ -140,6 +145,7 @@ export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
     )
 
     // Delete survey
+    .guard({ role: "admin" })
     .delete("/:id", async ({ params }) => {
         await db.delete(surveyConfigs).where(eq(surveyConfigs.id, params.id));
         return { success: true };

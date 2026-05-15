@@ -157,6 +157,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                             survey_config_id=req.survey_config_id,
                             prov_code=prov_uuid,
                             region_filter=region_filter,
+                            region_full_code=kab_full_code,
                             region_group_id=region_group_id,
                             filters_to_run=filters_to_run,
                             sync_log_id=sync_log.id
@@ -172,6 +173,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                             survey_config_id=req.survey_config_id,
                             prov_code=prov_uuid,
                             region_filter=region_filter,
+                            region_full_code=kab_full_code,
                             region_group_id=region_group_id,
                             filters_to_run=filters_to_run,
                             sync_log_id=sync_log.id

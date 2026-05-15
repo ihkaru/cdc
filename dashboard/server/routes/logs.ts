@@ -4,7 +4,10 @@ import { syncLogs, assignments } from "../db/schema";
 import { eq, desc, sql, count, and } from "drizzle-orm";
 import * as XLSX from "xlsx";
 
+import { requireAuth } from "../middleware/auth";
+
 export const logsRoutes = new Elysia({ prefix: "/api/surveys" })
+    .use(requireAuth)
     .get("/:id/logs", async ({ params }) => {
         const rows = await db
             .select()

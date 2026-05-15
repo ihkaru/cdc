@@ -101,7 +101,7 @@ async def ensure_connected():
 
         username = survey.sso_username
         password = decrypt_password(survey.sso_password_encrypted)
-        print(f"   🔑 Menggunakan kredensial: {username[:3]}*** dari survey '{survey.name}'")
+        print(f"   🔑 Menggunakan kredensial: {username[:3]}*** dari survey '{survey.survey_name}'")
 
         # 2. Fetch cookie baru via Playwright (VPN portal)
         cookie = await fetch_vpn_cookie(username, password)
@@ -136,7 +136,9 @@ async def ensure_connected():
         return False
 
     except Exception as e:
+        import traceback
         print(f"   ❌ Self-healing error: {e}")
+        traceback.print_exc()
         return False
     finally:
         session.close()

@@ -18,7 +18,10 @@ function decryptPassword(ciphertext: string): string {
     return decipher.update(encrypted).toString("utf8") + decipher.final("utf8");
 }
 
+import { requireAuth } from "../middleware/auth";
+
 export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
+    .use(requireAuth)
     // Trigger sync for a survey
     .post("/:id/sync", async ({ params }) => {
         const [survey] = await db
@@ -124,9 +127,29 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 
     // ===== FASIH Lookup (untuk wizard Add Survey) =====
 
+    // Simple in-memory rate limiter for proxy lookups
+    .state("lastLookup", new Map<string, number>())
+    .onBeforeHandle(({ user, path, getValues, set }) => {
+        if (path.includes("/fasih/")) {
+            const now = Date.now();
+            const last = (getValues("lastLookup") as Map<string, number>).get(user!.id) || 0;
+            if (now - last < 5000) { // 5 seconds throttle
+                set.status = 429;
+                return { error: "Too many requests. Please wait 5s." };
+            }
+            (getValues("lastLookup") as Map<string, number>).set(user!.id, now);
+        }
+    })
+
     // Lookup surveys + provinces dari FASIH API (memerlukan SSO login ~15 detik)
     .post("/fasih/lookup", async ({ body }) => {
         const { ssoUsername, ssoPassword } = body as { ssoUsername: string; ssoPassword: string };
+        
+        // Input Validation
+        if (!ssoUsername || !ssoUsername.includes("@bps.go.id")) {
+            throw new Error("Invalid SSO Username format");
+        }
+
         const response = await fetch(`${RPA_URL}/lookup/metadata`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -160,6 +183,15 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
             ssoPassword: string;
             provFullCode: string;
         };
+
+        // Input Validation
+        if (!ssoUsername || !ssoUsername.includes("@bps.go.id")) {
+            throw new Error("Invalid SSO Username format");
+        }
+        if (!provFullCode || !/^\d+$/.test(provFullCode)) {
+            throw new Error("Invalid Province Code format");
+        }
+
         const response = await fetch(`${RPA_URL}/lookup/kabupaten`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },

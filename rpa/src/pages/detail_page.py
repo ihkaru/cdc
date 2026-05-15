@@ -191,7 +191,7 @@ async def fetch_assignments_concurrent(
     
     # Use a cookie jar with the extracted cookies
     jar = aiohttp.CookieJar(unsafe=True)
-    connector = aiohttp.TCPConnector(ssl=ssl_ctx, limit=concurrency + 5)
+    connector = aiohttp.TCPConnector(ssl=ssl_ctx, limit=concurrency + 20)
 
     async with aiohttp.ClientSession(
         cookies=cookie_dict,
@@ -206,14 +206,17 @@ async def fetch_assignments_concurrent(
             data = await coro
             completed += 1
 
-            if data:
+            # Memory optimization: if on_progress (callback) is provided, 
+            # we don't need to store all results in memory here.
+            # The caller handles the storage (e.g. BatchUpserterBulk).
+            if not on_progress and data:
                 results.append(data)
 
             if on_progress:
                 on_progress(completed, total, data)
             elif completed % 100 == 0 or completed == total:
-                success_rate = len(results) / completed * 100 if completed > 0 else 0
-                print(f"   📊 Progress: {completed}/{total} ({success_rate:.0f}% success)")
+                # Fallback logging if no callback
+                print(f"   📊 Progress: {completed}/{total}")
 
-    print(f"   ✅ Done: {len(results)}/{total} fetched successfully")
+    print(f"   ✅ Done: {completed}/{total} processed")
     return results

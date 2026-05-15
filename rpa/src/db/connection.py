@@ -11,14 +11,11 @@ _SessionLocal = None
 
 
 def get_database_url() -> str:
-    """Get database URL from environment, fallback to SQLite."""
+    """Get database URL from environment. Fail if missing."""
     url = os.environ.get("DATABASE_URL", "")
     if url:
         return url
-    # Fallback: SQLite for local dev
-    db_path = os.environ.get("DB_PATH", "data/fasih_sync.db")
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    return f"sqlite:///{db_path}"
+    raise RuntimeError("❌ DATABASE_URL tidak ditemukan di environment. Sistem mewajibkan PostgreSQL.")
 
 
 def get_engine(database_url: str = ""):

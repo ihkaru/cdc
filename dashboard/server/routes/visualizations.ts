@@ -383,7 +383,10 @@ async function buildAndExecuteChartQuery(chartType: string, config: Record<strin
     return { error: "Unknown chart type" };
 }
 
+import { requireAuth } from "../middleware/auth";
+
 export const visualizationsRoutes = new Elysia({ prefix: "/api/surveys" })
+    .use(requireAuth)
 
     // List all visualization configs for a survey
     .get("/:id/visualizations", async ({ params }) => {
