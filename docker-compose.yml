@@ -15,6 +15,7 @@ services:
       - VPN_AUTH_URL=http://vpn-auth:8000
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-https://${PUBLIC_DOMAIN:-cdc.local}}
       - PUBLIC_BASE_URL=https://${PUBLIC_DOMAIN:-cdc.local}
     depends_on:
       postgres:
