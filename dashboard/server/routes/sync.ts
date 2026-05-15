@@ -315,7 +315,28 @@ const checkVpnAndFetchCookie = async () => {
             }
 
             if (!survey) {
-                console.log("   ❌ No active survey found to borrow SSO credentials from.");
+                // Fallback: Check if we have Master SSO credentials in .env
+                if (process.env.VPN_USER && process.env.VPN_PASS) {
+                    console.log("   🚀 No active survey found, but using Master SSO (VPN_USER) for bootstrap...");
+                    const fetchRes = await fetch(`${VPN_AUTH_API_URL}/vpn/auto-fetch`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            sso_username: process.env.VPN_USER,
+                            sso_password: process.env.VPN_PASS
+                        }),
+                        signal: AbortSignal.timeout(300000)
+                    });
+                    
+                    if (fetchRes.ok) {
+                        console.log("   ✅ VPN bootstrap triggered successfully!");
+                    } else {
+                        console.log(`   ❌ Failed to trigger VPN bootstrap: ${fetchRes.status}`);
+                    }
+                    return;
+                }
+
+                console.log("   ❌ No active survey found and no Master SSO (VPN_USER) configured. Cannot auto-pilot.");
                 return;
             }
 
