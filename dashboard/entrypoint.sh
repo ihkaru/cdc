@@ -32,6 +32,19 @@ BEGIN
         EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE uuid USING %I::uuid', r.table_name, r.column_name, r.column_name);
     END LOOP;
     
+    -- 3. Clean up conflicting sequences (Postgres identity conflicts)
+    -- This prevents 'relation sync_logs_id_seq already exists' errors
+    FOR r IN (
+        SELECT relname as sequence_name
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind = 'S'
+          AND (relname LIKE 'sync_logs%' OR relname LIKE 'label_data%' OR relname LIKE 'label_schemas%' OR relname LIKE 'visualization_configs%')
+    ) LOOP
+        RAISE NOTICE 'Dropping conflicting sequence %...', r.sequence_name;
+        EXECUTE format('DROP SEQUENCE IF EXISTS %I CASCADE', r.sequence_name);
+    END LOOP;
+    
     RAISE NOTICE 'Self-healing check completed.';
 END \$\$;
 " || echo "   ⚠️ Advanced self-healing skipped or failed."
