@@ -3,7 +3,7 @@
 # Uses process groups and PID files for clean shutdown without zombie processes.
 
 CDC_DIR="$(cd "$(dirname "$0")" && pwd)"
-PID_DIR="/tmp/cdc-local"
+PID_DIR="/tmp/fasih-nexus-local"
 mkdir -p "$PID_DIR"
 
 # ─── Cleanup Function ───────────────────────────────────────────

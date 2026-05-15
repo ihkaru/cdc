@@ -2,6 +2,8 @@ import { configure } from 'quasar/wrappers';
 
 export default configure(function (/* ctx */) {
     return {
+        productName: 'FasihNexus',
+        productDescription: 'Unified Survey Automation & BI Dashboard for FASIH-SM',
         eslint: {
             warnings: true,
             errors: true,

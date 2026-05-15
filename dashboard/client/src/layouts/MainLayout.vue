@@ -3,8 +3,8 @@
     <q-header elevated class="bg-dark text-white shadow-2">
       <q-toolbar>
         <q-toolbar-title class="text-weight-bold row items-center no-wrap">
-          <q-icon name="sync" size="sm" class="q-mr-sm text-primary" />
-          <span class="text-primary">FASIH</span> Sync
+          <q-icon name="hub" size="sm" class="q-mr-sm text-primary" />
+          <span class="text-primary">FASIH</span> Nexus
         </q-toolbar-title>
 
         <!-- VPN Status Chip (clickable to open cookie dialog) -->

@@ -6,7 +6,7 @@ echo "================================================="
 echo " Stopping All Environments (Docker & Local Tools)"
 echo "================================================="
 
-PID_DIR="/tmp/cdc-local"
+PID_DIR="/tmp/fasih-nexus-local"
 
 # ─── Step 1: Kill tracked local processes via PID files ─────────
 echo "[1/3] Stopping tracked local processes..."
