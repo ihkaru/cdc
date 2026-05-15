@@ -75,13 +75,11 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
 
                     # Login
                     _progress("login", "🔐 Login SSO BPS via Playwright...")
-                    login_ok = await auto_login(page, req.sso_username, req.sso_password)
+                    login_ok, cookie_dict = await auto_login(page, req.sso_username, req.sso_password)
                     if not login_ok:
                         raise Exception("Login gagal")
 
-                    # Fetch cookies and close browser right after login!
-                    pw_cookies = await context.cookies()
-                    cookie_dict = {c["name"]: c["value"] for c in pw_cookies}
+                    # Close browser right after login!
                     await browser.close()
                     browser = None  # To avoid closing twice in finally
                     
@@ -105,17 +103,17 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                     async with FasihApiClient(cookie_dict) as api:
 
                         print("\n--- FASE 2: Resolving API Metadata ---")
-                        _progress("resolve", f"🔍 Mencari survey: {req.survey_name}...")
+                        _progress("resolve_survey", f"🔍 Mencari survey: {req.survey_name}...")
                         survey_id = await api.get_survey_id(req.survey_name)
                         if not survey_id:
                             raise Exception(f"Survey '{req.survey_name}' tidak ditemukan")
 
-                        _progress("resolve", "📅 Mengambil periode dan role...")
+                        _progress("resolve_survey", "📅 Mengambil periode dan role...")
                         period_id, role_ids, survey_role_group_id = await api.get_survey_period_and_roles(survey_id)
                         if not period_id or not role_ids:
                             raise Exception(f"Period/Role tidak ditemukan untuk survey {survey_id}")
 
-                        _progress("resolve", "🗺️ Mengambil metadata region...")
+                        _progress("resolve_survey", "🗺️ Mengambil metadata region...")
                         prov_uuid, region_filter, kab_full_code, region_group_id = await api.get_region_metadata(req.filter_provinsi, req.filter_kabupaten, survey_id)
 
                         # --- MODE: USER SLICING (DIRECT) ---
