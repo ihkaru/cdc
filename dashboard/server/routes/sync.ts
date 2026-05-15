@@ -35,7 +35,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
         try {
             const statusResp = await fetch(`${RPA_URL}/status`);
             if (statusResp.ok) {
-                const status = await statusResp.json();
+                const status = await statusResp.json() as any;
                 if (status.is_running && status.active_job?.survey_config_id === survey.id) {
                     throw new Error("Sync for this survey is already running in background.");
                 }
@@ -129,7 +129,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 
     // Simple in-memory rate limiter for proxy lookups
     .state("lastLookup", new Map<string, number>())
-    .onBeforeHandle(({ user, path, getValues, set }) => {
+    .onBeforeHandle(({ user, path, getValues, set }: any) => {
         if (path.includes("/fasih/")) {
             const now = Date.now();
             const last = (getValues("lastLookup") as Map<string, number>).get(user!.id) || 0;

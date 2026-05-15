@@ -415,7 +415,7 @@ async function save() {
     const method = isEdit.value ? 'PUT' : 'POST'
     
     const payload = { ...form.value }
-    if (isEdit.value && !payload.ssoPassword) delete payload.ssoPassword
+    if (isEdit.value && !payload.ssoPassword) delete (payload as any).ssoPassword
 
     const res = await fetch(url, {
       method,

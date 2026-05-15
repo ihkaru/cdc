@@ -41,7 +41,9 @@ async function seed() {
     console.log(`🔍 Found ${pegawais.length} employees.`);
 
     for (const p of pegawais) {
-        const passwordPrefix = p.email.split('@')[0];
+        if (!p.email || !p.name) continue;
+        
+        const passwordPrefix = p.email.split('@')[0]!;
         const hashedPassword = await argon2.hash(passwordPrefix);
 
         // Check if user exists
@@ -56,15 +58,15 @@ async function seed() {
                 // This ensures password hashing is handled correctly by Better Auth
                 await auth.api.signUpEmail({
                     body: {
-                        email: p.email,
-                        password: passwordPrefix,
-                        name: p.name,
+                        email: p.email!,
+                        password: passwordPrefix!,
+                        name: p.name!,
                     }
                 });
                 
                 // Get the newly created user to get their ID
                 const newUser = await db.query.users.findFirst({
-                    where: eq(schema.users.email, p.email)
+                    where: eq(schema.users.email, p.email!)
                 });
                 userId = newUser?.id;
                 console.log(`👤 Created user: ${p.email}`);
@@ -82,8 +84,8 @@ async function seed() {
 
         // Link User to Role
         await db.insert(schema.usersToRoles).values({
-            userId: userId,
-            roleId: targetRole.id
+            userId: userId as string,
+            roleId: targetRole!.id
         }).onConflictDoNothing();
         
         if (isIhzakarunia) console.log("⭐ Assigned ADMIN role to ihzakarunia.");

@@ -8,7 +8,7 @@ import {
 import routes from './routes';
 import { useAuthStore } from 'src/stores/auth';
 
-export default route(function ({ store }) {
+export default route(function ({ store }: any) {
     const createHistory = process.env.SERVER
         ? createMemoryHistory
         : process.env.VUE_ROUTER_MODE === 'history'

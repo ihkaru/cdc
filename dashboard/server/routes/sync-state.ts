@@ -64,8 +64,8 @@ export const syncStateRoutes = new Elysia({ prefix: "/api/surveys" })
             mirroring: {
                 total: Number(progress?.total || 0),
                 mirrored: Number(progress?.mirrored || 0),
-                skipped: Number(progress?.skipped || 0),
-                remaining: Math.max(0, Number(progress?.total || 0) - Number(progress?.mirrored || 0) - Number(progress?.skipped || 0)),
+                skipped: 0,
+                remaining: Math.max(0, Number(progress?.total || 0) - Number(progress?.mirrored || 0)),
                 skippedList
             },
             logs

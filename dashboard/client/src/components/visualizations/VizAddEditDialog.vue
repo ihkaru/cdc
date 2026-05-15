@@ -128,7 +128,7 @@
                     <div class="col-3">
                       <q-input v-model="rule.color" type="text" label="Warna" dark filled dense>
                         <template v-slot:append>
-                          <input type="color" :value="rule.color || '#3fb1ce'" @input="rule.color = $event.target.value" style="width: 24px; height: 24px; border: none; padding: 0; cursor: pointer;" />
+                          <input type="color" :value="rule.color || '#3fb1ce'" @input="(e: any) => rule.color = e.target.value" style="width: 24px; height: 24px; border: none; padding: 0; cursor: pointer;" />
                         </template>
                       </q-input>
                     </div>
@@ -265,7 +265,7 @@
                   <div class="col-4">
                     <q-input v-model="metric.color" type="text" label="Warna Bar" dark filled dense>
                       <template v-slot:append>
-                        <input type="color" :value="metric.color || '#3fb1ce'" @input="metric.color = $event.target.value" style="width: 30px; height: 30px; border: none; padding: 0; cursor: pointer;" />
+                        <input type="color" :value="metric.color || '#3fb1ce'" @input="(e: any) => metric.color = e.target.value" style="width: 30px; height: 30px; border: none; padding: 0; cursor: pointer;" />
                       </template>
                     </q-input>
                   </div>

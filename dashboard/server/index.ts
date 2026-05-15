@@ -63,6 +63,7 @@ const app = new Elysia()
         allowedHeaders: ["Content-Type", "Authorization"],
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     }))
+    .get("/api/health", () => ({ status: "ok", timestamp: new Date().toISOString() }))
     .use(authRoutes)
     .use(authMiddleware)
     // Global Security Gate & Headers
@@ -74,7 +75,7 @@ const app = new Elysia()
         set.headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
 
         // 2. Global Auth Check (BOLA Prevention)
-        const isPublicAuth = path.startsWith("/api/auth/");
+        const isPublicAuth = path.startsWith("/api/auth/") || path === "/api/health";
         const isProtectedApi = path.startsWith("/api/") || path.startsWith("/storage/");
 
         if (isProtectedApi && !isPublicAuth && !user) {

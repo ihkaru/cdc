@@ -1,6 +1,7 @@
 services:
   dashboard:
     build: ./dashboard
+    container_name: fasih-nexus-dashboard
     # Labels are used for auto-discovery by Traefik in production (Coolify).
     labels:
       - "traefik.enable=true"
@@ -18,11 +19,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:3000/api/health').then(r => r.ok ? process.exit(0) : process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
 
   vpn:
     build: ./vpn
     container_name: fasih-nexus-vpn
+    ports:
+      - "8000:8000"
     privileged: true
     devices:
       - /dev/net/tun
@@ -64,6 +73,12 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; exit(0 if urllib.request.urlopen(\"http://localhost:8000/health\").getcode() == 200 else 1)'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   vpn-auth:
@@ -96,6 +111,7 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    container_name: fasih-nexus-db
     volumes:
       - pg_data:/var/lib/postgresql/data
     environment:

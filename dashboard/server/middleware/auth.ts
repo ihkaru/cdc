@@ -29,7 +29,7 @@ export const authMiddleware = new Elysia({ name: "authMiddleware" })
     })
 export const requireAuth = (app: Elysia) => app
     .use(authMiddleware)
-    .onBeforeHandle(({ user, set }) => {
+    .onBeforeHandle(({ user, set }: any) => {
         if (!user) {
             set.status = 401;
             return { error: "Unauthorized" };
@@ -38,7 +38,7 @@ export const requireAuth = (app: Elysia) => app
 
 export const requireAdmin = (app: Elysia) => app
     .use(authMiddleware)
-    .onBeforeHandle(({ user, roles, set }) => {
+    .onBeforeHandle(({ user, roles, set }: any) => {
         if (!user) {
             set.status = 401;
             return { error: "Unauthorized" };
