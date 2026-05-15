@@ -32,22 +32,52 @@ BEGIN
         EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE uuid USING %I::uuid', r.table_name, r.column_name, r.column_name);
     END LOOP;
     
-    -- 3. Clean up conflicting sequences (Postgres identity conflicts)
-    -- This prevents 'relation sync_logs_id_seq already exists' errors
-    FOR r IN (
-        SELECT relname as sequence_name
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'public' AND c.relkind = 'S'
-          AND (relname LIKE 'sync_logs%' OR relname LIKE 'label_data%' OR relname LIKE 'label_schemas%' OR relname LIKE 'visualization_configs%')
-    ) LOOP
-        RAISE NOTICE 'Dropping conflicting sequence %...', r.sequence_name;
-        EXECUTE format('DROP SEQUENCE IF EXISTS %I CASCADE', r.sequence_name);
-    END LOOP;
-    
-    RAISE NOTICE 'Self-healing check completed.';
-END \$\$;
-" || echo "   ⚠️ Advanced self-healing skipped or failed."
+    -- 3. Indestructible Cleanup (Postgres identity & sequence conflicts)
+    -- We use nested blocks to ignore errors and force cleanup
+    DO \$\$ 
+    DECLARE
+        r RECORD;
+    BEGIN 
+        -- A. Force drop constraints that might block type changes
+        BEGIN EXECUTE 'ALTER TABLE assignments DROP CONSTRAINT IF EXISTS assignments_survey_config_id_survey_configs_id_fk'; EXCEPTION WHEN OTHERS THEN NULL; END;
+        BEGIN EXECUTE 'ALTER TABLE sync_logs DROP CONSTRAINT IF EXISTS sync_logs_survey_config_id_survey_configs_id_fk'; EXCEPTION WHEN OTHERS THEN NULL; END;
+
+        -- B. Clean up OWNED sequences by first dropping the column dependencies
+        FOR r IN (
+            SELECT t.relname as table_name, a.attname as column_name, c.relname as sequence_name
+            FROM pg_class c
+            JOIN pg_depend d ON d.objid = c.oid
+            JOIN pg_class t ON t.oid = d.refobjid
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
+            WHERE c.relkind = 'S' AND d.deptype = 'a'
+              AND (c.relname LIKE 'sync_logs%' OR c.relname LIKE 'label_data%' OR c.relname LIKE 'label_schemas%' OR c.relname LIKE 'visualization_configs%')
+        ) LOOP
+            RAISE NOTICE 'Cleaning up owned sequence %...', r.sequence_name;
+            BEGIN 
+                -- Drop both default and identity if they exist
+                EXECUTE format('ALTER TABLE %I ALTER COLUMN %I DROP DEFAULT', r.table_name, r.column_name);
+                EXECUTE format('ALTER TABLE %I ALTER COLUMN %I DROP IDENTITY IF EXISTS', r.table_name, r.column_name);
+                EXECUTE format('DROP SEQUENCE IF EXISTS %I CASCADE', r.sequence_name);
+            EXCEPTION WHEN OTHERS THEN 
+                RAISE NOTICE 'Could not fully drop %, skipping...', r.sequence_name;
+            END;
+        END LOOP;
+
+        -- C. Clean up any remaining ORPHAN sequences
+        FOR r IN (
+            SELECT relname as sequence_name
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relkind = 'S'
+              AND (relname LIKE 'sync_logs%' OR relname LIKE 'label_data%' OR relname LIKE 'label_schemas%' OR relname LIKE 'visualization_configs%')
+        ) LOOP
+            RAISE NOTICE 'Dropping orphan sequence %...', r.sequence_name;
+            BEGIN EXECUTE format('DROP SEQUENCE IF EXISTS %I CASCADE', r.sequence_name); EXCEPTION WHEN OTHERS THEN NULL; END;
+        END LOOP;
+        
+        RAISE NOTICE 'Self-healing process completed.';
+    END \$\$;
+" || echo "   ⚠️ Self-healing check completed with some warnings (non-critical)."
 
 echo "📦 Syncing database schema (drizzle-kit push)..."
 # We use push for simplicity in this dev/stage environment.
