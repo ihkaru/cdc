@@ -65,7 +65,8 @@ services:
 
   # --- RPA Engines (Sharing VPN Namespace) ---
   rpa:
-    build: ./rpa # REBUILD setiap autodeploy
+    build: ./rpa
+    image: fasih-nexus-rpa:latest # Tag hasil build untuk digunakan service lain
     container_name: fasih-nexus-rpa
     network_mode: "service:vpn"
     labels:
@@ -80,11 +81,11 @@ services:
       - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
     depends_on:
       vpn:
-        condition: service_healthy # TUNGGU TUNNEL AKTIF
+        condition: service_healthy
     restart: unless-stopped
 
   vpn-auth:
-    build: ./rpa # PAKSA REBUILD (menggunakan context rpa)
+    image: fasih-nexus-rpa:latest # Gunakan image hasil build rpa
     container_name: fasih-nexus-vpn-auth
     network_mode: "service:vpn"
     labels:
@@ -95,12 +96,14 @@ services:
       - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
-        condition: service_healthy # TUNGGU TUNNEL AKTIF
+        condition: service_healthy
+      rpa:
+        condition: service_started # Pastikan rpa sudah di-build/start
     command: python -m uvicorn src.app:app --host 0.0.0.0 --port 8001
     restart: unless-stopped
 
   archiver:
-    build: ./rpa # PAKSA REBUILD (menggunakan context rpa)
+    image: fasih-nexus-rpa:latest # Gunakan image hasil build rpa
     container_name: fasih-nexus-archiver
     network_mode: "service:vpn"
     labels:
@@ -114,7 +117,9 @@ services:
       - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
-        condition: service_healthy # TUNGGU TUNNEL AKTIF
+        condition: service_healthy
+      rpa:
+        condition: service_started # Pastikan rpa sudah di-build/start
     command: python src/archiver.py
     restart: unless-stopped
 
