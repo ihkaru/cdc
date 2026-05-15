@@ -31,8 +31,6 @@ services:
   vpn:
     build: ./vpn
     container_name: fasih-nexus-vpn
-    ports:
-      - "8000:8000"
     privileged: true
     devices:
       - /dev/net/tun

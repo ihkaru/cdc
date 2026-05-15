@@ -75,3 +75,8 @@ async def _queue_worker():
     finally:
         _worker_running = False
         sync_state.queue_count = 0
+
+async def trigger_worker():
+    """Trigger the queue worker if it's not already running."""
+    if not _worker_running:
+        asyncio.create_task(_queue_worker())

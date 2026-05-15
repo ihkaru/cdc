@@ -45,6 +45,12 @@ async def lifespan(fastapi_app):
             print(f"🔄 Startup: Found {queued_count} queued jobs. Auto-triggering worker...")
             asyncio.create_task(_queue_worker())
 
+        # Start Routine Sync Scheduler
+        from worker.scheduler import routine_sync_loop
+        import asyncio
+        print("🕒 Startup: Starting Routine Sync Scheduler...")
+        asyncio.create_task(routine_sync_loop())
+
     except Exception as e:
         print(f"⚠️ Startup cleanup/recovery failed: {e}")
     
