@@ -1,5 +1,5 @@
 # Project Snapshot: FasihNexus
-Generated at: Fri May 15 09:58:07 PM WIB 2026
+Generated at: Fri May 15 10:36:42 PM WIB 2026
 
 ## 📂 Project Structure
 ```text
@@ -7,6 +7,7 @@ Listing files respecting .gitignore:
 .env.example
 .gitignore
 .vscode/settings.json
+GEMINI.md
 README.md
 analyze_repo.sh
 api_exploration.log
@@ -371,7 +372,7 @@ services:
       - "traefik.docker.network=coolify"
       - "coolify.managed=true"
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
+      - DATABASE_URL="postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard"
       - RPA_URL=http://vpn:8000
       - VPN_AUTH_URL=http://vpn:8001
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -404,7 +405,7 @@ services:
     labels:
       - "coolify.managed=false"
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
+      - DATABASE_URL="postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard"
       - VPN_HOST=akses.bps.go.id
       - VPN_TEST_URL=https://fasih-sm.bps.go.id
       - VPN_TRUSTED_CERT=${VPN_TRUSTED_CERT}
@@ -419,19 +420,20 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s # Ditingkatkan dari 30s untuk toleransi SAML tunnel
+      start_period: 60s
     restart: unless-stopped
     stop_grace_period: 15s
 
   # --- RPA Engines (Sharing VPN Namespace) ---
   rpa:
-    build: ./rpa # REBUILD setiap autodeploy
+    build: ./rpa
+    image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-rpa
     network_mode: "service:vpn"
     labels:
       - "coolify.managed=false"
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
+      - DATABASE_URL="postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard"
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - PYTHONPATH=/app:/app/src
       - SKIP_DETAIL_FETCH=${SKIP_DETAIL_FETCH:-false}
@@ -440,33 +442,35 @@ services:
       - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
     depends_on:
       vpn:
-        condition: service_healthy # TUNGGU TUNNEL AKTIF
+        condition: service_started
     restart: unless-stopped
 
   vpn-auth:
-    build: ./rpa # PAKSA REBUILD (menggunakan context rpa)
+    image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-vpn-auth
     network_mode: "service:vpn"
     labels:
       - "coolify.managed=false"
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
+      - DATABASE_URL="postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard"
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
-        condition: service_healthy # TUNGGU TUNNEL AKTIF
+        condition: service_started
+      rpa:
+        condition: service_started
     command: python -m uvicorn src.app:app --host 0.0.0.0 --port 8001
     restart: unless-stopped
 
   archiver:
-    build: ./rpa # PAKSA REBUILD (menggunakan context rpa)
+    image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-archiver
     network_mode: "service:vpn"
     labels:
       - "coolify.managed=false"
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
+      - DATABASE_URL="postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard"
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
       - S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
       - S3_BUCKET=${S3_BUCKET:-survey-images}
@@ -474,7 +478,9 @@ services:
       - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
-        condition: service_healthy # TUNGGU TUNNEL AKTIF
+        condition: service_started
+      rpa:
+        condition: service_started
     command: python src/archiver.py
     restart: unless-stopped
 
@@ -487,10 +493,10 @@ services:
     labels:
       - "coolify.managed=false"
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - pg_data_v2:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=fasih
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_PASSWORD="${POSTGRES_PASSWORD}"
       - POSTGRES_DB=fasih_dashboard
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U fasih -d fasih_dashboard" ]
@@ -531,7 +537,7 @@ services:
       - "coolify.managed=false"
     depends_on:
       - master
-      - volume # FIX: Tunggu volume server ready
+      - volume
       - postgres
     environment:
       - WEED_FILER_POSTGRES_ENABLED=true
@@ -564,7 +570,7 @@ networks:
     external: true
 
 volumes:
-  pg_data:
+  pg_data_v2:
   seaweed_data:
 ```
 

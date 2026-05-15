@@ -12,10 +12,10 @@ services:
   vpn:
     ports:
       - "8000:8000"
+      - "8001:8001"
 
   vpn-auth:
-    ports:
-      - "8001:8000"
+    # Port 8001 is now published via 'vpn' service due to network_mode sharing
 
   postgres:
     ports:
