@@ -12,5 +12,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/server ./server
 COPY --from=build /app/package.json .
 COPY --from=build /app/drizzle.config.ts .
+COPY --from=build /app/entrypoint.sh .
+RUN chmod +x entrypoint.sh
 EXPOSE 3000
-CMD ["bun", "run", "server/index.ts"]
+ENTRYPOINT ["./entrypoint.sh"]

@@ -51,10 +51,6 @@
                   unelevated
                 />
               </div>
-              
-              <div class="text-center q-mt-md text-grey-4 text-caption">
-                Standard password is your email prefix (e.g. "ihzakarunia")
-              </div>
             </q-form>
           </q-card-section>
         </q-card>

@@ -33,7 +33,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 
         // Guard: Check if RPA is already busy
         try {
-            const statusResp = await fetch(`${RPA_URL}/status`);
+            const statusResp = await fetch(`${RPA_URL}/status`, { signal: AbortSignal.timeout(5000) });
             if (statusResp.ok) {
                 const status = await statusResp.json() as any;
                 if (status.is_running && status.active_job?.survey_config_id === survey.id) {
@@ -59,6 +59,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
                 filter_kabupaten: survey.filterKabupaten || "",
                 filter_rotation: survey.filterRotation || "pengawas",
             }),
+            signal: AbortSignal.timeout(10000)
         });
 
         if (!response.ok) {
@@ -72,7 +73,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
     // Get RPA sync status
     .get("/sync/status", async () => {
         try {
-            const response = await fetch(`${RPA_URL}/status`);
+            const response = await fetch(`${RPA_URL}/status`, { signal: AbortSignal.timeout(5000) });
             return await response.json();
         } catch {
             return { is_running: false, error: "RPA service unavailable" };
@@ -82,7 +83,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
     // Get VPN connection status from RPA
     .get("/vpn/status", async () => {
         try {
-            const response = await fetch(`${RPA_URL}/vpn/check`);
+            const response = await fetch(`${RPA_URL}/vpn/check`, { signal: AbortSignal.timeout(5000) });
             return await response.json();
         } catch {
             return { connected: false, error: "RPA service unavailable" };
@@ -255,7 +256,11 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 // Check VPN status periodically. If disconnected, trigger RPA to auto-fetch the cookie.
 const checkVpnAndFetchCookie = async () => {
     try {
-        const statusRes = await fetch(`${RPA_URL}/vpn/check`).then(r => r.json()).catch(() => ({ connected: false })) as any;
+        // Use a strict timeout for the health check to avoid blocking the loop
+        const statusRes = await fetch(`${RPA_URL}/vpn/check`, { 
+            signal: AbortSignal.timeout(10000) 
+        }).then(r => r.json()).catch(() => ({ connected: false })) as any;
+
         if (!statusRes.connected) {
             console.log("⚠️ VPN Disconnected detected! Attempting auto-fetch...");
             
@@ -271,6 +276,7 @@ const checkVpnAndFetchCookie = async () => {
                 return;
             }
 
+            console.log(`   🔑 Borrowing credentials from: ${survey.ssoUsername} (Survey: ${survey.surveyName})`);
             const password = decryptPassword(survey.ssoPasswordEncrypted);
             
             const fetchRes = await fetch(`${VPN_AUTH_URL}/vpn/auto-fetch`, {
@@ -280,12 +286,13 @@ const checkVpnAndFetchCookie = async () => {
                     sso_username: survey.ssoUsername,
                     sso_password: password
                 }),
+                signal: AbortSignal.timeout(15000)
             });
 
             if (fetchRes.ok) {
                 console.log("   ✅ VPN auto-fetch triggered successfully! RPA is grabbing the cookie.");
             } else {
-                console.log("   ❌ Failed to trigger RPA VPN auto-fetch:", fetchRes.status);
+                console.log(`   ❌ Failed to trigger RPA VPN auto-fetch: ${fetchRes.status}`);
             }
         }
     } catch (err) {
@@ -297,4 +304,3 @@ const checkVpnAndFetchCookie = async () => {
 setInterval(checkVpnAndFetchCookie, 60000);
 // Also run it 5 seconds after the dashboard boots up (giving time for RPA to start)
 setTimeout(checkVpnAndFetchCookie, 5000);
-
