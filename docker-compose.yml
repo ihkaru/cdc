@@ -210,5 +210,5 @@ networks:
     external: true
 
 volumes:
-  pg_data_v2:
+  pg_data_v3:
   seaweed_data:
