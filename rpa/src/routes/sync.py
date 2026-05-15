@@ -44,6 +44,7 @@ def status():
     return StatusResponse(
         is_running=sync_state.is_running,
         current_survey=sync_state.current_survey,
+        current_survey_config_id=sync_state.current_survey_config_id,
         current_job_id=sync_state.current_job_id,
         started_at=sync_state.started_at.isoformat() if sync_state.started_at else None,
         last_result=sync_state.last_result,

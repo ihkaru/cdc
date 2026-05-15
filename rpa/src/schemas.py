@@ -21,6 +21,7 @@ class SyncResponse(BaseModel):
 class StatusResponse(BaseModel):
     is_running: bool
     current_survey: Optional[str] = None
+    current_survey_config_id: Optional[str] = None
     current_job_id: Optional[int] = None
     started_at: Optional[str] = None
     last_result: Optional[dict] = None

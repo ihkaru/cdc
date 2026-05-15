@@ -41,6 +41,7 @@ class SyncProgress:
 class SyncState:
     is_running: bool = False
     current_survey: Optional[str] = None
+    current_survey_config_id: Optional[str] = None
     current_job_id: Optional[int] = None
     last_result: Optional[dict] = None
     started_at: Optional[datetime] = None

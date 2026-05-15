@@ -191,9 +191,8 @@ async function refreshStatus() {
 
 function isJobActive(surveyId: string): boolean {
   // Check if this survey is currently running
-  if (rpaStatus.value.is_running && rpaStatus.value.current_survey) {
-    const survey = surveys.value.find(s => s.id === surveyId)
-    if (survey && survey.surveyName === rpaStatus.value.current_survey) return true
+  if (rpaStatus.value.is_running && rpaStatus.value.current_survey_config_id === surveyId) {
+    return true
   }
   // Check if queued
   if (rpaStatus.value.queue) {

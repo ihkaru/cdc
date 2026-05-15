@@ -240,6 +240,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
                 sso_username: survey.ssoUsername,
                 sso_password: password
             }),
+            signal: AbortSignal.timeout(45000)
         });
 
         if (!fetchRes.ok) {
@@ -290,7 +291,7 @@ const checkVpnAndFetchCookie = async () => {
                     sso_username: survey.ssoUsername,
                     sso_password: password
                 }),
-                signal: AbortSignal.timeout(15000)
+                signal: AbortSignal.timeout(45000)
             });
 
             if (fetchRes.ok) {

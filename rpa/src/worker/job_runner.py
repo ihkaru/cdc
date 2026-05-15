@@ -1,4 +1,5 @@
 import os
+import asyncio
 from datetime import datetime, timezone
 from playwright.async_api import async_playwright
 
@@ -48,6 +49,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
 
     sync_state.is_running = True
     sync_state.current_survey = req.survey_name
+    sync_state.current_survey_config_id = req.survey_config_id
     sync_state.current_job_id = log.id
     sync_state.started_at = datetime.now(timezone.utc)
     sync_state.progress.reset()
@@ -273,5 +275,8 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
     finally:
         sync_state.is_running = False
         sync_state.current_survey = None
+        sync_state.current_survey_config_id = None
         sync_state.current_job_id = None
+        sync_state.started_at = None
+        sync_state.progress.reset()
         session.close()

@@ -112,8 +112,8 @@
       </q-card>
     </q-dialog>
 
-    <!-- Live Progress Card — shows only when a job is running -->
-    <q-card v-if="liveStatus?.is_running" class="q-mb-md live-card" flat>
+    <!-- Live Progress Card — shows only when a job is running for THIS survey -->
+    <q-card v-if="liveStatus?.is_running && liveStatus.current_survey_config_id === $route.params.id" class="q-mb-md live-card" flat>
       <q-card-section>
         <div class="row items-center q-mb-sm">
           <q-spinner-rings color="primary" size="1.5em" class="q-mr-sm" />
