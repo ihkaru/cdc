@@ -8,9 +8,8 @@ services:
       - coolify
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=coolify" # FORCE Traefik to use the public network IP
+      - "traefik.docker.network=coolify"
       - "coolify.managed=true"
-      # Note: Route rules and SSL will be automatically handled by Coolify UI
     environment:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
       - RPA_URL=http://vpn:8000
@@ -39,7 +38,7 @@ services:
       - /dev/net/tun
       - /dev/ppp
     dns:
-      - 127.0.0.11 # CRITICAL: Ensures sharing containers can resolve Docker internal DNS (s3, postgres)
+      - 127.0.0.11
     networks:
       - fasih_internal
     labels:
@@ -60,13 +59,13 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s # Ditingkatkan dari 30s untuk toleransi SAML tunnel
     restart: unless-stopped
     stop_grace_period: 15s
 
-  # --- RPA Engines (Behind VPN) ---
+  # --- RPA Engines (Sharing VPN Namespace) ---
   rpa:
-    build: ./rpa
+    build: ./rpa # REBUILD setiap autodeploy
     container_name: fasih-nexus-rpa
     network_mode: "service:vpn"
     labels:
@@ -81,11 +80,11 @@ services:
       - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
     depends_on:
       vpn:
-        condition: service_started
+        condition: service_healthy # TUNGGU TUNNEL AKTIF
     restart: unless-stopped
 
   vpn-auth:
-    image: fasih-nexus-rpa:latest
+    build: ./rpa # PAKSA REBUILD (menggunakan context rpa)
     container_name: fasih-nexus-vpn-auth
     network_mode: "service:vpn"
     labels:
@@ -96,12 +95,12 @@ services:
       - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
-        condition: service_started
+        condition: service_healthy # TUNGGU TUNNEL AKTIF
     command: python -m uvicorn src.app:app --host 0.0.0.0 --port 8001
     restart: unless-stopped
 
   archiver:
-    image: fasih-nexus-rpa:latest
+    build: ./rpa # PAKSA REBUILD (menggunakan context rpa)
     container_name: fasih-nexus-archiver
     network_mode: "service:vpn"
     labels:
@@ -115,7 +114,7 @@ services:
       - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
-        condition: service_started
+        condition: service_healthy # TUNGGU TUNNEL AKTIF
     command: python src/archiver.py
     restart: unless-stopped
 
@@ -172,6 +171,7 @@ services:
       - "coolify.managed=false"
     depends_on:
       - master
+      - volume # FIX: Tunggu volume server ready
       - postgres
     environment:
       - WEED_FILER_POSTGRES_ENABLED=true
