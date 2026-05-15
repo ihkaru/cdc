@@ -11,7 +11,7 @@ services:
       - "traefik.docker.network=coolify"
       - "coolify.managed=true"
     environment:
-      - DATABASE_URL=postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
+      - DATABASE_URL="postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard"
       - RPA_URL=http://vpn:8000
       - VPN_AUTH_URL=http://vpn:8001
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -44,7 +44,7 @@ services:
     labels:
       - "coolify.managed=false"
     environment:
-      - DATABASE_URL=postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
+      - DATABASE_URL="postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard"
       - VPN_HOST=akses.bps.go.id
       - VPN_TEST_URL=https://fasih-sm.bps.go.id
       - VPN_TRUSTED_CERT=${VPN_TRUSTED_CERT}
@@ -72,7 +72,7 @@ services:
     labels:
       - "coolify.managed=false"
     environment:
-      - DATABASE_URL=postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
+      - DATABASE_URL="postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard"
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - PYTHONPATH=/app:/app/src
       - SKIP_DETAIL_FETCH=${SKIP_DETAIL_FETCH:-false}
@@ -91,7 +91,7 @@ services:
     labels:
       - "coolify.managed=false"
     environment:
-      - DATABASE_URL=postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
+      - DATABASE_URL="postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard"
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - PYTHONPATH=/app:/app/src
     depends_on:
@@ -109,7 +109,7 @@ services:
     labels:
       - "coolify.managed=false"
     environment:
-      - DATABASE_URL=postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
+      - DATABASE_URL="postgresql://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard"
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
       - S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
       - S3_BUCKET=${S3_BUCKET:-survey-images}
@@ -135,7 +135,7 @@ services:
       - pg_data_v2:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=fasih
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_PASSWORD="${POSTGRES_PASSWORD}"
       - POSTGRES_DB=fasih_dashboard
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U fasih -d fasih_dashboard" ]
