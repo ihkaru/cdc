@@ -81,7 +81,7 @@ services:
       - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
     depends_on:
       vpn:
-        condition: service_healthy
+        condition: service_started
     restart: unless-stopped
 
   vpn-auth:
@@ -96,7 +96,7 @@ services:
       - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
-        condition: service_healthy
+        condition: service_started
       rpa:
         condition: service_started
     command: python -m uvicorn src.app:app --host 0.0.0.0 --port 8001
@@ -117,7 +117,7 @@ services:
       - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
-        condition: service_healthy
+        condition: service_started
       rpa:
         condition: service_started
     command: python src/archiver.py
