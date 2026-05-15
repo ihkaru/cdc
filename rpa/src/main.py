@@ -27,7 +27,12 @@ from datetime import datetime, timezone
 
 from playwright.async_api import async_playwright
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Self-healing path: Ensure both the current directory (src) and its parent (root) are in sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+for d in [current_dir, parent_dir]:
+    if d not in sys.path:
+        sys.path.insert(0, d)
 
 from config.settings import Settings
 from auth import auto_login, launch_stealth_browser, new_stealth_context

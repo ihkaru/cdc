@@ -1,4 +1,15 @@
 import os
+import sys
+from pathlib import Path
+
+# Self-healing path: Ensure the directory containing this file is in sys.path
+# This allows 'import db', 'import routes' etc. to work regardless of the working directory.
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
+import os
+
 from datetime import datetime, timezone
 import sys
 

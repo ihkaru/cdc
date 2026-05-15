@@ -70,6 +70,7 @@ services:
       - FASIH_CONCURRENCY=${FASIH_CONCURRENCY:-3}
       - FETCH_CONCURRENCY=${FETCH_CONCURRENCY:-3}
       - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
+      - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
         condition: service_started
@@ -91,6 +92,7 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - PYTHONPATH=/app:/app/src
     depends_on:
       postgres:
         condition: service_healthy
@@ -106,6 +108,7 @@ services:
       - S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
       - S3_BUCKET=${S3_BUCKET:-survey-images}
       - S3_ENDPOINT=http://s3:8333
+      - PYTHONPATH=/app:/app/src
     depends_on:
       - vpn
       - postgres

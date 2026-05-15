@@ -1,4 +1,14 @@
+import os
+import sys
+
+# Self-healing path: Ensure the directory containing this file is in sys.path
+# This allows 'from db import ...' to work even if run as a script directly.
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
 import json
+
 import asyncio
 import aiohttp
 import os
