@@ -132,11 +132,12 @@ services:
     labels:
       - "coolify.managed=false"
     volumes:
-      - pg_data_v2:/var/lib/postgresql/data
+      - pg_data_v3:/var/lib/postgresql/data
     environment:
-      - POSTGRES_USER=fasih
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=fasih_dashboard
+      POSTGRES_USER: fasih
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: fasih_dashboard
+      POSTGRES_HOST_AUTH_METHOD: trust
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U fasih -d fasih_dashboard" ]
       interval: 5s
