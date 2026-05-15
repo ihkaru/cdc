@@ -1,11 +1,9 @@
 # Project Snapshot: FasihNexus
-Generated at: Fri May 15 09:36:41 PM WIB 2026
+Generated at: Fri May 15 09:48:13 PM WIB 2026
 
 ## 📂 Project Structure
 ```text
 Listing files respecting .gitignore:
-dump_project.sh
-project_snapshot.md
 .env.example
 .gitignore
 .vscode/settings.json
@@ -88,6 +86,7 @@ dashboard/server/scripts/backfill_flat_data.ts
 dashboard/server/tsconfig.json
 dashboard/test_db.ts
 dashboard/tsconfig.json
+docker-compose.coolify.yml
 docker-compose.override.yml
 docker-compose.yml
 docs/adr/0001-baseline-architecture-and-turbo-concurrency.md
@@ -96,9 +95,11 @@ docs/adr/0003-routine-sync-and-internal-scheduler.md
 docs/adr/README.md
 docs/adr/SKILL.md
 docs/references/data-pegawai.php
+dump_project.sh
 full_payload_dump.log
 grab_payload.py
 n8n-workflows/fasih_sync.json
+project_snapshot.md
 rpa/Dockerfile
 rpa/README.md
 rpa/check_counts.py
@@ -165,26 +166,25 @@ vpn/entrypoint.sh
 ## 🐳 Docker Compose Configuration
 ```yaml
 services:
+  # --- UI & API Gateway ---
   dashboard:
     build: ./dashboard
     container_name: fasih-nexus-dashboard
-    # Labels are used for auto-discovery by Traefik in production (Coolify).
+    networks:
+      - fasih_internal
+      - coolify
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.fasih-nexus-dashboard.rule=Host(`${PUBLIC_DOMAIN:-cdc.local}`)"
-      - "traefik.http.routers.fasih-nexus-dashboard.entrypoints=websecure"
-      - "traefik.http.routers.fasih-nexus-dashboard.tls=true"
-      - "traefik.http.services.fasih-nexus-dashboard.loadbalancer.server.port=3000"
+      - "traefik.docker.network=coolify"
+      # Note: Route rules and SSL will be automatically handled by Coolify UI
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
       - RPA_URL=http://vpn:8000
-      - VPN_AUTH_URL=http://vpn-auth:8000
+      - VPN_AUTH_URL=http://vpn:8001
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
-      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-https://${PUBLIC_DOMAIN:-cdc.local}}
-      - PUBLIC_BASE_URL=https://${PUBLIC_DOMAIN:-cdc.local}
-      - VPN_USER=${VPN_USER}
-      - VPN_PASS=${VPN_PASS}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
     depends_on:
       postgres:
         condition: service_healthy
@@ -196,6 +196,7 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  # --- VPN Gateway (The black box) ---
   vpn:
     build: ./vpn
     container_name: fasih-nexus-vpn
@@ -203,11 +204,12 @@ services:
     devices:
       - /dev/net/tun
       - /dev/ppp
+    networks:
+      - fasih_internal
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
       - VPN_HOST=akses.bps.go.id
       - VPN_TEST_URL=https://fasih-sm.bps.go.id
-      - VPN_TRUSTED_CERT=${VPN_TRUSTED_CERT}
       - VPN_USER=${VPN_USER}
       - VPN_PASS=${VPN_PASS}
       - VPN_COOKIE=${VPN_COOKIE}
@@ -215,98 +217,93 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fks --connect-timeout 5 --max-time 8 https://fasih-sm.bps.go.id/oauth_login.html -o /dev/null && echo ok || exit 1" ]
+      test: [ "CMD-SHELL", "curl -fks --connect-timeout 5 https://fasih-sm.bps.go.id/oauth_login.html -o /dev/null && echo ok || exit 1" ]
       interval: 30s
-      timeout: 12s
+      timeout: 10s
       retries: 3
       start_period: 30s
     restart: unless-stopped
     stop_grace_period: 15s
 
+  # --- RPA Engines (Behind VPN) ---
   rpa:
     build: ./rpa
-    image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-rpa
-    init: true
     network_mode: "service:vpn"
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - PYTHONPATH=/app:/app/src
       - SKIP_DETAIL_FETCH=${SKIP_DETAIL_FETCH:-false}
       - FASIH_CONCURRENCY=${FASIH_CONCURRENCY:-3}
-      - FETCH_CONCURRENCY=${FETCH_CONCURRENCY:-3}
-      - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
-      - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
         condition: service_started
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c 'import urllib.request; exit(0 if urllib.request.urlopen(\"http://localhost:8000/health\").getcode() == 200 else 1)'"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    volumes:
-      - ./rpa:/app
     restart: unless-stopped
 
   vpn-auth:
     image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-vpn-auth
+    network_mode: "service:vpn"
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - PYTHONPATH=/app:/app/src
     depends_on:
-      postgres:
-        condition: service_healthy
+      vpn:
+        condition: service_started
+    command: python -m uvicorn src.app:app --host 0.0.0.0 --port 8001
     restart: unless-stopped
-    command: python -m uvicorn src.app:app --host 0.0.0.0 --port 8000
 
   archiver:
     image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-archiver
+    network_mode: "service:vpn"
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
       - S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
       - S3_BUCKET=${S3_BUCKET:-survey-images}
       - S3_ENDPOINT=http://s3:8333
       - PYTHONPATH=/app:/app/src
     depends_on:
-      - vpn
-      - postgres
-      - s3
+      vpn:
+        condition: service_started
     command: python src/archiver.py
     restart: unless-stopped
 
+  # --- Data Persistence ---
   postgres:
     image: postgres:16-alpine
     container_name: fasih-nexus-db
+    networks:
+      - fasih_internal
     volumes:
       - pg_data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-fasih}
+      - POSTGRES_USER=fasih
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB:-fasih_dashboard}
+      - POSTGRES_DB=fasih_dashboard
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fasih} -d ${POSTGRES_DB:-fasih_dashboard}" ]
+      test: [ "CMD-SHELL", "pg_isready -U fasih -d fasih_dashboard" ]
       interval: 5s
       timeout: 5s
       retries: 5
     restart: unless-stopped
 
-  # --- SeaweedFS Image Vault Stack ---
+  # --- SeaweedFS Stack ---
   master:
     image: chrislusf/seaweedfs:latest
     command: "master -ip=master"
+    networks:
+      - fasih_internal
     restart: unless-stopped
 
   volume:
     image: chrislusf/seaweedfs:latest
     command: "volume -mserver=master:9333 -port=8080 -dir=/data"
+    networks:
+      - fasih_internal
     depends_on:
       - master
     volumes:
@@ -316,6 +313,8 @@ services:
   filer:
     image: chrislusf/seaweedfs:latest
     command: 'filer -master=master:9333'
+    networks:
+      - fasih_internal
     depends_on:
       - master
       - postgres
@@ -323,21 +322,29 @@ services:
       - WEED_FILER_POSTGRES_ENABLED=true
       - WEED_FILER_POSTGRES_HOSTNAME=postgres
       - WEED_FILER_POSTGRES_PORT=5432
-      - WEED_FILER_POSTGRES_USERNAME=${POSTGRES_USER:-fasih}
+      - WEED_FILER_POSTGRES_USERNAME=fasih
       - WEED_FILER_POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - WEED_FILER_POSTGRES_DATABASE=${POSTGRES_DB:-fasih_dashboard}
+      - WEED_FILER_POSTGRES_DATABASE=fasih_dashboard
       - WEED_FILER_POSTGRES_SSLMODE=disable
     restart: unless-stopped
 
   s3:
     image: chrislusf/seaweedfs:latest
     command: "s3 -filer=filer:8888"
+    networks:
+      - fasih_internal
     environment:
       - SEAWEEDFS_S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
       - SEAWEEDFS_S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
     depends_on:
       - filer
     restart: unless-stopped
+
+networks:
+  fasih_internal:
+    driver: bridge
+  coolify:
+    external: true
 
 volumes:
   pg_data:
@@ -473,46 +480,36 @@ DB_PATH=data/fasih_sync.db
 
 ### File: `./.env.example`
 ```text
-# PostgreSQL
-POSTGRES_USER=fasih
-POSTGRES_PASSWORD=changeme_generate_random
-POSTGRES_DB=fasih_dashboard
-DATABASE_URL=postgresql://fasih:changeme_generate_random@postgres:5432/fasih_dashboard
+# --- Database ---
+POSTGRES_PASSWORD=your_secure_db_password
 
-# Domain & URL (Coolify FQDN)
-# Digunakan untuk Traefik routing dan redirect auth
-PUBLIC_DOMAIN=fasih-nexus.yourdomain.com
-PUBLIC_BASE_URL=https://fasih-nexus.yourdomain.com
-BETTER_AUTH_URL=https://fasih-nexus.yourdomain.com
+# --- Security ---
+# Generate using: openssl rand -hex 32
+ENCRYPTION_KEY=
 
-# Auth Secret (Better-Auth)
-BETTER_AUTH_SECRET=generate_long_random_string_here
-
-# RPA — encryption key for SSO passwords (generate: openssl rand -hex 32)
-ENCRYPTION_KEY=changeme_generate_random_32_bytes_hex
-
-# VPN BPS — Digunakan untuk bootstrap koneksi awal jika database kosong
-# Gateway akses.bps.go.id mewajibkan SAML, jadi robot RPA akan login 
-# menggunakan kredensial ini untuk mengambil SVPNCOOKIE pertama kali.
-VPN_USER=your_sso_username
-VPN_PASS=your_sso_password
-# VPN_COOKIE adalah fallback jika RPA gagal mengambil cookie secara otomatis
+# --- VPN Auth ---
+VPN_USER=
+VPN_PASS=
+# Optional: Extraction dari cookie string browser (SVPNCOOKIE)
 VPN_COOKIE=
-VPN_TRUSTED_CERT=de74481c56635274320d58e3267de977acbd6ea8cdbc5450042010d7e9544659
 
-# Target Application
-TARGET_URL=https://fasih-sm.bps.go.id
+# --- Coolify & Better-Auth ---
+# Domain akses dashboard (cth: https://fasih.domain.com)
+BETTER_AUTH_URL=
+# Base URL publik (biasanya sama dengan BETTER_AUTH_URL)
+PUBLIC_BASE_URL=
+# Generate menggunakan: openssl rand -hex 32
+BETTER_AUTH_SECRET=
 
-# RPA Performance Flags
-# SKIP_DETAIL_FETCH: 'true' untuk mode sinkronisasi ekstra cepat (metadata only)
-SKIP_DETAIL_FETCH=false
-FASIH_CONCURRENCY=3
-
-# SeaweedFS Image Vault (S3)
+# --- S3 Storage (SeaweedFS) ---
 S3_ACCESS_KEY=fasihadmin
-S3_SECRET_KEY=generate_secure_secret_here
+S3_SECRET_KEY=fasihsecret
 S3_BUCKET=survey-images
-# S3_ENDPOINT otomatis ke service 's3' di dalam docker network
+
+# --- App Settings ---
+FASIH_CONCURRENCY=3
+SKIP_DETAIL_FETCH=false
+# FASIH_URL default ke https://fasih-sm.bps.go.id
 ```
 
 ## 🚀 Core Entrypoints
