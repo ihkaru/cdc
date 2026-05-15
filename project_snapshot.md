@@ -1,0 +1,683 @@
+# Project Snapshot: FasihNexus
+Generated at: Fri May 15 09:36:41 PM WIB 2026
+
+## 📂 Project Structure
+```text
+Listing files respecting .gitignore:
+dump_project.sh
+project_snapshot.md
+.env.example
+.gitignore
+.vscode/settings.json
+README.md
+analyze_repo.sh
+api_exploration.log
+benchmark_api.sh
+benchmark_fasih.sh
+benchmark_ux_lookup.sh
+check-health.sh
+check-stability.sh
+dashboard/.gitignore
+dashboard/Dockerfile
+dashboard/README.md
+dashboard/bun.lock
+dashboard/client/.gitignore
+dashboard/client/README.md
+dashboard/client/bun.lock
+dashboard/client/index.html
+dashboard/client/index.ts
+dashboard/client/package-lock.json
+dashboard/client/package.json
+dashboard/client/public/favicon.ico
+dashboard/client/quasar.config.js
+dashboard/client/quasar.config.js.temporary.compiled.1772827948483.mjs
+dashboard/client/quasar.config.js.temporary.compiled.1772827984153.mjs
+dashboard/client/quasar.config.js.temporary.compiled.1772828135725.mjs
+dashboard/client/quasar.config.js.temporary.compiled.1772828136841.mjs
+dashboard/client/src/App.vue
+dashboard/client/src/boot/axios.ts
+dashboard/client/src/boot/pinia.ts
+dashboard/client/src/components/visualizations/VizAddEditDialog.vue
+dashboard/client/src/components/visualizations/VizBulkImportDialog.vue
+dashboard/client/src/components/visualizations/VizCard.vue
+dashboard/client/src/components/visualizations/VizMapLibre.vue
+dashboard/client/src/components/visualizations/VizPreviewCanvas.vue
+dashboard/client/src/composables/useVpn.ts
+dashboard/client/src/composables/visualizations/useBulkImport.ts
+dashboard/client/src/composables/visualizations/useVisualizationData.ts
+dashboard/client/src/composables/visualizations/useVizForm.ts
+dashboard/client/src/css/app.scss
+dashboard/client/src/layouts/MainLayout.vue
+dashboard/client/src/pages/ErrorNotFound.vue
+dashboard/client/src/pages/IndexPage.vue
+dashboard/client/src/pages/LoginPage.vue
+dashboard/client/src/pages/SurveyDetail.vue
+dashboard/client/src/pages/SurveyForm.vue
+dashboard/client/src/pages/SurveyList.vue
+dashboard/client/src/pages/SurveyVisualizations.vue
+dashboard/client/src/pages/SyncLogs.vue
+dashboard/client/src/router/index.ts
+dashboard/client/src/router/routes.ts
+dashboard/client/src/stores/auth.ts
+dashboard/client/src/utils/chartOptions.ts
+dashboard/client/tsconfig.json
+dashboard/drizzle.config.ts
+dashboard/entrypoint.sh
+dashboard/package.json
+dashboard/server/auth.ts
+dashboard/server/db/index.ts
+dashboard/server/db/migrations/0000_damp_deadpool.sql
+dashboard/server/db/migrations/add-indexes.sql
+dashboard/server/db/migrations/meta/0000_snapshot.json
+dashboard/server/db/migrations/meta/_journal.json
+dashboard/server/db/schema.ts
+dashboard/server/db/seed-pegawai.ts
+dashboard/server/db/seed_data/data-pegawai.php
+dashboard/server/index.ts
+dashboard/server/middleware/auth.ts
+dashboard/server/routes/assignments.ts
+dashboard/server/routes/labels.ts
+dashboard/server/routes/logs.ts
+dashboard/server/routes/storage.ts
+dashboard/server/routes/surveys.ts
+dashboard/server/routes/sync-state.ts
+dashboard/server/routes/sync.ts
+dashboard/server/routes/visualizations.ts
+dashboard/server/scripts/backfill.ts
+dashboard/server/scripts/backfill_flat_data.ts
+dashboard/server/tsconfig.json
+dashboard/test_db.ts
+dashboard/tsconfig.json
+docker-compose.override.yml
+docker-compose.yml
+docs/adr/0001-baseline-architecture-and-turbo-concurrency.md
+docs/adr/0002-auth-and-rbac-system.md
+docs/adr/0003-routine-sync-and-internal-scheduler.md
+docs/adr/README.md
+docs/adr/SKILL.md
+docs/references/data-pegawai.php
+full_payload_dump.log
+grab_payload.py
+n8n-workflows/fasih_sync.json
+rpa/Dockerfile
+rpa/README.md
+rpa/check_counts.py
+rpa/check_counts_simple.py
+rpa/config/.env copy.example
+rpa/config/.env.example
+rpa/config/settings.py
+rpa/requirements.txt
+rpa/scripts/backfill.py
+rpa/src/__init__.py
+rpa/src/api_client.py
+rpa/src/app.py
+rpa/src/archiver.py
+rpa/src/auth.py
+rpa/src/benchmark_api.py
+rpa/src/browser/__init__.py
+rpa/src/browser/manager.py
+rpa/src/connectivity.py
+rpa/src/crypto.py
+rpa/src/db/__init__.py
+rpa/src/db/connection.py
+rpa/src/db/models.py
+rpa/src/db/repository.py
+rpa/src/extractors/__init__.py
+rpa/src/extractors/json_logic.py
+rpa/src/extractors/table_extractor.py
+rpa/src/main.py
+rpa/src/pages/__init__.py
+rpa/src/pages/assignment_page.py
+rpa/src/pages/base_page.py
+rpa/src/pages/detail_page.py
+rpa/src/pages/filter_rotator.py
+rpa/src/pages/list_page.py
+rpa/src/pages/login_page.py
+rpa/src/pages/survey_navigator.py
+rpa/src/routes/__init__.py
+rpa/src/routes/lookup.py
+rpa/src/routes/sync.py
+rpa/src/schemas.py
+rpa/src/state.py
+rpa/src/storage.py
+rpa/src/worker/__init__.py
+rpa/src/worker/fast_mode.py
+rpa/src/worker/full_mode.py
+rpa/src/worker/job_runner.py
+rpa/src/worker/queue.py
+rpa/src/worker/scheduler.py
+rpa/tmp_explore_api.py
+rpa/tmp_test_datatable.py
+rpa/tmp_test_survey.py
+rpa/tmp_test_users.py
+start-docker.sh
+start-local.sh
+stop-all.sh
+test-routine-sync.sh
+tmp/routes.txt
+tmp_explore_api.py
+update_cookie.py
+update_cookie.sql
+vpn/Dockerfile
+vpn/entrypoint.sh
+```
+
+## 🐳 Docker Compose Configuration
+```yaml
+services:
+  dashboard:
+    build: ./dashboard
+    container_name: fasih-nexus-dashboard
+    # Labels are used for auto-discovery by Traefik in production (Coolify).
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fasih-nexus-dashboard.rule=Host(`${PUBLIC_DOMAIN:-cdc.local}`)"
+      - "traefik.http.routers.fasih-nexus-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.fasih-nexus-dashboard.tls=true"
+      - "traefik.http.services.fasih-nexus-dashboard.loadbalancer.server.port=3000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - RPA_URL=http://vpn:8000
+      - VPN_AUTH_URL=http://vpn-auth:8000
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-https://${PUBLIC_DOMAIN:-cdc.local}}
+      - PUBLIC_BASE_URL=https://${PUBLIC_DOMAIN:-cdc.local}
+      - VPN_USER=${VPN_USER}
+      - VPN_PASS=${VPN_PASS}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:3000/api/health').then(r => r.ok ? process.exit(0) : process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  vpn:
+    build: ./vpn
+    container_name: fasih-nexus-vpn
+    privileged: true
+    devices:
+      - /dev/net/tun
+      - /dev/ppp
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - VPN_HOST=akses.bps.go.id
+      - VPN_TEST_URL=https://fasih-sm.bps.go.id
+      - VPN_TRUSTED_CERT=${VPN_TRUSTED_CERT}
+      - VPN_USER=${VPN_USER}
+      - VPN_PASS=${VPN_PASS}
+      - VPN_COOKIE=${VPN_COOKIE}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -fks --connect-timeout 5 --max-time 8 https://fasih-sm.bps.go.id/oauth_login.html -o /dev/null && echo ok || exit 1" ]
+      interval: 30s
+      timeout: 12s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 15s
+
+  rpa:
+    build: ./rpa
+    image: fasih-nexus-rpa:latest
+    container_name: fasih-nexus-rpa
+    init: true
+    network_mode: "service:vpn"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - SKIP_DETAIL_FETCH=${SKIP_DETAIL_FETCH:-false}
+      - FASIH_CONCURRENCY=${FASIH_CONCURRENCY:-3}
+      - FETCH_CONCURRENCY=${FETCH_CONCURRENCY:-3}
+      - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
+      - PYTHONPATH=/app:/app/src
+    depends_on:
+      vpn:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; exit(0 if urllib.request.urlopen(\"http://localhost:8000/health\").getcode() == 200 else 1)'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - ./rpa:/app
+    restart: unless-stopped
+
+  vpn-auth:
+    image: fasih-nexus-rpa:latest
+    container_name: fasih-nexus-vpn-auth
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - PYTHONPATH=/app:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    command: python -m uvicorn src.app:app --host 0.0.0.0 --port 8000
+
+  archiver:
+    image: fasih-nexus-rpa:latest
+    container_name: fasih-nexus-archiver
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
+      - S3_BUCKET=${S3_BUCKET:-survey-images}
+      - S3_ENDPOINT=http://s3:8333
+      - PYTHONPATH=/app:/app/src
+    depends_on:
+      - vpn
+      - postgres
+      - s3
+    command: python src/archiver.py
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: fasih-nexus-db
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-fasih}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-fasih_dashboard}
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fasih} -d ${POSTGRES_DB:-fasih_dashboard}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # --- SeaweedFS Image Vault Stack ---
+  master:
+    image: chrislusf/seaweedfs:latest
+    command: "master -ip=master"
+    restart: unless-stopped
+
+  volume:
+    image: chrislusf/seaweedfs:latest
+    command: "volume -mserver=master:9333 -port=8080 -dir=/data"
+    depends_on:
+      - master
+    volumes:
+      - seaweed_data:/data
+    restart: unless-stopped
+
+  filer:
+    image: chrislusf/seaweedfs:latest
+    command: 'filer -master=master:9333'
+    depends_on:
+      - master
+      - postgres
+    environment:
+      - WEED_FILER_POSTGRES_ENABLED=true
+      - WEED_FILER_POSTGRES_HOSTNAME=postgres
+      - WEED_FILER_POSTGRES_PORT=5432
+      - WEED_FILER_POSTGRES_USERNAME=${POSTGRES_USER:-fasih}
+      - WEED_FILER_POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - WEED_FILER_POSTGRES_DATABASE=${POSTGRES_DB:-fasih_dashboard}
+      - WEED_FILER_POSTGRES_SSLMODE=disable
+    restart: unless-stopped
+
+  s3:
+    image: chrislusf/seaweedfs:latest
+    command: "s3 -filer=filer:8888"
+    environment:
+      - SEAWEEDFS_S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
+      - SEAWEEDFS_S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
+    depends_on:
+      - filer
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  seaweed_data:
+```
+
+## 🏗️ Dockerfiles
+### File: `./rpa/Dockerfile`
+```dockerfile
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app:/app/src
+WORKDIR /app
+
+# System deps for Playwright Chromium
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnss3 libatk-bridge2.0-0 libdrm2 libxcomposite1 \
+    libxdamage1 libxrandr2 libgbm1 libasound2 libpango-1.0-0 \
+    libcairo2 libxkbcommon0 libgtk-3-0 libdbus-glib-1-2 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt && \
+    playwright install chromium --with-deps
+
+COPY . .
+
+EXPOSE 8000
+CMD ["python", "-m", "uvicorn", "src.app:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### File: `./dashboard/Dockerfile`
+```dockerfile
+FROM oven/bun:1 AS build
+WORKDIR /app
+COPY package.json bun.lock* ./
+RUN bun install --frozen-lockfile
+COPY . .
+RUN bun run build
+
+FROM oven/bun:1-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y postgresql-client && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app/client/dist/spa ./client/dist/spa
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/server ./server
+COPY --from=build /app/package.json .
+COPY --from=build /app/drizzle.config.ts .
+COPY --from=build /app/entrypoint.sh .
+RUN chmod +x entrypoint.sh
+EXPOSE 3000
+ENTRYPOINT ["./entrypoint.sh"]
+```
+
+### File: `./vpn/Dockerfile`
+```dockerfile
+FROM debian:12-slim AS builder
+
+# Build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    automake \
+    autoconf \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build openfortivpn 1.22.1 from source (SAML cookie support added in 1.22.0)
+RUN wget -q https://github.com/adrienverge/openfortivpn/archive/refs/tags/v1.22.1.tar.gz \
+    && tar xzf v1.22.1.tar.gz \
+    && cd openfortivpn-1.22.1 \
+    && aclocal && autoconf && automake --add-missing \
+    && ./configure --prefix=/usr --sysconfdir=/etc \
+    && make -j$(nproc) \
+    && make install DESTDIR=/install
+
+FROM debian:12-slim
+
+# Copy compiled openfortivpn
+COPY --from=builder /install/usr /usr
+
+# Runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    iproute2 \
+    ppp \
+    curl \
+    ca-certificates \
+    libssl3 \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Script untuk monitoring & reconnect
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+```
+
+## 🔑 Environment Configuration (Examples)
+### File: `./rpa/config/.env.example`
+```text
+# ===================================================
+# FASIH-SM RPA Sync — Konfigurasi
+# ===================================================
+# Salin file ini menjadi .env dan isi nilainya
+
+# Kredensial Login SSO BPS
+SSO_USERNAME=your_username
+SSO_PASSWORD=your_password
+
+# Target Survey (nama persis seperti di tabel FASIH)
+SURVEY_NAME=PEMUTAKHIRAN DTSEN PBI 2026
+
+# Filter Wilayah (opsional, kosongkan jika tidak perlu filter)
+FILTER_PROVINSI=KALIMANTAN BARAT
+FILTER_KABUPATEN=KABUPATEN MEMPAWAH
+
+# Rotasi filter: "pengawas" atau "pencacah"
+# - pengawas: loop per pengawas, sub-loop pencacah jika >1000
+# - pencacah: selalu loop per pencacah (lebih lambat tapi lebih aman)
+FILTER_ROTATION=pengawas
+
+# Scheduler: interval dalam menit (0 = jalankan sekali saja)
+INTERVAL_MINUTES=30
+
+# Database SQLite
+DB_PATH=data/fasih_sync.db
+```
+
+### File: `./.env.example`
+```text
+# PostgreSQL
+POSTGRES_USER=fasih
+POSTGRES_PASSWORD=changeme_generate_random
+POSTGRES_DB=fasih_dashboard
+DATABASE_URL=postgresql://fasih:changeme_generate_random@postgres:5432/fasih_dashboard
+
+# Domain & URL (Coolify FQDN)
+# Digunakan untuk Traefik routing dan redirect auth
+PUBLIC_DOMAIN=fasih-nexus.yourdomain.com
+PUBLIC_BASE_URL=https://fasih-nexus.yourdomain.com
+BETTER_AUTH_URL=https://fasih-nexus.yourdomain.com
+
+# Auth Secret (Better-Auth)
+BETTER_AUTH_SECRET=generate_long_random_string_here
+
+# RPA — encryption key for SSO passwords (generate: openssl rand -hex 32)
+ENCRYPTION_KEY=changeme_generate_random_32_bytes_hex
+
+# VPN BPS — Digunakan untuk bootstrap koneksi awal jika database kosong
+# Gateway akses.bps.go.id mewajibkan SAML, jadi robot RPA akan login 
+# menggunakan kredensial ini untuk mengambil SVPNCOOKIE pertama kali.
+VPN_USER=your_sso_username
+VPN_PASS=your_sso_password
+# VPN_COOKIE adalah fallback jika RPA gagal mengambil cookie secara otomatis
+VPN_COOKIE=
+VPN_TRUSTED_CERT=de74481c56635274320d58e3267de977acbd6ea8cdbc5450042010d7e9544659
+
+# Target Application
+TARGET_URL=https://fasih-sm.bps.go.id
+
+# RPA Performance Flags
+# SKIP_DETAIL_FETCH: 'true' untuk mode sinkronisasi ekstra cepat (metadata only)
+SKIP_DETAIL_FETCH=false
+FASIH_CONCURRENCY=3
+
+# SeaweedFS Image Vault (S3)
+S3_ACCESS_KEY=fasihadmin
+S3_SECRET_KEY=generate_secure_secret_here
+S3_BUCKET=survey-images
+# S3_ENDPOINT otomatis ke service 's3' di dalam docker network
+```
+
+## 🚀 Core Entrypoints
+### File: `rpa/src/app.py`
+```python
+import os
+import sys
+from pathlib import Path
+
+# Self-healing path: Ensure the directory containing this file is in sys.path
+# This allows 'import db', 'import routes' etc. to work regardless of the working directory.
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
+import os
+
+from datetime import datetime, timezone
+import sys
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+
+
+# Database and Route imports
+
+from db.connection import init_db, get_session
+from db.models import SyncLog
+
+from routes.sync import router as sync_router
+from routes.lookup import router as lookup_router
+
+@asynccontextmanager
+async def lifespan(fastapi_app):
+    """On startup: clean up stale 'running' jobs and resume 'queued' ones."""
+    try:
+        init_db()
+        session = get_session()
+        # Only mark 'running' as failed. 'queued' jobs should be preserved and resumed.
+        stale = (
+            session.query(SyncLog)
+            .filter(SyncLog.status == "running")
+            .all()
+        )
+        if stale:
+            for job in stale:
+                job.status = "failed"
+                job.finished_at = datetime.now(timezone.utc)
+                job.notes = "Killed by container restart while running"
+            session.commit()
+            print(f"🧹 Startup cleanup: marked {len(stale)} stale RUNNING job(s) as failed.")
+        
+        # Check if we should re-trigger the worker
+        queued_count = session.query(SyncLog).filter(SyncLog.status == "queued").count()
+...
+```
+
+### File: `rpa/src/main.py`
+```python
+"""
+FasihNexus Sync Engine — Main Orchestrator (API First)
+
+Fully automated robot yang:
+1. Login SSO BPS otomatis via Playwright (Headless) untuk mendapatkan Cookie.
+2. Menggunakan API/aiohttp murni untuk:
+   a. Navigasi dan temukan ID Survey
+   b. Dapatkan Region Metadata & List Pengguna (Pengawas/Pencacah)
+   c. Iterate pagination Datatable Assignment (bypass limit batas baris via filter)
+   d. Fetch form detail individual secara concurrent
+3. Upsert ke SQLite
+4. Berjalan otomatis setiap N menit
+
+Usage:
+    python src/main.py                  # Start scheduler
+    python src/main.py --once           # Jalankan 1 cycle saja
+    python src/main.py --test-login     # Test login saja
+"""
+import argparse
+import asyncio
+import os
+import re
+import sys
+import time
+import json
+from datetime import datetime, timezone
+
+from playwright.async_api import async_playwright
+
+# Self-healing path: Ensure both the current directory (src) and its parent (root) are in sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+for d in [current_dir, parent_dir]:
+    if d not in sys.path:
+        sys.path.insert(0, d)
+
+from config.settings import Settings
+from auth import auto_login, launch_stealth_browser, new_stealth_context
+from api_client import FasihApiClient
+from pages.detail_page import fetch_assignments_concurrent
+from db.connection import init_db, get_session
+from db.repository import upsert_assignment, log_sync_run, SyncStats, BatchUpserterBulk, get_existing_modifications_by_ids_batched
+from connectivity import ensure_connected
+
+
+async def run_sync_cycle(settings: Settings, dry_run: bool = False):
+    """
+    Satu siklus lengkap sinkronisasi Hybrid-Headless.
+    """
+    started_at = datetime.now(timezone.utc)
+...
+```
+
+### File: `dashboard/server/index.ts`
+```python
+import { Elysia } from "elysia";
+import { cors } from "@elysiajs/cors";
+import { staticPlugin } from "@elysiajs/static";
+import { surveysRoutes } from "./routes/surveys";
+import { assignmentsRoutes } from "./routes/assignments";
+import { logsRoutes } from "./routes/logs";
+import { syncRoutes } from "./routes/sync";
+import { labelsRoutes } from "./routes/labels";
+import { visualizationsRoutes } from "./routes/visualizations";
+import { storageRoutes } from "./routes/storage";
+import { syncStateRoutes } from "./routes/sync-state";
+
+import { auth } from "./auth";
+import { authMiddleware, getAuthContext } from "./middleware/auth";
+
+// Best practice per dokumentasi resmi better-auth:
+// Gunakan .mount(auth.handler) agar semua HTTP method (GET, POST, dll)
+// ditangani langsung — tidak ada konflik wildcard dengan Elysia.
+// Ref: https://www.better-auth.com/docs/integrations/elysia
+
+const loginAttempts = new Map<string, { count: number, last: number }>();
+
+const authRoutes = new Elysia({ prefix: "/api/auth" })
+    .onBeforeHandle(({ path, request, set }) => {
+        if (path === "/api/auth/sign-in/email") {
+            const ip = request.headers.get("x-forwarded-for") || "unknown";
+            const now = Date.now();
+            const attempt = loginAttempts.get(ip) || { count: 0, last: 0 };
+            
+            if (now - attempt.last < 1000) { // 1s cooldown between attempts
+                set.status = 429;
+                return { error: "Too fast. Slow down." };
+            }
+            
+            if (attempt.count > 10 && now - attempt.last < 60000) { // Max 10 attempts per minute
+                set.status = 429;
+                return { error: "Too many login attempts. Try again in a minute." };
+            }
+            
+            loginAttempts.set(ip, { 
+                count: now - attempt.last > 60000 ? 1 : attempt.count + 1, 
+                last: now 
+            });
+        }
+    })
+    .post("/sign-up/email", ({ set }) => {
+        // Block public registration for security hardening.
+        // Users should be created via admin console or direct DB insert.
+        set.status = 403;
+        return { error: "Public registration is disabled for security hardening." };
+...
+```
+
