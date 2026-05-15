@@ -7,6 +7,7 @@ RUN bun run build
 
 FROM oven/bun:1-slim
 WORKDIR /app
+RUN apt-get update && apt-get install -y postgresql-client && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/client/dist/spa ./client/dist/spa
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/server ./server

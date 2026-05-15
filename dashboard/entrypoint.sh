@@ -8,6 +8,26 @@ echo "🚀 Starting Dashboard Container Entrypoint..."
 # We'll rely on the existing drizzle-kit push which will fail and retry if DB is not ready.
 
 # 2. Run Database Migrations / Sync Schema
+echo "🩺 Running Self-Healing Migration Check..."
+# This handles the text -> uuid migration error automatically in production
+psql "$DATABASE_URL" -c "
+DO \$\$ 
+BEGIN 
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'survey_configs' AND column_name = 'id' AND data_type = 'text'
+  ) THEN 
+    RAISE NOTICE 'Legacy text ID detected. Performing automated conversion to UUID...';
+    ALTER TABLE assignments DROP CONSTRAINT IF EXISTS assignments_survey_config_id_survey_configs_id_fk;
+    ALTER TABLE sync_logs DROP CONSTRAINT IF EXISTS sync_logs_survey_config_id_survey_configs_id_fk;
+    ALTER TABLE survey_configs ALTER COLUMN id TYPE uuid USING id::uuid;
+    ALTER TABLE assignments ALTER COLUMN survey_config_id TYPE uuid USING survey_config_id::uuid;
+    ALTER TABLE sync_logs ALTER COLUMN survey_config_id TYPE uuid USING survey_config_id::uuid;
+    RAISE NOTICE 'Automated conversion completed successfully.';
+  END IF;
+END \$\$;
+" || echo "   ⚠️ Self-healing check skipped (table may not exist yet or connection failed)."
+
 echo "📦 Syncing database schema (drizzle-kit push)..."
 # We use push for simplicity in this dev/stage environment.
 # In strict production, we would use 'migrate'.
