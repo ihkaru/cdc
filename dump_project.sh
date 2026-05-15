@@ -26,7 +26,19 @@ fi
 echo "\`\`\`" >> $OUTPUT_FILE
 echo "" >> $OUTPUT_FILE
 
-# 2. Docker Compose
+# 2. Core Documentation
+echo "## 📖 Core Documentation" >> $OUTPUT_FILE
+for core_file in "README.md" "GEMINI.md"; do
+    if [ -f "$core_file" ]; then
+        echo "### File: \`$core_file\`" >> "$OUTPUT_FILE"
+        echo '```markdown' >> "$OUTPUT_FILE"
+        cat "$core_file" >> "$OUTPUT_FILE"
+        echo '```' >> "$OUTPUT_FILE"
+        echo "" >> "$OUTPUT_FILE"
+    fi
+done
+
+# 3. Docker Compose
 echo "## 🐳 Docker Compose Configuration" >> $OUTPUT_FILE
 if [ -f "docker-compose.yml" ]; then
     echo "\`\`\`yaml" >> $OUTPUT_FILE
@@ -37,7 +49,7 @@ else
 fi
 echo "" >> $OUTPUT_FILE
 
-# 3. Dockerfiles
+# 4. Dockerfiles
 echo "## 🏗️ Dockerfiles" >> $OUTPUT_FILE
 find . -name "Dockerfile" | while read -r df; do
     echo "### File: \`$df\`" >> $OUTPUT_FILE
@@ -47,7 +59,7 @@ find . -name "Dockerfile" | while read -r df; do
     echo "" >> $OUTPUT_FILE
 done
 
-# 4. Environment Examples
+# 5. Environment Examples
 echo "## 🔑 Environment Configuration (Examples)" >> $OUTPUT_FILE
 find . -name ".env.example" | while read -r env; do
     echo "### File: \`$env\`" >> $OUTPUT_FILE
@@ -57,7 +69,7 @@ find . -name ".env.example" | while read -r env; do
     echo "" >> $OUTPUT_FILE
 done
 
-# 5. Core Entrypoints (Summary)
+# 6. Core Entrypoints (Summary)
 echo "## 🚀 Core Entrypoints" >> $OUTPUT_FILE
 CORE_FILES=("rpa/src/app.py" "rpa/src/main.py" "dashboard/server/index.ts")
 for f in "${CORE_FILES[@]}"; do

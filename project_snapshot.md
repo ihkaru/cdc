@@ -1,5 +1,5 @@
 # Project Snapshot: FasihNexus
-Generated at: Fri May 15 09:48:13 PM WIB 2026
+Generated at: Fri May 15 09:54:04 PM WIB 2026
 
 ## 📂 Project Structure
 ```text
@@ -163,10 +163,202 @@ vpn/Dockerfile
 vpn/entrypoint.sh
 ```
 
+## 📖 Core Documentation
+### File: `README.md`
+```markdown
+# FasihNexus — FASIH-SM Data Sync Platform
+
+Platform otomasi sinkronisasi data survei dari aplikasi **FASIH-SM** (fasih-sm.bps.go.id) milik BPS. Sistem berjalan sebagai multi-container Docker dan terdiri dari 6 komponen utama yang dioptimalkan untuk deployment **Coolify**.
+
+## Fitur Utama
+
+- 🔄 **Sinkronisasi Otomatis** — Robot RPA login ke FASIH-SM via SSO dan mengambil data assignment survei
+- 🖼️ **Image Vault** — Archiver otomatis meng-mirror foto BPS ke SeaweedFS lokal (S3 compatible)
+- 📊 **Dashboard BI** — Visualisasi scorecard, bar chart, tabel data, dan peta titik sebaran (WebGL MapLibre)
+- 🏷️ **Label Management** — Upload/download label Excel dengan schema dinamis per survey
+- 🔒 **Hardened VPN** — Tunnel VPN dengan auto-reconnect, DNS pinning, dan SAML cookie support
+- 🚀 **Coolify Ready** — Arsitektur Hybrid Network Bridge untuk kestabilan GitHub App Autodeploy
+
+## Arsitektur (Hybrid Network Bridge)
+
+Sistem menggunakan model "Bridge" di mana Dashboard bertindak sebagai penghubung antara network publik (Coolify/Traefik) dan network internal yang terisolasi.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       docker-compose                        │
+│                                                             │
+│  ┌──────────────┐         ┌──────────┐      ┌────────────┐  │
+│  │   Coolify    │         │fasih_int │      │  Storage   │  │
+│  │   Network    │         │ network  │      │ (Postgres/ │  │
+│  └──────┬───────┘         └────┬─────┘      │ SeaweedFS) │  │
+│         │                      │            └─────┬──────┘  │
+│         │         ┌────────────┴──────────┐       │         │
+│         └─────────┤       Dashboard       ├───────┘         │
+│                   └────────────┬──────────┘                 │
+│                                │                            │
+│                   ┌────────────┴──────────┐                 │
+│                   │      VPN Gateway      │                 │
+│                   │ (dns: 127.0.0.11)     │                 │
+│                   └─────┬──────┬──────┬───┘                 │
+│                         │      │      │                     │
+│                   ┌─────┴──┐┌──┴───┐┌──┴──────┐             │
+│                   │  RPA   ││Auth  ││Archiver │             │
+│                   └────────┘└──────┘└─────────┘             │
+│                    (network_mode: service:vpn)              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Komponen
+
+### 1. `vpn/` — VPN Gateway (Owner of Network Stack)
+- **Tech**: Debian slim + openfortivpn (Custom SAML Support)
+- **Fungsi**: Menyediakan tunnel ke BPS. Menggunakan `dns: 127.0.0.11` untuk menjamin resolusi DNS internal bagi service yang menumpang di stack-nya.
+- **Auth**: SAML cookie (`SVPNCOOKIE`).
+
+### 2. `rpa/` — RPA Sync Engine
+- **Tech**: Python 3, FastAPI, Playwright
+- **Fungsi**: Robot sinkronisasi sekuensial (Login → Navigate → Fetch → Upsert).
+- **Deployment**: Berjalan di dalam network namespace VPN.
+
+### 3. `vpn-auth/` — SSO Auth Helper
+- **Tech**: Python (FastAPI)
+- **Fungsi**: Menyediakan endpoint untuk validasi session SSO (Port 8001).
+
+### 4. `archiver/` — Image Vault Worker
+- **Tech**: Python (SQLAlchemy + Boto3)
+- **Fungsi**: Sinkronisasi foto dari BPS S3 ke lokal SeaweedFS. Mendukung self-healing URL expired.
+
+### 5. `dashboard/` — UI & Bridge
+- **Tech**: Bun + Elysia (Backend), Vue 3 + Quasar (Frontend)
+- **Fungsi**: Orchestrator utama dan satu-satunya service yang terekspos ke Traefik/Internet.
+
+### 6. `Infrastructure/` — Persistence
+- **PostgreSQL 16**: Database utama.
+- **SeaweedFS**: S3-compatible storage untuk Image Vault.
+
+## Cara Menjalankan
+
+### 1. Environment Setup
+```bash
+cp .env.example .env
+# Isi variabel wajib: POSTGRES_PASSWORD, ENCRYPTION_KEY, BETTER_AUTH_SECRET, dll.
+```
+
+### 2. Deployment di Coolify (GitHub App Autodeploy)
+1. Buat resource **Docker Compose** baru.
+2. Hubungkan ke repository ini (branch `main`).
+3. **PENTING**: Di tab Settings, pastikan **"Connect to Predefined Network"** dalam kondisi **OFF**.
+4. Isi Environment Variables di UI Coolify sesuai `.env.example`.
+5. Klik **Deploy**.
+
+## Troubleshooting & Best Practices
+
+1. **DNS Failure di Archiver/RPA**: Pastikan service `vpn` memiliki `dns: 127.0.0.11`. Tanpa ini, service yang menggunakan `network_mode: service:vpn` tidak bisa memanggil `postgres` atau `s3`.
+2. **VPN Cookie Expired**: Jika container VPN unhealthy, login ulang ke `akses.bps.go.id` dan update cookie via Dashboard.
+3. **Traefik Non-Deterministic IP**: Gunakan label `traefik.docker.network=coolify` pada service `dashboard` (sudah ada di docker-compose.yml default).
+
+## Lisensi
+
+Internal BPS — tidak untuk distribusi publik.
+```
+
+### File: `GEMINI.md`
+```markdown
+# FasihNexus — FASIH-SM Data Sync Platform
+
+Platform otomasi sinkronisasi data survei dari aplikasi **FASIH-SM** (fasih-sm.bps.go.id) milik BPS yang berada di balik FortiVPN. Sistem berjalan sebagai multi-container Docker dan terdiri dari 6 komponen utama yang dioptimalkan untuk arsitektur **Hybrid Network Bridge** di Coolify.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       docker-compose                        │
+│                                                             │
+│  ┌──────────────┐         ┌──────────┐      ┌────────────┐  │
+│  │   Coolify    │         │fasih_int │      │  Storage   │  │
+│  │   Network    │         │ network  │      │ (Postgres/ │  │
+│  └──────┬───────┘         └────┬─────┘      │ SeaweedFS) │  │
+│         │                      │            └─────┬──────┘  │
+│         │         ┌────────────┴──────────┐       │         │
+│         └─────────┤       Dashboard       ├───────┘         │
+│                   └────────────┬──────────┘                 │
+│                                │                            │
+│                   ┌────────────┴──────────┐                 │
+│                   │      VPN Gateway      │                 │
+│                   │ (dns: 127.0.0.11)     │                 │
+│                   └─────┬──────┬──────┬───┘                 │
+│                         │      │      │                     │
+│                   ┌─────┴──┐┌──┴───┐┌──┴──────┐             │
+│                   │  RPA   ││Auth  ││Archiver │             │
+│                   └────────┘└──────┘└─────────┘             │
+│                    (network_mode: service:vpn)              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Komponen
+
+### 1. `vpn/` — VPN Gateway (Network Owner)
+- **Tech**: Debian slim + openfortivpn (compiled with SAML support)
+- **Fungsi**: Menyediakan tunnel VPN. Menggunakan **DNS Pinning** (`dns: 127.0.0.11`) agar service yang menumpang (`network_mode: service:vpn`) tetap bisa mengakses service internal Docker (postgres, s3) yang berada di network `fasih_internal`.
+- **Auth**: SAML cookie (`SVPNCOOKIE`).
+
+### 2. `rpa/` — RPA Sync Engine
+- **Tech**: Python 3, FastAPI, Playwright
+- **Fungsi**: Sinkronisasi data assignment (Login → Navigate → Rotate Filter → Fetch → Upsert).
+- **Struktur**: 
+  - `api.py`: FastAPI wrapper.
+  - `src/main.py`: Orchestrator utama.
+  - `src/db/repository.py`: Upsert logic (batch 500 records).
+
+### 3. `vpn-auth/` — Auth Helper
+- **Tech**: Python (FastAPI)
+- **Fungsi**: Berjalan di port 8001 (shared network stack dengan VPN) untuk menangani validasi SSO tanpa mengganggu port 8000 (RPA).
+
+### 4. `archiver/` — Image Vault
+- **Tech**: Python (SQLAlchemy + Boto3)
+- **Fungsi**: Mirroring foto dari BPS S3 ke SeaweedFS lokal. Dilengkapi mekanisme *self-healing* untuk URL yang expired.
+
+### 5. `dashboard/` — Web Dashboard & Bridge
+- **Backend**: Bun + Elysia
+- **Frontend**: Vue 3 + Quasar
+- **Fungsi**: UI manajemen, visualisasi BI, dan jembatan network (terhubung ke `coolify` dan `fasih_internal`).
+
+### 6. `Infrastructure/`
+- **PostgreSQL 16-alpine**: Database utama.
+- **SeaweedFS**: S3-compatible storage untuk Image Vault.
+
+## Skalabilitas (5M+ Baris)
+
+Platform ini dioptimalkan untuk dataset besar:
+- **Aggregasi SQL**: Scorecard dan bar chart dihitung di level database.
+- **Cursor-based Pagination**: Menghindari degradasi performa pada tabel `assignments` yang besar.
+- **Batch Processing**: Sinkronisasi dan upload label menggunakan chunking (500-1000 baris).
+
+## Cara Menjalankan
+
+Sistem menggunakan bash scripts sebagai entrypoint development:
+- `./start-local.sh`: Mode HMR (Dashboard di host, DB & VPN di Docker).
+- `./start-docker.sh`: Mode produksi penuh.
+- `./check-health.sh`: Validasi integritas `.env` dan Docker schema.
+- `./check-stability.sh`: Audit konektivitas internal (simulasi Traefik).
+
+## Known Gotchas & Best Practices
+
+1. **DNS Pinning**: Service `vpn` WAJIB memiliki `dns: 127.0.0.11`. Tanpa ini, RPA/Archiver akan mengalami `Connection Timeout` saat memanggil database atau S3.
+2. **Coolify Network Settings**: Pada resource Docker Compose di Coolify, opsi **"Connect to Predefined Network"** harus **DIMATIKAN** (OFF) untuk menghindari error `mutually exclusive network_mode`.
+3. **Traefik Determinism**: Service `dashboard` harus memiliki label `traefik.docker.network=coolify` agar Traefik memilih IP yang benar.
+4. **VPN Restart**: Jika container VPN restart, session di Fortinet mungkin menggantung. User perlu update cookie via Dashboard.
+5. **Path Patching di Python**: Skrip RPA (`main.py`, `archiver.py`) memiliki blok *self-healing* `sys.path.append` untuk memastikan modul `db` dan `pages` terbaca dengan benar terlepas dari working directory.
+6. **Internal Scheduler Delay**: RPA scheduler sengaja menunggu 30 detik saat startup agar VPN tunnel stabil sebelum mulai query database.
+
+---
+**Status**: Production Hardened (Hybrid Network Bridge Model).
+```
+
 ## 🐳 Docker Compose Configuration
 ```yaml
 services:
-  # --- UI & API Gateway ---
+  # --- UI & API Gateway (The Bridge) ---
   dashboard:
     build: ./dashboard
     container_name: fasih-nexus-dashboard
@@ -175,7 +367,8 @@ services:
       - coolify
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
+      - "traefik.docker.network=coolify" # FORCE Traefik to use the public network IP
+      - "coolify.managed=true"
       # Note: Route rules and SSL will be automatically handled by Coolify UI
     environment:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
@@ -196,7 +389,7 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-  # --- VPN Gateway (The black box) ---
+  # --- VPN Gateway (Network Owner) ---
   vpn:
     build: ./vpn
     container_name: fasih-nexus-vpn
@@ -204,12 +397,17 @@ services:
     devices:
       - /dev/net/tun
       - /dev/ppp
+    dns:
+      - 127.0.0.11 # CRITICAL: Ensures sharing containers can resolve Docker internal DNS (s3, postgres)
     networks:
       - fasih_internal
+    labels:
+      - "coolify.managed=false"
     environment:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
       - VPN_HOST=akses.bps.go.id
       - VPN_TEST_URL=https://fasih-sm.bps.go.id
+      - VPN_TRUSTED_CERT=${VPN_TRUSTED_CERT}
       - VPN_USER=${VPN_USER}
       - VPN_PASS=${VPN_PASS}
       - VPN_COOKIE=${VPN_COOKIE}
@@ -230,12 +428,16 @@ services:
     build: ./rpa
     container_name: fasih-nexus-rpa
     network_mode: "service:vpn"
+    labels:
+      - "coolify.managed=false"
     environment:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - PYTHONPATH=/app:/app/src
       - SKIP_DETAIL_FETCH=${SKIP_DETAIL_FETCH:-false}
       - FASIH_CONCURRENCY=${FASIH_CONCURRENCY:-3}
+      - FETCH_CONCURRENCY=${FETCH_CONCURRENCY:-3}
+      - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
     depends_on:
       vpn:
         condition: service_started
@@ -245,6 +447,8 @@ services:
     image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-vpn-auth
     network_mode: "service:vpn"
+    labels:
+      - "coolify.managed=false"
     environment:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -259,6 +463,8 @@ services:
     image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-archiver
     network_mode: "service:vpn"
+    labels:
+      - "coolify.managed=false"
     environment:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@postgres:5432/fasih_dashboard
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
@@ -278,6 +484,8 @@ services:
     container_name: fasih-nexus-db
     networks:
       - fasih_internal
+    labels:
+      - "coolify.managed=false"
     volumes:
       - pg_data:/var/lib/postgresql/data
     environment:
@@ -297,6 +505,8 @@ services:
     command: "master -ip=master"
     networks:
       - fasih_internal
+    labels:
+      - "coolify.managed=false"
     restart: unless-stopped
 
   volume:
@@ -304,6 +514,8 @@ services:
     command: "volume -mserver=master:9333 -port=8080 -dir=/data"
     networks:
       - fasih_internal
+    labels:
+      - "coolify.managed=false"
     depends_on:
       - master
     volumes:
@@ -315,6 +527,8 @@ services:
     command: 'filer -master=master:9333'
     networks:
       - fasih_internal
+    labels:
+      - "coolify.managed=false"
     depends_on:
       - master
       - postgres
@@ -333,6 +547,8 @@ services:
     command: "s3 -filer=filer:8888"
     networks:
       - fasih_internal
+    labels:
+      - "coolify.managed=false"
     environment:
       - SEAWEEDFS_S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
       - SEAWEEDFS_S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
