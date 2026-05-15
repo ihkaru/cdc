@@ -6,8 +6,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-# Add current directory (src/) to path so direct imports work
-sys.path.insert(0, os.path.dirname(__file__))
+
+# Database and Route imports
 
 from db.connection import init_db, get_session
 from db.models import SyncLog
