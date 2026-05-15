@@ -295,23 +295,35 @@ const checkVpnAndFetchCookie = async () => {
         if (!statusRes.connected) {
             console.log("⚠️ VPN Disconnected detected! Attempting auto-fetch...");
             
-            // Borrow credentials from the first active survey
-            const [survey] = await db
-                .select()
-                .from(surveyConfigs)
-                .where(eq(surveyConfigs.isActive, true))
-                .limit(1);
+            // 2. Identify an active survey to borrow credentials for auto-fetch
+            let survey;
+            try {
+                [survey] = await db
+                    .select()
+                    .from(surveyConfigs)
+                    .where(eq(surveyConfigs.isActive, true))
+                    .limit(1);
+            } catch (dbErr: any) {
+                if (dbErr.message?.includes('does not exist')) {
+                    console.log("   ⚠️ Table 'survey_configs' does not exist yet. Skipping auto-pilot.");
+                } else if (dbErr.message?.includes('uuid')) {
+                    console.error("   ❌ Database Schema Mismatch (UUID Cast Error). Please run manual migration.");
+                } else {
+                    console.error("   ❌ Database error in VPN Auto-Pilot:", dbErr.message);
+                }
+                return;
+            }
 
             if (!survey) {
                 console.log("   ❌ No active survey found to borrow SSO credentials from.");
                 return;
             }
 
-        console.log(`   🔑 Borrowing credentials from: ${survey.ssoUsername} (Survey: ${survey.surveyName})`);
-        const password = decryptPassword(survey.ssoPasswordEncrypted);
-        
-        const fetchRes = await fetch(`${VPN_AUTH_API_URL}/vpn/auto-fetch`, {
-            method: "POST",
+            console.log(`   🔑 Borrowing credentials from: ${survey.ssoUsername} (Survey: ${survey.surveyName})`);
+            const password = decryptPassword(survey.ssoPasswordEncrypted);
+            
+            const fetchRes = await fetch(`${VPN_AUTH_API_URL}/vpn/auto-fetch`, {
+                method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     sso_username: survey.ssoUsername,
@@ -326,8 +338,8 @@ const checkVpnAndFetchCookie = async () => {
                 console.log(`   ❌ Failed to trigger RPA VPN auto-fetch: ${fetchRes.status}`);
             }
         }
-    } catch (err) {
-        console.error("❌ Error in VPN Auto-Pilot loop:", err);
+    } catch (err: any) {
+        console.error("❌ Fatal Error in VPN Auto-Pilot loop:", err.message);
     }
 };
 
