@@ -25,7 +25,9 @@ async def new_stealth_context(browser, **kwargs):
     context = await browser.new_context(**kwargs)
     await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     return context
-
+async def auto_login(page: Page, username: str, password: str) -> Tuple[bool, Dict, str]:
+    """
+    Otomasi login ke FASIH via SSO BPS.
 
     Returns:
         Tuple[bool, Dict, str]: (Success status, Cookies dictionary, Error message if any)
