@@ -84,7 +84,7 @@ const app = new Elysia()
         }
     })
     // Auth info helper
-    .get("/api/me/roles", ({ user, roles }) => {
+    .get("/api/me/roles", ({ user, roles }: any) => {
         if (!user) return { roles: [] };
         return { user, roles };
     })
