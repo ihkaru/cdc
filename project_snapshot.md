@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sat May 16 07:36:43 PM WIB 2026
+Generated at: Sat May 16 07:36:46 PM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -3738,9 +3738,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+f64ae19 chore: include rpa routes and worker logic in project dump
 9c05129 feat: implement smart bootstrap, global locking, and zombie network healing
 24f510a fix: implement vpn retry loop and sync coolify rpa environment
 34db98c fix: resolve vpn-rpa circular dependency and update local db hostname in .env
 670e670 chore: harden infrastructure, optimize project dump, and sync coolify config
-cb9481e chore: implement safe naming for database and harden RPA authentication timeouts
 ```
