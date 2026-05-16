@@ -22,17 +22,20 @@ async def lookup_metadata(req: LookupRequest):
     start_total = time.perf_counter()
     timings = {}
 
-    # PHASE 0: Global Metadata Cache (ULTRA FAST)
+    # PHASE 0: User-Specific Metadata Cache (ULTRA FAST)
     from db.models import SystemSettings
+    from datetime import timedelta
+    CACHE_KEY_GLOBAL = f"metadata_cache_{req.sso_username}"
+    
     with get_session() as db:
-        cache = db.query(SystemSettings).filter(SystemSettings.key == "global_metadata_cache").first()
+        cache = db.query(SystemSettings).filter(SystemSettings.key == CACHE_KEY_GLOBAL).first()
         if cache and cache.updated_at:
             # Check if cache is fresh (e.g., < 6 hours)
             age = datetime.now(timezone.utc) - cache.updated_at.replace(tzinfo=timezone.utc)
             if age < timedelta(hours=6):
-                print(f"   ✨ [Lookup] Serving from GLOBAL CACHE (Age: {age.total_seconds()/60:.1f}m)")
+                print(f"   ✨ [Lookup] Serving from USER CACHE for {req.sso_username} (Age: {age.total_seconds()/60:.1f}m)")
                 data = json.loads(cache.value)
-                data["debug_timings"] = {"cache_hit": "GLOBAL", "total_ms": 0}
+                data["debug_timings"] = {"cache_hit": "USER_CACHE", "total_ms": 0}
                 return data
 
     # PHASE 1: VPN
@@ -101,10 +104,10 @@ async def lookup_metadata(req: LookupRequest):
                                     try:
                                         with get_session() as db_write:
                                             from db.repository import set_system_setting
-                                            set_system_setting(db_write, "global_metadata_cache", json.dumps(result))
-                                            print("   ✅ [Lookup] GLOBAL CACHE UPDATED (Fast Path).")
+                                            set_system_setting(db_write, CACHE_KEY_GLOBAL, json.dumps(result))
+                                            print(f"   ✅ [Lookup] USER CACHE UPDATED for {req.sso_username} (Fast Path).")
                                     except Exception as cache_err:
-                                        print(f"   ⚠️ [Lookup] Failed to update global cache: {cache_err}")
+                                        print(f"   ⚠️ [Lookup] Failed to update user cache: {cache_err}")
                                     
                                     result["debug_timings"] = timings
                                     return result
@@ -193,10 +196,10 @@ async def lookup_metadata(req: LookupRequest):
             try:
                 with get_session() as db_write:
                     from db.repository import set_system_setting
-                    set_system_setting(db_write, "global_metadata_cache", json.dumps(result))
-                    print("   ✅ [Lookup] GLOBAL CACHE UPDATED (Browser Path).")
+                    set_system_setting(db_write, CACHE_KEY_GLOBAL, json.dumps(result))
+                    print(f"   ✅ [Lookup] USER CACHE UPDATED for {req.sso_username} (Browser Path).")
             except Exception as cache_err:
-                print(f"   ⚠️ [Lookup] Failed to update global cache: {cache_err}")
+                print(f"   ⚠️ [Lookup] Failed to update user cache: {cache_err}")
 
             result["debug_timings"] = timings
             return result
