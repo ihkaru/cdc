@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sat May 16 07:33:11 PM WIB 2026
+Generated at: Sat May 16 07:36:43 PM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -208,7 +208,9 @@ services:
         condition: service_started
     command: sh -c "echo '10.1.110.13 fasih-sm.bps.go.id' >> /etc/hosts && python -m uvicorn src.app:app --host 0.0.0.0 --port 8000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=15)\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; \
+        urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5); \
+        urllib.request.urlopen('https://fasih-sm.bps.go.id', timeout=10)\""]
       interval: 45s
       timeout: 20s
       retries: 5
@@ -1103,6 +1105,13 @@ services:
       vpn:
         condition: service_started
     command: sh -c "echo '10.1.110.13 fasih-sm.bps.go.id' >> /etc/hosts && python -m uvicorn src.app:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; \
+        urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5); \
+        urllib.request.urlopen('https://fasih-sm.bps.go.id', timeout=10)\""]
+      interval: 45s
+      timeout: 20s
+      retries: 5
     restart: unless-stopped
 
   vpn-auth:
@@ -1395,6 +1404,9 @@ echo "🚀 Generating HIGHLY OPTIMIZED project dump to $OUTPUT_FILE..."
     "dashboard/server/db/index.ts"
     "rpa/src/app.py"
     "rpa/src/auth.py"
+    "rpa/src/routes/sync.py"
+    "rpa/src/worker/scheduler.py"
+    "rpa/src/worker/queue.py"
     "rpa/src/main.py"
     "vpn/entrypoint.sh"
     "dashboard/entrypoint.sh"
@@ -2136,17 +2148,26 @@ async def lifespan(fastapi_app):
         vpn_user = os.getenv("VPN_USER")
         vpn_pass = os.getenv("VPN_PASS")
         if vpn_user and vpn_pass:
-            from auth import fetch_vpn_cookie, sync_cookie_to_db
+            from auth import fetch_vpn_cookie, sync_cookie_to_db, get_current_cookie, FETCH_LOCK
             async def bootstrap_vpn():
-                # Delay slightly to let the server stabilize
-                await asyncio.sleep(5)
-                print(f"🌐 [Startup] Auto-bootstrapping VPN for {vpn_user}...")
-                cookie = await fetch_vpn_cookie(vpn_user, vpn_pass)
-                if cookie:
-                    await sync_cookie_to_db(cookie)
-                    print("✅ [Startup] VPN Auto-bootstrap successful.")
-                else:
-                    print("❌ [Startup] VPN Auto-bootstrap failed.")
+                # Delay slightly to let the infrastructure stabilize (DB, VPN container, etc)
+                await asyncio.sleep(10)
+                
+                async with FETCH_LOCK:
+                    # CHECK DB FIRST: Don't fetch if we already have a cookie
+                    # This prevents redundant Playwright sessions on every RPA restart
+                    existing = await get_current_cookie()
+                    if existing:
+                        print("ℹ️ [Startup] VPN Cookie already exists in DB. Skipping auto-bootstrap.")
+                        return
+
+                    print(f"🌐 [Startup] No cookie found. Auto-bootstrapping VPN for {vpn_user}...")
+                    cookie = await fetch_vpn_cookie(vpn_user, vpn_pass)
+                    if cookie:
+                        await sync_cookie_to_db(cookie)
+                        print("✅ [Startup] VPN Auto-bootstrap successful.")
+                    else:
+                        print("❌ [Startup] VPN Auto-bootstrap failed.")
             
             asyncio.create_task(bootstrap_vpn())
 
@@ -2175,6 +2196,23 @@ import asyncio
 import psycopg2
 import json
 from playwright.async_api import async_playwright
+
+# Global lock to prevent multiple simultaneous Playwright sessions for cookie fetching
+FETCH_LOCK = asyncio.Lock()
+
+async def get_current_cookie():
+    """Retrieve the current vpn_cookie from the database."""
+    try:
+        db_url = os.getenv("DATABASE_URL")
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM system_settings WHERE key = 'vpn_cookie'")
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row[0] if row else None
+    except Exception:
+        return None
 
 async def launch_stealth_browser(p):
     """Launch a browser optimized for BPS portal compatibility."""
@@ -2381,6 +2419,532 @@ async def new_stealth_context(browser, **kwargs):
     }
     options = {**defaults, **kwargs}
     return await browser.new_context(**options)
+```
+
+### rpa/src/routes/sync.py
+```python
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+from datetime import datetime, timezone
+import json
+
+from db.connection import get_session, init_db, reset_engine
+from db.models import SyncLog, SystemSettings
+
+from state import sync_state
+from schemas import SyncRequest, SyncResponse, StatusResponse, VpnCookieRequest
+from auth import fetch_vpn_cookie
+from worker.queue import _get_queued_jobs, _get_queue_position, _queue_worker
+
+router = APIRouter()
+
+@router.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@router.get("/status", response_model=StatusResponse)
+def status():
+    # Get queued jobs — use existing session without reset/init every call
+    queue = []
+    try:
+        session = get_session()
+        queued = _get_queued_jobs(session)
+        import json
+        for i, job in enumerate(queued):
+            try:
+                req_data = json.loads(job.notes or "{}")
+                survey_name = req_data.get("survey_name", "Unknown")
+            except:
+                survey_name = "Unknown"
+            queue.append({
+                "job_id": job.id,
+                "survey_name": survey_name,
+                "position": i + 1,
+                "status": "queued",
+            })
+        session.close()
+    except:
+        pass
+
+    return StatusResponse(
+        is_running=sync_state.is_running,
+        is_vpn_fetching=sync_state.is_vpn_fetching,
+        current_survey=sync_state.current_survey,
+        current_survey_config_id=sync_state.current_survey_config_id,
+        current_job_id=sync_state.current_job_id,
+        started_at=sync_state.started_at.isoformat() if sync_state.started_at else None,
+        last_result=sync_state.last_result,
+        queue=queue,
+        progress=sync_state.progress.to_dict() if sync_state.is_running else None,
+    )
+
+
+@router.post("/sync", response_model=SyncResponse)
+async def trigger_sync(req: SyncRequest, background_tasks: BackgroundTasks):
+    # Check if this survey already has a queued or running job
+    reset_engine()
+    init_db()
+    session = get_session()
+
+    existing = (
+        session.query(SyncLog)
+        .filter(
+            SyncLog.survey_config_id == req.survey_config_id,
+            SyncLog.status.in_(["queued", "running"]),
+        )
+        .first()
+    )
+
+    if existing:
+        pos = _get_queue_position(session, existing.id) if existing.status == "queued" else 0
+        session.close()
+        return SyncResponse(
+            status="already_queued",
+            message=f"Survey '{req.survey_name}' sudah dalam antrian"
+                    + (f" (posisi {pos})" if pos else " (sedang berjalan)"),
+            job_id=existing.id,
+            queue_position=pos,
+        )
+
+    # Create queued job — store request data in notes as JSON
+    sync_log = SyncLog(
+        survey_config_id=req.survey_config_id,
+        started_at=datetime.now(timezone.utc),
+        status="queued",
+        notes=json.dumps(req.dict()),
+    )
+    session.add(sync_log)
+    session.commit()
+    job_id = sync_log.id
+
+    queue_pos = _get_queue_position(session, job_id)
+    session.close()
+
+    # Start worker if not already running
+    background_tasks.add_task(_queue_worker)
+
+    return SyncResponse(
+        status="queued",
+        message=f"Sync untuk '{req.survey_name}' ditambahkan ke antrian (posisi {queue_pos})",
+        job_id=job_id,
+        queue_position=queue_pos,
+    )
+
+
+@router.delete("/sync/{job_id}")
+async def cancel_job(job_id: int):
+    """Cancel a queued job."""
+    reset_engine()
+    init_db()
+    session = get_session()
+
+    job = session.query(SyncLog).get(job_id)
+    if not job:
+        session.close()
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status != "queued":
+        session.close()
+        raise HTTPException(status_code=400, detail=f"Cannot cancel job with status '{job.status}'")
+
+    job.status = "cancelled"
+    job.finished_at = datetime.now(timezone.utc)
+    job.notes = "Cancelled by user"
+    session.commit()
+    session.close()
+
+    return {"status": "cancelled", "message": f"Job {job_id} cancelled"}
+
+
+from connectivity import check_fasih_reachable, is_session_stale
+
+@router.get("/vpn/check")
+async def check_vpn():
+    import os
+    try:
+        # 1. Check application-level reachability (can we reach the FASIH server?)
+        reachable, reason = await check_fasih_reachable()
+        
+        # 2. Check physical interface (Informational only)
+        has_tun = os.path.exists("/sys/class/net/tun0")
+        has_ppp = os.path.exists("/sys/class/net/ppp0")
+        has_vpn = has_tun or has_ppp
+        
+        if reachable:
+            if has_tun:
+                info = "VPN Connected (via tun0)"
+            elif has_ppp:
+                info = "VPN Connected (via ppp0)"
+            else:
+                info = "VPN Connected (Transparently via Host)"
+            return {"connected": True, "info": info}
+            
+        return {
+            "connected": False, 
+            "reason": f"FASIH-SM unreachable: {reason} (Interface: {'tun0/ppp0 UP' if has_vpn else 'Missing'})"
+        }
+        
+    except Exception as e:
+        return {"connected": False, "reason": f"Status check error: {str(e)}"}
+
+
+
+@router.post("/vpn/auto-fetch")
+async def auto_fetch_vpn(req: VpnCookieRequest):
+    """Otomasi ambil VPN cookie dan simpan ke database."""
+    from auth import FETCH_LOCK, get_current_cookie, sync_cookie_to_db
+
+    if FETCH_LOCK.locked():
+        return {"status": "already_fetching", "message": "Proses auto-fetch VPN sedang berjalan..."}
+
+    if not req.sso_username or not req.sso_password:
+        print("   ❌ Gagal: Username atau Password SSO kosong!")
+        raise HTTPException(status_code=400, detail="SSO Username and Password are required")
+
+    async with FETCH_LOCK:
+        # Check if cookie already exists (maybe another trigger finished just now)
+        existing = await get_current_cookie()
+        if existing:
+            return {"status": "success", "message": "Cookie sudah ada di database, melewati fetch."}
+
+        try:
+            user_display = f"{req.sso_username[:3]}***" if req.sso_username else "None"
+            print(f"🔄 Memulai auto-fetch VPN cookie untuk user {user_display}...")
+            cookie = await fetch_vpn_cookie(req.sso_username, req.sso_password)
+            
+            if cookie:
+                await sync_cookie_to_db(cookie)
+                return {"status": "success", "message": "VPN cookie berhasil diperbarui"}
+            else:
+                raise HTTPException(status_code=400, detail="Gagal mendapatkan VPN cookie dari Keycloak SSO")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Fetch error: {e}")
+
+
+@router.post("/sync/refresh-assignment/{assignment_id}")
+async def refresh_assignment(assignment_id: str):
+    """
+    Refetch assignment detail from BPS and update the local database.
+    Used by the archiver to heal expired 403 links.
+    """
+    from db.models import Assignment, SystemSettings
+    from api_client import FasihApiClient
+    
+    reset_engine()
+    init_db()
+    session = get_session()
+    
+    try:
+        # Get SSO cookies from SystemSettings
+        cookie_setting = session.query(SystemSettings).filter_by(key="sso_cookies").first()
+        if not cookie_setting:
+            raise HTTPException(status_code=401, detail="No active SSO session. Please trigger a sync first.")
+            
+        cookies = json.loads(cookie_setting.value)
+        
+        async with FasihApiClient(cookies) as api:
+            new_data = await api.get_assignment_detail(assignment_id)
+            if not new_data:
+                raise HTTPException(status_code=404, detail="Failed to fetch fresh data from BPS")
+            
+            # Update the assignment in DB
+            assignment = session.query(Assignment).get(assignment_id)
+            if assignment:
+                assignment.data_json = new_data
+                session.commit()
+                print(f"   ✅ Successfully refreshed assignment {assignment_id} in DB")
+                return {"status": "success", "message": f"Assignment {assignment_id} refreshed"}
+            else:
+                raise HTTPException(status_code=404, detail="Assignment not found in local DB")
+                
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+from pydantic import BaseModel
+
+class AssignmentFileNamesPayload(BaseModel):
+    assignmentId: str
+    fileNames: list[str]
+
+class RefreshImageUrlsRequest(BaseModel):
+    survey_period_id: str
+    assignments_payload: list[AssignmentFileNamesPayload]
+
+@router.post("/sync/refresh-image-urls")
+async def refresh_image_urls(req: RefreshImageUrlsRequest):
+    """
+    Get fresh S3 Presigned URLs directly from BPS /presigned-url-get endpoint.
+    Returns: { "s3_key_1": "https://fresh_url...", ... }
+    """
+    from db.models import SystemSettings
+    from api_client import FasihApiClient
+    
+    reset_engine()
+    init_db()
+    session = get_session()
+    
+    try:
+        cookie_setting = session.query(SystemSettings).filter_by(key="sso_cookies").first()
+        if not cookie_setting:
+            raise HTTPException(status_code=401, detail="No active SSO session. Please trigger a sync first.")
+            
+        cookies = json.loads(cookie_setting.value)
+        
+        async with FasihApiClient(cookies) as api:
+            payload_dicts = [item.dict() for item in req.assignments_payload]
+            fresh_urls = await api.get_fresh_image_urls(req.survey_period_id, payload_dicts)
+            if fresh_urls is None:
+                raise HTTPException(status_code=500, detail="Failed to fetch fresh presigned URLs from BPS")
+            
+            return {"status": "success", "data": fresh_urls}
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+```
+
+### rpa/src/worker/scheduler.py
+```python
+import asyncio
+import logging
+import json
+from datetime import datetime, timezone
+from db.connection import get_session, init_db
+from db.models import SurveyConfig, SyncLog
+from connectivity import check_fasih_reachable
+from worker.queue import trigger_worker
+from crypto import decrypt_password
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("scheduler")
+
+async def routine_sync_loop():
+    """
+    Background loop that checks for surveys due for synchronization.
+    Runs every 60 seconds.
+    """
+    print("🕒 Routine Sync Scheduler started.", flush=True)
+    
+    # Wait 30 seconds on startup to let VPN and system stabilize
+    await asyncio.sleep(30)
+    
+    while True:
+        try:
+            print("🔍 Scheduler: Checking for surveys to sync...", flush=True)
+            session = get_session()
+
+            # --- STALE JOB CLEANUP ---
+            # If a job is 'running' for more than 45 minutes, it's likely stuck/zombie.
+            from datetime import timedelta
+            cutoff = datetime.now(timezone.utc) - timedelta(minutes=45)
+            
+            stale_jobs = session.query(SyncLog).filter(
+                SyncLog.status == "running", 
+                SyncLog.started_at < cutoff
+            ).all()
+            
+            if stale_jobs:
+                print(f"🧹 Scheduler: Found {len(stale_jobs)} stale job(s). Cleaning up...", flush=True)
+                for job in stale_jobs:
+                    job.status = "failed"
+                    job.notes = f"Marked as failed by auto-cleanup (stuck since {job.started_at})"
+                    job.finished_at = datetime.now(timezone.utc)
+                session.commit()
+            
+            # Fetch all active surveys with a valid interval
+            active_surveys = (
+                session.query(SurveyConfig)
+                .filter(SurveyConfig.is_active == True)
+                .filter(SurveyConfig.interval_minutes > 0)
+                .all()
+            )
+            
+            print(f"📊 Scheduler: Found {len(active_surveys)} active surveys with routine intervals.", flush=True)
+            
+            if not active_surveys:
+                session.close()
+                await asyncio.sleep(60)
+                continue
+            
+            # Proactive Connectivity Check & Self-Healing
+            from connectivity import ensure_connected
+            print("📡 Scheduler: Checking connectivity...", flush=True)
+            is_connected = await ensure_connected()
+            if not is_connected:
+                print("⚠️ Scheduler: VPN/FASIH unreachable even after self-healing attempt. Skipping this cycle.", flush=True)
+                session.close()
+                await asyncio.sleep(60)
+                continue
+
+            jobs_added = 0
+            
+            for survey in active_surveys:
+                interval = survey.interval_minutes
+                
+                # Step 1: Skip if there's already an active job for this survey
+                active_job = session.query(SyncLog).filter(
+                    SyncLog.survey_config_id == survey.id,
+                    SyncLog.status.in_(["queued", "running"])
+                ).first()
+                
+                if active_job:
+                    print(f"   ⏩ Skipping {survey.survey_name}: Job already {active_job.status}", flush=True)
+                    continue
+                
+                # Step 2: Check time elapsed since last sync
+                last_job = (
+                    session.query(SyncLog)
+                    .filter(SyncLog.survey_config_id == survey.id)
+                ).order_by(SyncLog.started_at.desc()).first()
+                
+                should_sync = False
+                if not last_job or not last_job.started_at:
+                    should_sync = True
+                else:
+                    last_start = last_job.started_at.replace(tzinfo=timezone.utc)
+                    delta = datetime.now(timezone.utc) - last_start
+                    elapsed_mins = delta.total_seconds() / 60
+                    if elapsed_mins >= interval:
+                        should_sync = True
+                    else:
+                        print(f"   ⏳ {survey.survey_name}: Not due yet ({elapsed_mins:.1f}/{interval}m)", flush=True)
+                
+                if should_sync:
+                    print(f"🚀 Scheduler: Enqueuing routine sync for: {survey.survey_name} (Interval: {interval}m)", flush=True)
+                    
+                    try:
+                        raw_password = decrypt_password(survey.sso_password_encrypted)
+                        
+                        request_payload = {
+                            "survey_config_id": str(survey.id),
+                            "survey_name": survey.survey_name,
+                            "sso_username": survey.sso_username,
+                            "sso_password": raw_password,
+                            "filter_provinsi": survey.filter_provinsi or "",
+                            "filter_kabupaten": survey.filter_kabupaten or "",
+                            "filter_rotation": survey.filter_rotation or "pengawas",
+                            "source": "Automated routine sync"
+                        }
+                        
+                        new_log = SyncLog(
+                            survey_config_id=survey.id,
+                            status="queued",
+                            notes=json.dumps(request_payload),
+                            total_fetched=0, total_new=0, total_updated=0, total_skipped=0, total_failed=0,
+                            started_at=datetime.now(timezone.utc)
+                        )
+                        session.add(new_log)
+                        jobs_added += 1
+                    except Exception as e:
+                        print(f"   ❌ Scheduler: Failed to prepare job for {survey.survey_name}: {e}", flush=True)
+            
+            session.commit()
+            session.close()
+            
+            if jobs_added > 0:
+                print(f"✅ Scheduler: Added {jobs_added} routine job(s) to queue.", flush=True)
+                await trigger_worker()
+                
+        except Exception as e:
+            print(f"❌ Error in routine sync loop: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            if 'session' in locals():
+                session.close()
+        
+        # Check every 60 seconds
+        await asyncio.sleep(60)
+```
+
+### rpa/src/worker/queue.py
+```python
+import asyncio
+import json
+from datetime import datetime, timezone
+
+from db.connection import get_session, init_db, reset_engine
+from db.models import SyncLog
+
+from state import sync_state
+from schemas import SyncRequest
+from worker.job_runner import _run_single_job
+
+def _get_queued_jobs(session) -> list:
+    """Get all queued jobs ordered by creation time."""
+    return (
+        session.query(SyncLog)
+        .filter(SyncLog.status == "queued")
+        .order_by(SyncLog.started_at.asc())
+        .all()
+    )
+
+
+def _get_queue_position(session, job_id: int) -> int:
+    """Get position of a job in the queue (1-indexed)."""
+    queued = _get_queued_jobs(session)
+    for i, job in enumerate(queued):
+        if job.id == job_id:
+            return i + 1
+    return 0
+
+
+_worker_running = False
+
+async def _queue_worker():
+    """Background worker that processes queued jobs one by one."""
+    global _worker_running
+    if _worker_running:
+        return
+    _worker_running = True
+
+    try:
+        while True:
+            # Check for next queued job
+            reset_engine()
+            init_db()
+            session = get_session()
+
+            queued = _get_queued_jobs(session)
+            sync_state.queue_count = len(queued)
+
+            if not queued:
+                session.close()
+                break
+
+            job = queued[0]
+            # Reconstruct request from the job's notes (stored as JSON)
+            try:
+                req_data = json.loads(job.notes or "{}")
+                req = SyncRequest(**req_data)
+            except Exception as e:
+                job.status = "failed"
+                job.notes = f"Invalid job data: {e}"
+                job.finished_at = datetime.now(timezone.utc)
+                session.commit()
+                session.close()
+                continue
+
+            session.close()
+
+            # Process the job
+            await _run_single_job(job, req)
+
+            # Small delay between jobs
+            await asyncio.sleep(2)
+
+    finally:
+        _worker_running = False
+        sync_state.queue_count = 0
+
+async def trigger_worker():
+    """Trigger the queue worker if it's not already running."""
+    if not _worker_running:
+        asyncio.create_task(_queue_worker())
 ```
 
 ### rpa/src/main.py
@@ -3174,9 +3738,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+9c05129 feat: implement smart bootstrap, global locking, and zombie network healing
 24f510a fix: implement vpn retry loop and sync coolify rpa environment
 34db98c fix: resolve vpn-rpa circular dependency and update local db hostname in .env
 670e670 chore: harden infrastructure, optimize project dump, and sync coolify config
 cb9481e chore: implement safe naming for database and harden RPA authentication timeouts
-27e6115 chore(deploy): restructure compose files for production stability and local dev
 ```
