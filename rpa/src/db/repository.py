@@ -415,7 +415,9 @@ class BatchUpserterBulk:
             "date_modified_remote": date_modified,
             "date_synced": datetime.now(timezone.utc),
             "synced_to_api": False,
-            "sync_log_id": self.sync_log_id
+            "sync_log_id": self.sync_log_id,
+            "local_image_mirrored": False,
+            "local_image_paths": {}
         }
         
         # PostgreSQL requires explicit UUID objects for bulk insert
