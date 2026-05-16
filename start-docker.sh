@@ -17,15 +17,16 @@ if [[ "$1" == "--build" ]]; then
 
     if [[ ${#SERVICES[@]} -eq 0 ]]; then
         echo "🔨 Mode: Rebuild SEMUA service..."
-        docker compose up -d --build --force-recreate
+        docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build --force-recreate
     else
         echo "🔨 Mode: Rebuild service: ${SERVICES[*]}"
-        docker compose up -d --build --force-recreate "${SERVICES[@]}"
+        docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build --force-recreate "${SERVICES[@]}"
     fi
 else
     echo "▶  Mode: Start normal (image cached, tanpa rebuild)"
-    docker compose up -d
+    docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 fi
+
 
 echo ""
 echo " ✅ All services started in background."

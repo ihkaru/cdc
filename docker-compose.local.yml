@@ -1,0 +1,40 @@
+# This file is automatically merged with docker-compose.yml by Docker.
+# It contains local development specific configurations (ports, volumes, etc.)
+
+services:
+  dashboard:
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./dashboard/server:/app/server
+      - ./dashboard/entrypoint.sh:/app/entrypoint.sh
+
+  rpa:
+    volumes:
+      - ./rpa:/app
+
+  vpn-auth:
+    volumes:
+      - ./rpa:/app
+
+  archiver:
+    volumes:
+      - ./rpa:/app
+
+  vpn:
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+
+  postgres:
+    ports:
+      - "5432:5432"
+
+  master:
+    ports:
+      - "9333:9333"
+
+  s3:
+    ports:
+      - "8333:8333"
+

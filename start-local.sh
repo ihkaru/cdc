@@ -40,9 +40,9 @@ echo "================================================="
 
 # ─── Step 1: Infrastructure (DB, VPN, S3) ───────────────────────
 echo "[1/3] Starting Infrastructure in Docker..."
-# Docker will automatically pick up docker-compose.override.yml 
-# so ports 5432, 8000, 8333 will be exposed to 127.0.0.1 automatically.
-docker compose up -d postgres vpn rpa vpn-auth master volume filer s3 archiver || { echo "❌ Infra failed to start. Aborting."; exit 1; }
+# Using -f docker-compose.yml -f docker-compose.local.yml to ensure local volumes are mounted
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d postgres vpn rpa vpn-auth master volume filer s3 archiver || { echo "❌ Infra failed to start. Aborting."; exit 1; }
+
 
 # Ensure dashboard container is stopped in Docker to free up port 3000 for local Bun/Quasar
 echo "[2/3] Ensuring Dashboard Docker container is stopped..."
