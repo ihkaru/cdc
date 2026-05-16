@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sun May 17 06:00:07 AM WIB 2026
+Generated at: Sun May 17 06:24:21 AM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -367,6 +367,8 @@ services:
 networks:
   fasih_internal:
     driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1400
   coolify:
     external: true
 
@@ -5257,6 +5259,27 @@ cleanup() {
 
 trap cleanup INT TERM
 
+# 🛡️ MTU Watchdog: Permanently locks VPN MTU to prevent resets
+mtu_watchdog() {
+    echo "🛡️ MTU Watchdog started (Target: 500)"
+    while true; do
+        sleep 10
+        VPN_IF=""
+        if [ -d "/sys/class/net/tun0" ]; then VPN_IF="tun0"; fi
+        if [ -z "$VPN_IF" ] && [ -d "/sys/class/net/ppp0" ]; then VPN_IF="ppp0"; fi
+        
+        if [ -n "$VPN_IF" ]; then
+            CURRENT_MTU=$(cat "/sys/class/net/$VPN_IF/mtu" 2>/dev/null)
+            if [ "$CURRENT_MTU" != "500" ]; then
+                echo "🛡️ MTU Watchdog: Re-locking $VPN_IF MTU to 500 (was $CURRENT_MTU)..."
+                ip link set dev "$VPN_IF" mtu 500 2>/dev/null || true
+            fi
+        fi
+    done
+}
+
+mtu_watchdog &
+
 # Background Watcher: Monitors DB for cookie changes and triggers restart
 monitor_cookie_changes() {
     LAST_COOKIE=""
@@ -5606,9 +5629,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+89b4522 feat: complete resilience hardening for Scenario 2 (Silent Auth) and Scenario 3 (Atomic Shutdown)
 f373415 chore: update dump_project.sh with critical RPA logic files and refresh snapshot
 8dbdbca feat: infrastructure hardening & resiliency (Response Guardian, Atomic Shield, Signal Watchdog)
 536e16e chore: upgrade entrypoint to universal self-healing migration
 9c2cab2 feat: implement archiver heartbeat healthcheck and start-docker cleanup routine
-1ee63cd fix: resolve hidden column inconsistencies in BatchUpserterBulk for image mirroring stability
 ```

@@ -66,6 +66,27 @@ cleanup() {
 
 trap cleanup INT TERM
 
+# 🛡️ MTU Watchdog: Permanently locks VPN MTU to prevent resets
+mtu_watchdog() {
+    echo "🛡️ MTU Watchdog started (Target: 500)"
+    while true; do
+        sleep 10
+        VPN_IF=""
+        if [ -d "/sys/class/net/tun0" ]; then VPN_IF="tun0"; fi
+        if [ -z "$VPN_IF" ] && [ -d "/sys/class/net/ppp0" ]; then VPN_IF="ppp0"; fi
+        
+        if [ -n "$VPN_IF" ]; then
+            CURRENT_MTU=$(cat "/sys/class/net/$VPN_IF/mtu" 2>/dev/null)
+            if [ "$CURRENT_MTU" != "500" ]; then
+                echo "🛡️ MTU Watchdog: Re-locking $VPN_IF MTU to 500 (was $CURRENT_MTU)..."
+                ip link set dev "$VPN_IF" mtu 500 2>/dev/null || true
+            fi
+        fi
+    done
+}
+
+mtu_watchdog &
+
 # Background Watcher: Monitors DB for cookie changes and triggers restart
 monitor_cookie_changes() {
     LAST_COOKIE=""
