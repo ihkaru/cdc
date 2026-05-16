@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sat May 16 07:10:29 PM WIB 2026
+Generated at: Sat May 16 07:13:14 PM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -2920,8 +2920,11 @@ while true; do
             echo "🔑 Fresh cookie loaded from database (Length: ${#COOKIE})"
         else
             echo "⏳ No cookie found in database. Triggering RPA auto-fetch via internet..."
-            # Trigger RPA auto-fetch (RPA now handles this via public portal)
-            curl -s -X POST "http://fasih-nexus-rpa:8000/vpn/auto-fetch" > /dev/null 2>&1 || true
+            # RPA shares the same network namespace, so we use 127.0.0.1
+            # We also pass the credentials we already have in our environment.
+            curl -s -X POST "http://127.0.0.1:8000/vpn/auto-fetch" \
+                -H "Content-Type: application/json" \
+                -d "{\"sso_username\":\"$VPN_USER\", \"sso_password\":\"$VPN_PASS\"}" > /dev/null 2>&1 || true
             sleep 10
         fi
     fi
@@ -3158,9 +3161,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+670e670 chore: harden infrastructure, optimize project dump, and sync coolify config
 cb9481e chore: implement safe naming for database and harden RPA authentication timeouts
 27e6115 chore(deploy): restructure compose files for production stability and local dev
 976a054 fix(deploy): remove volume bind mounts to resolve Coolify OCI runtime errors
 8287d79 fix(sync): resolve 403 image mirroring, 400 bad request, and stabilize vpn auto-bootstrap
-1466671 fix(infra): sync volume definition to pg_data_v3 and remove potential password mismatches
 ```

@@ -172,8 +172,11 @@ while true; do
             echo "🔑 Fresh cookie loaded from database (Length: ${#COOKIE})"
         else
             echo "⏳ No cookie found in database. Triggering RPA auto-fetch via internet..."
-            # Trigger RPA auto-fetch (RPA now handles this via public portal)
-            curl -s -X POST "http://fasih-nexus-rpa:8000/vpn/auto-fetch" > /dev/null 2>&1 || true
+            # RPA shares the same network namespace, so we use 127.0.0.1
+            # We also pass the credentials we already have in our environment.
+            curl -s -X POST "http://127.0.0.1:8000/vpn/auto-fetch" \
+                -H "Content-Type: application/json" \
+                -d "{\"sso_username\":\"$VPN_USER\", \"sso_password\":\"$VPN_PASS\"}" > /dev/null 2>&1 || true
             sleep 10
         fi
     fi
