@@ -1,5 +1,9 @@
 #!/bin/sh
 
+# 🛡️ Disable IPv6 to prevent connection resets (ERR_CONNECTION_RESET)
+sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true
+sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
+
 # Base config
 mkdir -p /etc/openfortivpn
 

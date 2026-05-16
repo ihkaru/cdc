@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sat May 16 09:11:49 PM WIB 2026
+Generated at: Sat May 16 09:14:13 PM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -3366,6 +3366,10 @@ if __name__ == "__main__":
 ```bash
 #!/bin/sh
 
+# 🛡️ Disable IPv6 to prevent connection resets (ERR_CONNECTION_RESET)
+sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true
+sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
+
 # Base config
 mkdir -p /etc/openfortivpn
 
@@ -3791,9 +3795,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+eb50b72 feat: implement stealth JS injection and TCP MSS clamping for maximum robustness
 b56c120 security: mask sensitive data in project snapshot and update dump script
 1682362 optimize: dashboard build process for better memory efficiency and caching
 d8a4b03 fix: set MTU to 500 and add 90s dashboard timeout to prevent Cloudflare 524
 847f08d docs: final architecture snapshot with autoheal and deep healthchecks
-3273044 feat: implement autoheal supervisor and fix missing dns in coolify
 ```

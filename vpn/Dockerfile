@@ -34,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     postgresql-client \
     openconnect \
+    iptables \
     && rm -rf /var/lib/apt/lists/*
 
 # Script untuk monitoring & reconnect
