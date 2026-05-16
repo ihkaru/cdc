@@ -15,16 +15,14 @@ sleep 2
 
 # Inject database IP into /etc/hosts so it survives DNS overrides
 for i in 1 2 3; do
-    DB_IP=$(getent hosts fasih-nexus-db | awk '{print $1}')
-    if [ -z "$DB_IP" ]; then DB_IP=$(getent hosts postgres | awk '{print $1}'); fi
+    DB_IP=$(getent hosts fasih-db | awk '{print $1}')
     [ -n "$DB_IP" ] && break
     sleep 1
 done
 
 if [ -n "$DB_IP" ]; then
-    echo "📌 Mapping fasih-nexus-db -> $DB_IP in /etc/hosts"
-    echo "$DB_IP fasih-nexus-db" >> /etc/hosts
-    echo "$DB_IP postgres" >> /etc/hosts
+    echo "📌 Mapping fasih-db -> $DB_IP in /etc/hosts"
+    echo "$DB_IP fasih-db" >> /etc/hosts
 fi
 
 # Inject S3 IP into /etc/hosts

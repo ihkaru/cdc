@@ -21,7 +21,7 @@ services:
       - VPN_USER=${VPN_USER}
       - VPN_PASS=${VPN_PASS}
     depends_on:
-      postgres:
+      fasih-db:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://127.0.0.1:3000/api/health').then(r => r.ok ? process.exit(0) : process.exit(1))\""]
@@ -59,7 +59,7 @@ services:
     extra_hosts:
       - "fasih-sm.bps.go.id:10.1.110.13"
     depends_on:
-      postgres:
+      fasih-db:
         condition: service_healthy
       s3:
         condition: service_started
@@ -145,7 +145,7 @@ services:
     restart: unless-stopped
 
   # --- Data Persistence ---
-  postgres:
+  fasih-db:
     image: postgres:16-alpine
     container_name: fasih-nexus-db
     networks:
@@ -199,10 +199,10 @@ services:
     depends_on:
       - master
       - volume
-      - postgres
+      - fasih-db
     environment:
       - WEED_FILER_POSTGRES_ENABLED=true
-      - WEED_FILER_POSTGRES_HOSTNAME=postgres
+      - WEED_FILER_POSTGRES_HOSTNAME=fasih-db
       - WEED_FILER_POSTGRES_PORT=5432
       - WEED_FILER_POSTGRES_USERNAME=fasih
       - WEED_FILER_POSTGRES_PASSWORD=${POSTGRES_PASSWORD}

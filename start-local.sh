@@ -41,7 +41,7 @@ echo "================================================="
 # ─── Step 1: Infrastructure (DB, VPN, S3) ───────────────────────
 echo "[1/3] Starting Infrastructure in Docker..."
 # Using -f docker-compose.yml -f docker-compose.local.yml to ensure local volumes are mounted
-docker compose -f docker-compose.yml -f docker-compose.local.yml up -d postgres vpn rpa vpn-auth master volume filer s3 archiver || { echo "❌ Infra failed to start. Aborting."; exit 1; }
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d fasih-db vpn rpa vpn-auth master volume filer s3 archiver || { echo "❌ Infra failed to start. Aborting."; exit 1; }
 
 
 # Ensure dashboard container is stopped in Docker to free up port 3000 for local Bun/Quasar
@@ -60,7 +60,7 @@ if [ -f "$PROJECT_DIR/.env" ]; then
 
   # Override DATABASE_URL to use 127.0.0.1 instead of docker alias
   # Using 127.0.0.1 to avoid Docker IPv6 vs IPv4 binding mismatches
-  LOCAL_DB_URL=$(echo "$DATABASE_URL" | sed 's/@postgres:/@127.0.0.1:/')
+  LOCAL_DB_URL=$(echo "$DATABASE_URL" | sed -E 's/@(postgres|fasih-db):/@127.0.0.1:/')
   export DATABASE_URL="$LOCAL_DB_URL"
   echo "      DB URL overridden for local access: $DATABASE_URL"
 

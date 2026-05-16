@@ -30,7 +30,7 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
             target_domain = target_url.split("://")[1].split("/")[0]
             if target_domain not in page.url and "sso.bps.go.id" not in page.url:
                 print(f"🚀 [Auth] Navigating to target {target_domain}...")
-                await page.goto(target_url, wait_until="networkidle", timeout=45000)
+                await page.goto(target_url, wait_until="domcontentloaded", timeout=120000)
                 
                 # Apply 5-Second Stabilization Rule specifically for VPN Portal (akses.bps.go.id)
                 if "akses.bps.go.id" in target_url:
@@ -52,7 +52,7 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
             combined_selector = ", ".join(saml_selectors)
             
             try:
-                await page.wait_for_selector(combined_selector, timeout=5000)
+                await page.wait_for_selector(combined_selector, timeout=60000)
                 # We wait 1s for event listeners to attach
                 await asyncio.sleep(1) 
                 print("   🖱️ [Auth] Clicking SSO/SAML button...")
@@ -65,7 +65,7 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
         print(f"🚀 [Auth] Handling Keycloak SSO... Current URL: {page.url}")
         try:
             # Wait for the SSO page input to be ready
-            await page.wait_for_selector("#username", timeout=30000)
+            await page.wait_for_selector("#username", timeout=60000)
             print(f"   ✅ [Auth] SSO Page reached: {page.url}")
         except Exception as e:
             print(f"   ❌ [Auth] Timeout waiting for #username. Stuck at URL: {page.url}")
@@ -116,7 +116,7 @@ async def auto_login(page, username, password):
         print("   ⏳ [Auth] Waiting for redirect to FASIH-SM...")
         try:
             # Wait for elements that signify a successful login in FASIH-SM
-            await page.wait_for_selector(".main-sidebar, .user-panel, a[href*='logout'], .navbar", timeout=30000)
+            await page.wait_for_selector(".main-sidebar, .user-panel, a[href*='logout'], .navbar", timeout=60000)
             print("   ✅ [Auth] Dashboard detected!")
         except Exception:
             # If not detected, check if we are at least on the domain

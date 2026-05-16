@@ -33,7 +33,7 @@ Platform otomasi sinkronisasi data survei dari aplikasi **FASIH-SM** (fasih-sm.b
 
 ### 1. `vpn/` — VPN Gateway (Network Owner)
 - **Tech**: Debian slim + openfortivpn (compiled with SAML support)
-- **Fungsi**: Menyediakan tunnel VPN. Menggunakan **DNS Pinning** (`dns: 127.0.0.11`) agar service yang menumpang (`network_mode: service:vpn`) tetap bisa mengakses service internal Docker (postgres, s3) yang berada di network `fasih_internal`.
+- **Fungsi**: Menyediakan tunnel VPN. Menggunakan **DNS Pinning** (`dns: 127.0.0.11`) agar service yang menumpang (`network_mode: service:vpn`) tetap bisa mengakses service internal Docker (fasih-db, s3) yang berada di network `fasih_internal`.
 - **Auth**: SAML cookie (`SVPNCOOKIE`).
 
 ### 2. `rpa/` — RPA Sync Engine
@@ -92,7 +92,7 @@ Sistem menggunakan bash scripts sebagai entrypoint development:
 ## The Golden Rules of BPS VPN Sync (Hard-won Lessons)
 
 1. **The 5-Second Portal Stabilization**: Portal Fortinet BPS (`akses.bps.go.id`) memuat script background secara asinkron. Mengklik tombol SAML/SSO sebelum indikator loading berhenti (atau < 5 detik) akan memicu **403 Forbidden**. Selalu gunakan `asyncio.sleep(5)` setelah navigasi ke portal.
-2. **Internal DNS Consistency**: Dalam stack Docker, `DATABASE_URL` WAJIB menggunakan hostname servis sesuai `docker-compose.yml` (contoh: `fasih-nexus-db`), BUKAN `localhost` atau `postgres`. Kesalahan kecil di sini membuat kontainer VPN "buta" terhadap cookie di database.
+2. **Internal DNS Consistency**: Dalam stack Docker, `DATABASE_URL` WAJIB menggunakan hostname servis sesuai `docker-compose.yml` (contoh: `fasih-db`), BUKAN `localhost` atau `postgres`. Kesalahan kecil di sini membuat kontainer VPN "buta" terhadap cookie di database.
 3. **HTTP/2 & Fingerprinting Protection**: Gateway BPS sangat sensitif terhadap fingerprint browser otomatis. Selalu paksa protokol **HTTP/1.1** (`--disable-http2`) dan gunakan User-Agent Mobile (Android/Pixel) yang konsisten di RPA (Playwright) dan VPN (OpenConnect) untuk menghindari blokir silent.
 4. **MTU Sensitivity (Fragmentation)**: Jaringan internal BPS sering menjatuhkan paket yang terfragmentasi. Jika login berhasil tapi ambil data (POST) selalu timeout/hang, pastikan MTU diatur ke **1000-1100**. Default 1500 akan gagal di lingkungan Cloud/VPN tertentu.
 5. **Self-Healing Loop**: Jika VPN gagal konek dengan cookie, sistem akan menghapus cookie dari DB. Jika ini terjadi berulang, jangan paksa VPN restart, tapi periksa apakah `rpa` berhasil ambil cookie baru atau justru terjebak di Keycloak.
