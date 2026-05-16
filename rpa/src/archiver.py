@@ -319,9 +319,91 @@ async def mirror_assignment_images(db: Session, assignment: Assignment, rpa=None
         db.rollback()
         return False
 
+async def audit_and_heal_storage():
+    """
+    Audit the integrity of SeaweedFS S3 storage against the database.
+    If the bucket is missing, or specific files are missing,
+    reset 'local_image_mirrored' to False so they can be healed.
+    """
+    logger.info("🔍 [Archiver Audit] Running Storage Integrity Audit...")
+    try:
+        from storage import get_s3_client, S3_BUCKET
+        async with await get_s3_client() as s3:
+            # 1. Check if bucket exists
+            bucket_exists = True
+            try:
+                await s3.head_bucket(Bucket=S3_BUCKET)
+            except Exception as e:
+                bucket_exists = False
+                logger.warning(f"⚠️ [Archiver Audit] Bucket '{S3_BUCKET}' does not exist in S3: {e}")
+
+            db = get_session()
+            
+            if not bucket_exists:
+                # SeaweedFS was wiped/reset! Reset all mirrored statuses so they re-mirror
+                logger.warning("🚨 [Archiver Audit] SeaweedFS was wiped! Resetting all local_image_mirrored statuses to False...")
+                stmt = update(Assignment).where(
+                    Assignment.local_image_mirrored == True
+                ).values(local_image_mirrored=False, local_image_paths={})
+                res = db.execute(stmt)
+                db.commit()
+                logger.info(f"✨ [Archiver Audit] Successfully reset {res.rowcount} assignments for re-mirroring.")
+                db.close()
+                return
+
+            # 2. If bucket exists, fetch all objects in S3
+            logger.info("📂 [Archiver Audit] Bucket exists. Listing S3 objects to cross-reference...")
+            s3_objects = set()
+            paginator = s3.get_paginator('list_objects_v2')
+            async for page in paginator.paginate(Bucket=S3_BUCKET):
+                for obj in page.get('Contents', []):
+                    s3_objects.add(obj['Key'])
+
+            logger.info(f"📂 [Archiver Audit] Found {len(s3_objects)} files in S3 storage.")
+
+            # 3. Query all assignments marked as mirrored
+            stmt = select(Assignment).where(Assignment.local_image_mirrored == True)
+            mirrored = db.scalars(stmt).all()
+            
+            to_reset = []
+            for assignment in mirrored:
+                paths = assignment.local_image_paths or {}
+                if not paths:
+                    continue
+                
+                # Check if all files listed in local_image_paths exist in S3
+                all_exist = True
+                for key, local_path in paths.items():
+                    s3_key = local_path.replace(f"{S3_BUCKET}/", "")
+                    if s3_key not in s3_objects:
+                        all_exist = False
+                        logger.warning(f"❌ [Archiver Audit] Missing file in S3: {s3_key} (Assignment: {assignment.id})")
+                        break
+                
+                if not all_exist:
+                    to_reset.append(assignment.id)
+
+            if to_reset:
+                logger.warning(f"🚨 [Archiver Audit] Found {len(to_reset)} assignments with missing files in S3. Resetting...")
+                stmt = update(Assignment).where(
+                    Assignment.id.in_(to_reset)
+                ).values(local_image_mirrored=False, local_image_paths={})
+                db.execute(stmt)
+                db.commit()
+                logger.info(f"✨ [Archiver Audit] Successfully reset {len(to_reset)} assignments for healing.")
+            else:
+                logger.info("✅ [Archiver Audit] All database records match physical S3 storage. Integrity OK.")
+
+            db.close()
+    except Exception as e:
+        logger.error(f"❌ [Archiver Audit] Audit failed: {e}")
+
 async def archiver_worker():
     """Main worker loop to process pending images."""
     logger.info("🚀 CDC Image Archiver Worker Started")
+    
+    # Run the storage audit on startup to fix any wiped/reset SeaweedFS state
+    await audit_and_heal_storage()
     
     while True:
         try:

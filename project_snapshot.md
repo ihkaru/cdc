@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sun May 17 06:24:21 AM WIB 2026
+Generated at: Sun May 17 06:41:59 AM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -5629,9 +5629,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+297b3ac fix: implement permanent MTU locking for VPN resilience (Scenario 1 & Scenario 3)
 89b4522 feat: complete resilience hardening for Scenario 2 (Silent Auth) and Scenario 3 (Atomic Shutdown)
 f373415 chore: update dump_project.sh with critical RPA logic files and refresh snapshot
 8dbdbca feat: infrastructure hardening & resiliency (Response Guardian, Atomic Shield, Signal Watchdog)
 536e16e chore: upgrade entrypoint to universal self-healing migration
-9c2cab2 feat: implement archiver heartbeat healthcheck and start-docker cleanup routine
 ```
