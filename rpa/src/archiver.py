@@ -449,6 +449,7 @@ async def archiver_worker():
                 await asyncio.sleep(20)  # Idle
                 continue
 
+            pending_ids = [a.id for a in pending]
             logger.info(f"Processing {len(pending)} image-containing assignments for mirroring...")
             db.close()
 
@@ -512,6 +513,9 @@ async def archiver_worker():
                         task_db.rollback()
                     finally:
                         task_db.close()
+
+            # Process the batch using IDs instead of detached objects
+            await asyncio.gather(*(limited_mirror(a_id) for a_id in pending_ids))
 
             # Update heartbeat file
             with open("/tmp/archiver_heartbeat", "w") as f:
