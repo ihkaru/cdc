@@ -91,13 +91,17 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
             else:
                 return False, f"Berada di SSO tapi #username tidak ditemukan. URL: {page.url}"
         
-        # 5. Fill Credentials
-        print(f"🚀 [Auth] Filling credentials...")
-        await page.fill("#username", username)
-        await page.fill("#password", password)
+        # 5. Fill Credentials using direct JS injection (Bypass UI stalling)
+        print(f"🚀 [Auth] Injecting credentials via JS...")
+        await page.evaluate(f"""() => {{
+            const userField = document.querySelector('#username');
+            const passField = document.querySelector('#password');
+            if (userField) userField.value = '{username}';
+            if (passField) passField.value = '{password}';
+        }}""")
         
         # Fast submit
-        await page.click("#kc-login")
+        await page.click("#kc-login", force=True)
         
         # 6. Check for immediate error messages
         try:

@@ -14,8 +14,8 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=coolify" # FORCE Traefik to use the public network IP
       # Note: Route rules and SSL will be automatically handled by Coolify UI
-    environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
+      # CRITICAL: BETTER_AUTH_URL and PUBLIC_BASE_URL MUST match your Coolify domain
+      - DATABASE_URL=${DATABASE_URL:-postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard}
       - RPA_URL=http://vpn:8000        # Talking to RPA via VPN container
       - VPN_AUTH_URL=http://vpn:8001   # Talking to VPN-Auth via VPN container
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -47,7 +47,7 @@ services:
       - 172.16.2.3
       - 8.8.8.8
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
+      - DATABASE_URL=${DATABASE_URL:-postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard}
       - VPN_HOST=akses.bps.go.id
       - VPN_TEST_URL=https://fasih-sm.bps.go.id
       - VPN_USER=${VPN_USER}
@@ -74,7 +74,7 @@ services:
     labels:
       - "autoheal=true"
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
+      - DATABASE_URL=${DATABASE_URL:-postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - PYTHONPATH=/app:/app/src
       - VPN_USER=${VPN_USER}
@@ -99,7 +99,7 @@ services:
     labels:
       - "autoheal=true"
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
+      - DATABASE_URL=${DATABASE_URL:-postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - PYTHONPATH=/app:/app/src
       - VPN_USER=${VPN_USER}
@@ -117,7 +117,7 @@ services:
     labels:
       - "autoheal=true"
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
+      - DATABASE_URL=${DATABASE_URL:-postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard}
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
       - S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
       - S3_ENDPOINT=http://s3:8333

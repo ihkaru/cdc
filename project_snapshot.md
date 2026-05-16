@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sat May 16 08:36:59 PM WIB 2026
+Generated at: Sat May 16 09:11:49 PM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -2329,13 +2329,17 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
             else:
                 return False, f"Berada di SSO tapi #username tidak ditemukan. URL: {page.url}"
         
-        # 5. Fill Credentials
-        print(f"🚀 [Auth] Filling credentials...")
-        await page.fill("#username", username)
-        await page.fill("#password", password)
+        # 5. Fill Credentials using direct JS injection (Bypass UI stalling)
+        print(f"🚀 [Auth] Injecting credentials via JS...")
+        await page.evaluate(f"""() => {{
+            const userField = document.querySelector('#username');
+            const passField = document.querySelector('#password');
+            if (userField) userField.value = '{username}';
+            if (passField) passField.value = '{password}';
+        }}""")
         
         # Fast submit
-        await page.click("#kc-login")
+        await page.click("#kc-login", force=True)
         
         # 6. Check for immediate error messages
         try:
@@ -3501,7 +3505,11 @@ apply_smart_routing() {
             echo "📉 Setting $VPN_IF MTU to 500..."
             ip link set dev "$VPN_IF" mtu 500 || true
             
-            echo "✅ BPS Routing updated."
+            # 🛡️ MSS Clamping: Force TCP to use small packets to prevent "silent hangs"
+            iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 460
+            iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$VPN_IF" -j TCPMSS --set-mss 460
+            
+            echo "✅ BPS Routing & MSS Clamping updated."
         else
             echo "⚠️  Could not resolve $TARGET_DOMAIN (DNS Timeout)."
         fi
@@ -3783,9 +3791,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+b56c120 security: mask sensitive data in project snapshot and update dump script
 1682362 optimize: dashboard build process for better memory efficiency and caching
 d8a4b03 fix: set MTU to 500 and add 90s dashboard timeout to prevent Cloudflare 524
 847f08d docs: final architecture snapshot with autoheal and deep healthchecks
 3273044 feat: implement autoheal supervisor and fix missing dns in coolify
-f64ae19 chore: include rpa routes and worker logic in project dump
 ```

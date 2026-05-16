@@ -39,9 +39,9 @@ if [ -n "$S3_IP" ]; then
     echo "$S3_IP s3" >> /etc/hosts
 fi
 
-# 📉 Set eth0 MTU to 500 to prevent fragmentation on BPS network
-echo "📉 Setting eth0 MTU to 500..."
-ip link set eth0 mtu 500 2>/dev/null || true
+# 📉 Restore eth0 MTU to default (1500) for stable inter-container comms
+echo "📉 Ensuring eth0 MTU is 1500..."
+ip link set eth0 mtu 1500 2>/dev/null || true
 
 GATEWAY_IP=$(ip route | grep default | awk '{print $3}')
 
@@ -139,7 +139,11 @@ apply_smart_routing() {
             echo "📉 Setting $VPN_IF MTU to 500..."
             ip link set dev "$VPN_IF" mtu 500 || true
             
-            echo "✅ BPS Routing updated."
+            # 🛡️ MSS Clamping: Force TCP to use small packets to prevent "silent hangs"
+            iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 460
+            iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$VPN_IF" -j TCPMSS --set-mss 460
+            
+            echo "✅ BPS Routing & MSS Clamping updated."
         else
             echo "⚠️  Could not resolve $TARGET_DOMAIN (DNS Timeout)."
         fi
