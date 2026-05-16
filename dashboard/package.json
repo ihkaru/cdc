@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "bun run --watch server/index.ts",
-    "build": "cd client && bun install && bunx quasar build",
+    "build": "cd client && bunx quasar build",
     "start": "bun run server/index.ts",
     "db:push": "bunx drizzle-kit push"
   },

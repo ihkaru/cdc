@@ -1,0 +1,6 @@
+node_modules
+.quasar
+dist
+.env
+.git
+.DS_Store
