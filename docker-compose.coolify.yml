@@ -51,11 +51,14 @@ services:
     depends_on:
       fasih-db:
         condition: service_healthy
+    extra_hosts:
+      - "fasih-sm.bps.go.id:10.1.110.13"
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fks --connect-timeout 5 https://fasih-sm.bps.go.id/oauth_login.html -o /dev/null && echo ok || exit 1" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      test: [ "CMD-SHELL", "curl -fks --connect-timeout 15 https://fasih-sm.bps.go.id/oauth_login.html -o /dev/null && echo ok || exit 1" ]
+      interval: 45s
+      timeout: 20s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
   # --- RPA Engines (Behind VPN) ---
@@ -147,6 +150,7 @@ services:
       - fasih_internal
     depends_on:
       - master
+      - volume
       - fasih-db
     environment:
       - WEED_FILER_POSTGRES_ENABLED=true

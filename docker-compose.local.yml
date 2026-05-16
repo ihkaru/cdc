@@ -22,6 +22,8 @@ services:
       - ./rpa:/app
 
   vpn:
+    # Exposed ports here are actually serving rpa (8000) and vpn-auth (8001)
+    # because they share the vpn container's network namespace.
     ports:
       - "8000:8000"
       - "8001:8001"
