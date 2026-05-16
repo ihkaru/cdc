@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sat May 16 07:13:14 PM WIB 2026
+Generated at: Sat May 16 07:24:56 PM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -1637,7 +1637,7 @@ Internal BPS — tidak untuk distribusi publik.
 POSTGRES_USER=fasih
 POSTGRES_PASSWORD=changeme_generate_random
 POSTGRES_DB=fasih_dashboard
-DATABASE_URL=postgresql://fasih:changeme_generate_random@postgres:5432/fasih_dashboard
+DATABASE_URL=postgresql://fasih:changeme_generate_random@fasih-db:5432/fasih_dashboard
 
 # RPA - encryption key for SSO passwords
 ENCRYPTION_KEY=24f81eeee1f9b8bce1b51d4aa48d288895cf7f0e0b5e2f5a488b63491c07bbda
@@ -3161,9 +3161,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+34db98c fix: resolve vpn-rpa circular dependency and update local db hostname in .env
 670e670 chore: harden infrastructure, optimize project dump, and sync coolify config
 cb9481e chore: implement safe naming for database and harden RPA authentication timeouts
 27e6115 chore(deploy): restructure compose files for production stability and local dev
 976a054 fix(deploy): remove volume bind mounts to resolve Coolify OCI runtime errors
-8287d79 fix(sync): resolve 403 image mirroring, 400 bad request, and stabilize vpn auto-bootstrap
 ```

@@ -173,11 +173,19 @@ while true; do
         else
             echo "⏳ No cookie found in database. Triggering RPA auto-fetch via internet..."
             # RPA shares the same network namespace, so we use 127.0.0.1
-            # We also pass the credentials we already have in our environment.
-            curl -s -X POST "http://127.0.0.1:8000/vpn/auto-fetch" \
-                -H "Content-Type: application/json" \
-                -d "{\"sso_username\":\"$VPN_USER\", \"sso_password\":\"$VPN_PASS\"}" > /dev/null 2>&1 || true
-            sleep 10
+            # We use a retry loop because RPA might still be starting its web server.
+            for attempt in $(seq 1 6); do
+                RESP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:8000/vpn/auto-fetch" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"sso_username\":\"$VPN_USER\", \"sso_password\":\"$VPN_PASS\"}")
+                
+                if [ "$RESP" = "200" ]; then
+                    echo "   ✅ RPA auto-fetch triggered successfully."
+                    break
+                fi
+                echo "   ⚠️ RPA not ready yet ($attempt/6, code: $RESP), retrying in 10s..."
+                sleep 10
+            done
         fi
     fi
 
