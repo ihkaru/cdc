@@ -11,6 +11,12 @@ echo "================================================="
 echo " Starting Full Docker Production/Test Environment"
 echo "================================================="
 
+# 🧹 Zombie Cleanup: Hapus sisa-sisa browser lama agar tidak menumpuk di Docker volume
+echo "🧹 Cleaning up old browser profiles and temp files..."
+rm -rf /tmp/playwright_reporting*
+rm -rf /tmp/fasih_storage_state_*.json
+rm -rf /tmp/.com.google.Chrome.*
+
 if [[ "$1" == "--build" ]]; then
     shift  # buang argumen --build
     SERVICES=("$@")  # sisa argumen = nama service (boleh kosong = semua)

@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sun May 17 04:57:47 AM WIB 2026
+Generated at: Sun May 17 04:59:13 AM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -260,6 +260,14 @@ services:
       rpa:
         condition: service_started
     command: python src/archiver.py
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import time, os; \
+        hb = '/tmp/archiver_heartbeat'; \
+        exit(0 if os.path.exists(hb) and (time.time() - os.path.getmtime(hb)) < 600 else 1)\""]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   # --- Data Persistence ---
@@ -573,6 +581,12 @@ wait
 echo "================================================="
 echo " Starting Full Docker Production/Test Environment"
 echo "================================================="
+
+# 🧹 Zombie Cleanup: Hapus sisa-sisa browser lama agar tidak menumpuk di Docker volume
+echo "🧹 Cleaning up old browser profiles and temp files..."
+rm -rf /tmp/playwright_reporting*
+rm -rf /tmp/fasih_storage_state_*.json
+rm -rf /tmp/.com.google.Chrome.*
 
 if [[ "$1" == "--build" ]]; then
     shift  # buang argumen --build
@@ -3795,9 +3809,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+1ee63cd fix: resolve hidden column inconsistencies in BatchUpserterBulk for image mirroring stability
 42746fe refactor: standardize UUID types across RPA and Dashboard to match physical DB schema
 1d4c5c7 fix: change global metadata cache to user-specific cache to avoid survey leakage between accounts
 0ec2a70 feat: implement global metadata caching to eliminate UX cold starts and Cloudflare timeouts
 1f164f2 fix: install iptables and disable IPv6 to eliminate ERR_CONNECTION_RESET
-eb50b72 feat: implement stealth JS injection and TCP MSS clamping for maximum robustness
 ```

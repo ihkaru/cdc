@@ -20,6 +20,7 @@ from sqlalchemy import select, and_, cast, Text, update, or_
 from db.connection import get_session
 from db.models import Assignment, SurveyConfig
 from storage import upload_image
+import time
 
 # Domain pattern for BPS images (can be fasih-sm.bps.go.id or bucket1.cloud.bps.go.id)
 BPS_DOMAIN_PATTERN = r"(bps\.go\.id|cloud\.bps\.go\.id)"
@@ -430,8 +431,10 @@ async def archiver_worker():
                     finally:
                         task_db.close()
 
-            # Process the batch using IDs instead of detached objects
-            await asyncio.gather(*(limited_mirror(a.id) for a in pending))
+            # Update heartbeat file
+            with open("/tmp/archiver_heartbeat", "w") as f:
+                f.write(str(time.time()))
+
             logger.info(f"Batch complete. Continuing loop...")
             
         except Exception as e:
