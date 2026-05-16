@@ -12,6 +12,8 @@ from auth import auto_login, launch_stealth_browser, new_stealth_context
 from connectivity import ensure_connected
 from db.connection import get_session
 
+from datetime import datetime, timezone, timedelta
+
 router = APIRouter()
 
 @router.post("/lookup/metadata")
@@ -19,7 +21,20 @@ async def lookup_metadata(req: LookupRequest):
     """Metadata lookup using Storage State + Force XSRF Maturation."""
     start_total = time.perf_counter()
     timings = {}
-    
+
+    # PHASE 0: Global Metadata Cache (ULTRA FAST)
+    from db.models import SystemSettings
+    with get_session() as db:
+        cache = db.query(SystemSettings).filter(SystemSettings.key == "global_metadata_cache").first()
+        if cache and cache.updated_at:
+            # Check if cache is fresh (e.g., < 6 hours)
+            age = datetime.now(timezone.utc) - cache.updated_at.replace(tzinfo=timezone.utc)
+            if age < timedelta(hours=6):
+                print(f"   ✨ [Lookup] Serving from GLOBAL CACHE (Age: {age.total_seconds()/60:.1f}m)")
+                data = json.loads(cache.value)
+                data["debug_timings"] = {"cache_hit": "GLOBAL", "total_ms": 0}
+                return data
+
     # PHASE 1: VPN
     await ensure_connected()
     timings["vpn_ensure_ms"] = int((time.perf_counter() - start_total) * 1000)
@@ -82,7 +97,17 @@ async def lookup_metadata(req: LookupRequest):
                                     
                                     timings["cache_hit"] = True
                                     timings["total_ms"] = int((time.perf_counter() - start_total) * 1000)
-                                    return {"surveys": surveys, "provinces": provinces, "debug_timings": timings}
+                                    result = {"surveys": surveys, "provinces": provinces}
+                                    try:
+                                        with get_session() as db_write:
+                                            from db.repository import set_system_setting
+                                            set_system_setting(db_write, "global_metadata_cache", json.dumps(result))
+                                            print("   ✅ [Lookup] GLOBAL CACHE UPDATED (Fast Path).")
+                                    except Exception as cache_err:
+                                        print(f"   ⚠️ [Lookup] Failed to update global cache: {cache_err}")
+                                    
+                                    result["debug_timings"] = timings
+                                    return result
                         
                         print(f"   ⚠️ [Lookup] Cache check failed (HTTP {api_resp.status}). Falling back to browser...")
             except Exception as e:
@@ -164,7 +189,17 @@ async def lookup_metadata(req: LookupRequest):
 
             timings["sso_login_ms"] = int((time.perf_counter() - t_browser) * 1000)
             timings["total_ms"] = int((time.perf_counter() - start_total) * 1000)
-            return {"surveys": surveys, "provinces": provinces, "debug_timings": timings}
+            result = {"surveys": surveys, "provinces": provinces}
+            try:
+                with get_session() as db_write:
+                    from db.repository import set_system_setting
+                    set_system_setting(db_write, "global_metadata_cache", json.dumps(result))
+                    print("   ✅ [Lookup] GLOBAL CACHE UPDATED (Browser Path).")
+            except Exception as cache_err:
+                print(f"   ⚠️ [Lookup] Failed to update global cache: {cache_err}")
+
+            result["debug_timings"] = timings
+            return result
         finally:
             await browser.close()
 

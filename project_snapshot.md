@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sat May 16 09:14:13 PM WIB 2026
+Generated at: Sat May 16 09:28:22 PM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -92,7 +92,6 @@ Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 |____test-routine-sync.sh
 |____benchmark_api.sh
 |____docker-compose.coolify.yml
-|____benchmark_ux_lookup.sh
 |____scratch_benchmark.py
 |____artifacts
 | |____portal_initial.png
@@ -106,6 +105,7 @@ Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 |____debug_assignment.json
 |____docker-compose.local.yml
 |____dump_project.sh
+|____benchmark_ux_lookup.sh
 ```
 
 ## 🐳 Docker & Infrastructure (The Foundation)
@@ -1266,77 +1266,6 @@ volumes:
   seaweed_data:
 ```
 
-### ./benchmark_ux_lookup.sh
-```yaml
-#!/bin/bash
-
-# RPA berbagi network dengan container VPN (network_mode: service:vpn)
-# Port 8000 tidak di-expose ke host — akses lewat IP VPN container di Docker bridge network
-API_URL="http://172.18.0.5:8000/lookup/metadata"
-# Membaca kredensial dari .env (pastikan file .env ada di direktori root)
-SSO_USER="ihzakarunia@bps.go.id"
-SSO_PASS='Fikrizaki2!'
-
-echo "================================================="
-echo "   FasihNexus UX Benchmark: RCA Transparent Mode "
-echo "================================================="
-echo "👤 User: $SSO_USER"
-echo "-------------------------------------------------"
-
-run_benchmark() {
-    local label=$1
-    echo "🚀 Running Request: $label..."
-    
-    # Capture response and time
-    start_time=$(date +%s%N)
-    response=$(curl -s -w "\n%{http_code}" -X POST "$API_URL" \
-        -H "Content-Type: application/json" \
-        -d "{\"sso_username\": \"$SSO_USER\", \"sso_password\": \"$SSO_PASS\"}")
-    
-    http_code=$(echo "$response" | tail -n1)
-    body=$(echo "$response" | sed '$d')
-    end_time=$(date +%s%N)
-    
-    duration_ms=$(( (end_time - start_time) / 1000000 ))
-
-    if [ "$http_code" -eq 200 ]; then
-        echo "✅ SUCCESS in ${duration_ms}ms"
-        
-        # Extract timings using jq if available, else raw
-        if command -v jq >/dev/null 2>&1; then
-            echo "--- RCA Breakdown ---"
-            echo "$body" | jq -r '.debug_timings | to_entries | .[] | "📍 \(.key): \(.value)ms"'
-            is_cache=$(echo "$body" | jq -r '.debug_timings.cache_hit')
-            if [ "$is_cache" == "true" ]; then
-                echo "✨ RESULT: CACHE HIT (Premium UX)"
-            else
-                echo "❄️  RESULT: COLD START (Browser Required)"
-            fi
-        else
-            echo "Body: $body"
-        fi
-    else
-        echo "❌ FAILED with Status: $http_code"
-        echo "Error: $body"
-    fi
-    echo "-------------------------------------------------"
-}
-
-# 1. Cold Start
-run_benchmark "1. COLD START (Fresh Session)"
-
-# 2. Warm Start
-echo "⏳ Waiting 2 seconds for DB stability..."
-sleep 2
-run_benchmark "2. WARM START (Cached Session)"
-
-# 3. Concurrent Check
-echo "🔥 Stress Test: Concurrent Request..."
-run_benchmark "3. REPEAT (Consistency Check)"
-
-echo "Done."
-```
-
 ### ./docker-compose.local.yml
 ```yaml
 # This file is automatically merged with docker-compose.yml by Docker.
@@ -1482,6 +1411,77 @@ echo "🚀 Generating HIGHLY OPTIMIZED project dump to $OUTPUT_FILE..."
 } > "$OUTPUT_FILE"
 
 echo "✅ Optimized Dump complete! Saved to $OUTPUT_FILE"
+```
+
+### ./benchmark_ux_lookup.sh
+```yaml
+#!/bin/bash
+
+# RPA berbagi network dengan container VPN (network_mode: service:vpn)
+# Port 8000 tidak di-expose ke host — akses lewat IP VPN container di Docker bridge network
+API_URL="http://172.18.0.8:8000/lookup/metadata"
+# Membaca kredensial dari .env (pastikan file .env ada di direktori root)
+SSO_USER="ihzakarunia@bps.go.id"
+SSO_PASS='Fikrizaki2!'
+
+echo "================================================="
+echo "   FasihNexus UX Benchmark: RCA Transparent Mode "
+echo "================================================="
+echo "👤 User: $SSO_USER"
+echo "-------------------------------------------------"
+
+run_benchmark() {
+    local label=$1
+    echo "🚀 Running Request: $label..."
+    
+    # Capture response and time
+    start_time=$(date +%s%N)
+    response=$(curl -s -w "\n%{http_code}" -X POST "$API_URL" \
+        -H "Content-Type: application/json" \
+        -d "{\"sso_username\": \"$SSO_USER\", \"sso_password\": \"$SSO_PASS\"}")
+    
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    end_time=$(date +%s%N)
+    
+    duration_ms=$(( (end_time - start_time) / 1000000 ))
+
+    if [ "$http_code" -eq 200 ]; then
+        echo "✅ SUCCESS in ${duration_ms}ms"
+        
+        # Extract timings using jq if available, else raw
+        if command -v jq >/dev/null 2>&1; then
+            echo "--- RCA Breakdown ---"
+            echo "$body" | jq -r '.debug_timings | to_entries | .[] | "📍 \(.key): \(.value)ms"'
+            is_cache=$(echo "$body" | jq -r '.debug_timings.cache_hit')
+            if [ "$is_cache" == "true" ]; then
+                echo "✨ RESULT: CACHE HIT (Premium UX)"
+            else
+                echo "❄️  RESULT: COLD START (Browser Required)"
+            fi
+        else
+            echo "Body: $body"
+        fi
+    else
+        echo "❌ FAILED with Status: $http_code"
+        echo "Error: $body"
+    fi
+    echo "-------------------------------------------------"
+}
+
+# 1. Cold Start
+run_benchmark "1. COLD START (Fresh Session)"
+
+# 2. Warm Start
+echo "⏳ Waiting 2 seconds for DB stability..."
+sleep 2
+run_benchmark "2. WARM START (Cached Session)"
+
+# 3. Concurrent Check
+echo "🔥 Stress Test: Concurrent Request..."
+run_benchmark "3. REPEAT (Consistency Check)"
+
+echo "Done."
 ```
 
 ## 📜 Project Documentation
@@ -3795,9 +3795,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+1f164f2 fix: install iptables and disable IPv6 to eliminate ERR_CONNECTION_RESET
 eb50b72 feat: implement stealth JS injection and TCP MSS clamping for maximum robustness
 b56c120 security: mask sensitive data in project snapshot and update dump script
 1682362 optimize: dashboard build process for better memory efficiency and caching
 d8a4b03 fix: set MTU to 500 and add 90s dashboard timeout to prevent Cloudflare 524
-847f08d docs: final architecture snapshot with autoheal and deep healthchecks
 ```
