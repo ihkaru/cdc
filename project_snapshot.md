@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sat May 16 07:36:46 PM WIB 2026
+Generated at: Sat May 16 07:40:00 PM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -193,6 +193,7 @@ services:
     network_mode: "service:vpn"
     labels:
       - "coolify.managed=false"
+      - "autoheal=true"
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -222,6 +223,7 @@ services:
     network_mode: "service:vpn"
     labels:
       - "coolify.managed=false"
+      - "autoheal=true"
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -244,6 +246,7 @@ services:
     network_mode: "service:vpn"
     labels:
       - "coolify.managed=false"
+      - "autoheal=true"
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
@@ -338,6 +341,19 @@ services:
       - SEAWEEDFS_S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
     depends_on:
       - filer
+    restart: unless-stopped
+
+  # --- Infrastructure Watchdog ---
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: fasih-nexus-autoheal
+    networks:
+      - fasih_internal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=autoheal
+      - AUTOHEAL_INTERVAL=30
     restart: unless-stopped
 
 networks:
@@ -1070,6 +1086,11 @@ services:
       - /dev/ppp
     networks:
       - fasih_internal # Isolated from Coolify/Traefik
+    dns:
+      - 127.0.0.11
+      - 172.16.2.2
+      - 172.16.2.3
+      - 8.8.8.8
     environment:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
       - VPN_HOST=akses.bps.go.id
@@ -1095,6 +1116,8 @@ services:
     build: ./rpa
     container_name: fasih-nexus-rpa
     network_mode: "service:vpn" # Attached to VPN network stack
+    labels:
+      - "autoheal=true"
     environment:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -1118,6 +1141,8 @@ services:
     image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-vpn-auth
     network_mode: "service:vpn" # Also behind VPN for SSO reliability
+    labels:
+      - "autoheal=true"
     environment:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -1134,6 +1159,8 @@ services:
     image: fasih-nexus-rpa:latest
     container_name: fasih-nexus-archiver
     network_mode: "service:vpn"
+    labels:
+      - "autoheal=true"
     environment:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
@@ -1213,6 +1240,19 @@ services:
       - SEAWEEDFS_S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
     depends_on:
       - filer
+    restart: unless-stopped
+
+  # --- Infrastructure Watchdog ---
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: fasih-nexus-autoheal
+    networks:
+      - fasih_internal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=autoheal
+      - AUTOHEAL_INTERVAL=30
     restart: unless-stopped
 
 networks:
@@ -3738,9 +3778,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+3273044 feat: implement autoheal supervisor and fix missing dns in coolify
 f64ae19 chore: include rpa routes and worker logic in project dump
 9c05129 feat: implement smart bootstrap, global locking, and zombie network healing
 24f510a fix: implement vpn retry loop and sync coolify rpa environment
 34db98c fix: resolve vpn-rpa circular dependency and update local db hostname in .env
-670e670 chore: harden infrastructure, optimize project dump, and sync coolify config
 ```
