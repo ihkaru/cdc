@@ -172,6 +172,10 @@ async def run_fast_sync(
                     "responses": [],
                     "_survey_config_id": survey_config_id
                 })
+    except asyncio.CancelledError:
+        print("🛑 [FAST] Interrupted during upsert. Emergency flushing...")
+        upserter.emergency_flush()
+        raise
     finally:
         stats = upserter.finish()
         stats.total_skipped += total_skipped

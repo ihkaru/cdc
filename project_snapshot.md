@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sun May 17 05:56:38 AM WIB 2026
+Generated at: Sun May 17 06:00:07 AM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -4079,6 +4079,7 @@ import json
 import asyncio
 import ssl
 from typing import Optional
+from api_client import FasihAuthError
 
 TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
 API_BASE = f"{TARGET_URL}/assignment-general/api/assignment/get-by-id-with-data-for-scm"
@@ -4184,6 +4185,10 @@ async def _fetch_one(
                     headers={"Accept": "application/json"},
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
+                    # [Scenario 2 Fix] Explicitly detect BPS SSO Redirects
+                    if "oauth_login" in str(resp.url) or "sso.bps.go.id" in str(resp.url):
+                        raise FasihAuthError("Session expired: redirected to SSO login")
+
                     if resp.status != 200:
                         body_text = await resp.text()
                         print(f"   ❌ {assignment_id[:8]}... HTTP {resp.status}: {body_text[:100]}")
@@ -5601,9 +5606,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+f373415 chore: update dump_project.sh with critical RPA logic files and refresh snapshot
 8dbdbca feat: infrastructure hardening & resiliency (Response Guardian, Atomic Shield, Signal Watchdog)
 536e16e chore: upgrade entrypoint to universal self-healing migration
 9c2cab2 feat: implement archiver heartbeat healthcheck and start-docker cleanup routine
 1ee63cd fix: resolve hidden column inconsistencies in BatchUpserterBulk for image mirroring stability
-42746fe refactor: standardize UUID types across RPA and Dashboard to match physical DB schema
 ```

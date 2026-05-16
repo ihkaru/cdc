@@ -201,6 +201,10 @@ async def run_full_sync(
             concurrency=DETAIL_CONCURRENCY,
             on_progress=on_progress
         )
+    except asyncio.CancelledError:
+        print("🛑 [FULL] Interrupted during streaming sync. Emergency flushing...")
+        upserter.emergency_flush()
+        raise
     finally:
         # Final commit even if interrupted
         stats = upserter.finish()

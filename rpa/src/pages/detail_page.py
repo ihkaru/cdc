@@ -11,6 +11,7 @@ import json
 import asyncio
 import ssl
 from typing import Optional
+from api_client import FasihAuthError
 
 TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
 API_BASE = f"{TARGET_URL}/assignment-general/api/assignment/get-by-id-with-data-for-scm"
@@ -116,6 +117,10 @@ async def _fetch_one(
                     headers={"Accept": "application/json"},
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
+                    # [Scenario 2 Fix] Explicitly detect BPS SSO Redirects
+                    if "oauth_login" in str(resp.url) or "sso.bps.go.id" in str(resp.url):
+                        raise FasihAuthError("Session expired: redirected to SSO login")
+
                     if resp.status != 200:
                         body_text = await resp.text()
                         print(f"   ❌ {assignment_id[:8]}... HTTP {resp.status}: {body_text[:100]}")
