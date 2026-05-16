@@ -8,6 +8,11 @@ TARGET_DIR="."
 # Strict exclusion pattern
 EXCLUDES="node_modules|dist|.git|.quasar|vendor|__pycache__|venv|*.lock|migrations|references|artifacts|tmp|*.log|*.txt|*.jpg|*.png|*.pdf|*.json|*.html"
 
+# Function to sanitize sensitive data
+sanitize_content() {
+    sed -E 's/(VPN_PASS|POSTGRES_PASSWORD|ENCRYPTION_KEY|BETTER_AUTH_SECRET|S3_SECRET_KEY|VPN_COOKIE)=.*/\1=[REDACTED]/g'
+}
+
 echo "🚀 Generating HIGHLY OPTIMIZED project dump to $OUTPUT_FILE..."
 
 {
@@ -30,7 +35,7 @@ echo "🚀 Generating HIGHLY OPTIMIZED project dump to $OUTPUT_FILE..."
   find . -maxdepth 1 -name "docker-compose*.yml" -o -name "*.sh" | while read -r file; do
     echo "### $file"
     echo '```yaml'
-    cat "$file"
+    cat "$file" | sanitize_content
     echo '```'
     echo ""
   done
@@ -41,7 +46,7 @@ echo "🚀 Generating HIGHLY OPTIMIZED project dump to $OUTPUT_FILE..."
 
   echo "## ⚙️ Configuration & Environment"
   # Include .env (raw as requested) and main package definitions
-  [ -f ".env" ] && echo "### .env" && echo '```bash' && cat .env && echo '```'
+  [ -f ".env" ] && echo "### .env" && echo '```bash' && cat .env | sanitize_content && echo '```'
   find . -maxdepth 2 -name "package.json" -o -name "requirements.txt" | while read -r file; do
     echo "### $file"
     echo '```json'
@@ -75,7 +80,7 @@ echo "🚀 Generating HIGHLY OPTIMIZED project dump to $OUTPUT_FILE..."
         *.sh) echo '```bash' ;;
         *) echo '```' ;;
       esac
-      cat "$file"
+      cat "$file" | sanitize_content
       echo '```'
       echo ""
     fi

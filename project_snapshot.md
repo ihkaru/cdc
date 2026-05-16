@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sat May 16 08:04:10 PM WIB 2026
+Generated at: Sat May 16 08:36:59 PM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -127,12 +127,12 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - RPA_URL=http://vpn:8000
       - VPN_AUTH_URL=http://vpn:8001
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - ENCRYPTION_KEY=[REDACTED]
+      - BETTER_AUTH_SECRET=[REDACTED]
       - BETTER_AUTH_URL=${BETTER_AUTH_URL}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
       - VPN_USER=${VPN_USER}
-      - VPN_PASS=${VPN_PASS}
+      - VPN_PASS=[REDACTED]
     depends_on:
       fasih-db:
         condition: service_healthy
@@ -167,8 +167,8 @@ services:
       - VPN_TEST_URL=https://fasih-sm.bps.go.id
       - VPN_TRUSTED_CERT=${VPN_TRUSTED_CERT}
       - VPN_USER=${VPN_USER}
-      - VPN_PASS=${VPN_PASS}
-      - VPN_COOKIE=${VPN_COOKIE}
+      - VPN_PASS=[REDACTED]
+      - VPN_COOKIE=[REDACTED]
     extra_hosts:
       - "fasih-sm.bps.go.id:10.1.110.13"
     depends_on:
@@ -196,14 +196,14 @@ services:
       - "autoheal=true"
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ENCRYPTION_KEY=[REDACTED]
       - PYTHONPATH=/app:/app/src
       - SKIP_DETAIL_FETCH=${SKIP_DETAIL_FETCH:-false}
       - FASIH_CONCURRENCY=${FASIH_CONCURRENCY:-3}
       - FETCH_CONCURRENCY=${FETCH_CONCURRENCY:-3}
       - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
       - VPN_USER=${VPN_USER}
-      - VPN_PASS=${VPN_PASS}
+      - VPN_PASS=[REDACTED]
     depends_on:
       vpn:
         condition: service_started
@@ -226,7 +226,7 @@ services:
       - "autoheal=true"
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ENCRYPTION_KEY=[REDACTED]
     depends_on:
       vpn:
         condition: service_started
@@ -250,7 +250,7 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
-      - S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
+      - S3_SECRET_KEY=[REDACTED]
       - S3_BUCKET=${S3_BUCKET:-survey-images}
       - S3_ENDPOINT=http://s3:8333
       - PYTHONPATH=/app:/app/src
@@ -323,7 +323,7 @@ services:
       - WEED_FILER_POSTGRES_HOSTNAME=fasih-db
       - WEED_FILER_POSTGRES_PORT=5432
       - WEED_FILER_POSTGRES_USERNAME=fasih
-      - WEED_FILER_POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - WEED_FILER_POSTGRES_PASSWORD=[REDACTED]
       - WEED_FILER_POSTGRES_DATABASE=fasih_dashboard
       - WEED_FILER_POSTGRES_SSLMODE=disable
     restart: unless-stopped
@@ -338,7 +338,7 @@ services:
       - "coolify.managed=false"
     environment:
       - SEAWEEDFS_S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
-      - SEAWEEDFS_S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
+      - SEAWEEDFS_S3_SECRET_KEY=[REDACTED]
     depends_on:
       - filer
     restart: unless-stopped
@@ -507,7 +507,7 @@ if [ -f "$PROJECT_DIR/.env" ]; then
   set +a
 
   # Default Better Auth Secret if not set
-  export BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET:-a_very_long_random_string_for_local_dev}"
+  export BETTER_AUTH_SECRET=[REDACTED]
 
   # Override DATABASE_URL to use 127.0.0.1 instead of docker alias
   # Using 127.0.0.1 to avoid Docker IPv6 vs IPv4 binding mismatches
@@ -815,7 +815,7 @@ for service in "${SERVICES[@]}"; do
             
             # Load credentials from .env
             VPN_USER=$(grep VPN_USER .env | cut -d '=' -f2)
-            VPN_PASS=$(grep VPN_PASS .env | cut -d '=' -f2)
+            VPN_PASS=[REDACTED]
             
             if [ -n "$VPN_USER" ] && [ -n "$VPN_PASS" ]; then
                 # Trigger RPA Auto-Fetch (vpn-auth runs on port 8000)
@@ -1059,16 +1059,16 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=coolify" # FORCE Traefik to use the public network IP
       # Note: Route rules and SSL will be automatically handled by Coolify UI
-    environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
+      # CRITICAL: BETTER_AUTH_URL and PUBLIC_BASE_URL MUST match your Coolify domain
+      - DATABASE_URL=${DATABASE_URL:-postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard}
       - RPA_URL=http://vpn:8000        # Talking to RPA via VPN container
       - VPN_AUTH_URL=http://vpn:8001   # Talking to VPN-Auth via VPN container
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - ENCRYPTION_KEY=[REDACTED]
+      - BETTER_AUTH_SECRET=[REDACTED]
       - BETTER_AUTH_URL=${BETTER_AUTH_URL}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
-      - S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
+      - S3_SECRET_KEY=[REDACTED]
       - S3_BUCKET=${S3_BUCKET:-survey-images}
       - S3_ENDPOINT=http://s3:8333
     depends_on:
@@ -1092,12 +1092,12 @@ services:
       - 172.16.2.3
       - 8.8.8.8
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
+      - DATABASE_URL=${DATABASE_URL:-postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard}
       - VPN_HOST=akses.bps.go.id
       - VPN_TEST_URL=https://fasih-sm.bps.go.id
       - VPN_USER=${VPN_USER}
-      - VPN_PASS=${VPN_PASS}
-      - VPN_COOKIE=${VPN_COOKIE}
+      - VPN_PASS=[REDACTED]
+      - VPN_COOKIE=[REDACTED]
     depends_on:
       fasih-db:
         condition: service_healthy
@@ -1119,11 +1119,11 @@ services:
     labels:
       - "autoheal=true"
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - DATABASE_URL=${DATABASE_URL:-postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard}
+      - ENCRYPTION_KEY=[REDACTED]
       - PYTHONPATH=/app:/app/src
       - VPN_USER=${VPN_USER}
-      - VPN_PASS=${VPN_PASS}
+      - VPN_PASS=[REDACTED]
     depends_on:
       vpn:
         condition: service_started
@@ -1144,11 +1144,11 @@ services:
     labels:
       - "autoheal=true"
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - DATABASE_URL=${DATABASE_URL:-postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard}
+      - ENCRYPTION_KEY=[REDACTED]
       - PYTHONPATH=/app:/app/src
       - VPN_USER=${VPN_USER}
-      - VPN_PASS=${VPN_PASS}
+      - VPN_PASS=[REDACTED]
     depends_on:
       vpn:
         condition: service_started
@@ -1162,9 +1162,9 @@ services:
     labels:
       - "autoheal=true"
     environment:
-      - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
+      - DATABASE_URL=${DATABASE_URL:-postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard}
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
-      - S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
+      - S3_SECRET_KEY=[REDACTED]
       - S3_ENDPOINT=http://s3:8333
       - PYTHONPATH=/app:/app/src
     depends_on:
@@ -1183,7 +1183,7 @@ services:
       - pg_data:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=fasih
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_PASSWORD=[REDACTED]
       - POSTGRES_DB=fasih_dashboard
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U fasih -d fasih_dashboard" ]
@@ -1225,7 +1225,7 @@ services:
       - WEED_FILER_POSTGRES_HOSTNAME=fasih-db
       - WEED_FILER_POSTGRES_PORT=5432
       - WEED_FILER_POSTGRES_USERNAME=fasih
-      - WEED_FILER_POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - WEED_FILER_POSTGRES_PASSWORD=[REDACTED]
       - WEED_FILER_POSTGRES_DATABASE=fasih_dashboard
       - WEED_FILER_POSTGRES_SSLMODE=disable
     restart: unless-stopped
@@ -1237,7 +1237,7 @@ services:
       - fasih_internal
     environment:
       - SEAWEEDFS_S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
-      - SEAWEEDFS_S3_SECRET_KEY=${S3_SECRET_KEY:-fasihsecret}
+      - SEAWEEDFS_S3_SECRET_KEY=[REDACTED]
     depends_on:
       - filer
     restart: unless-stopped
@@ -1395,6 +1395,11 @@ TARGET_DIR="."
 # Strict exclusion pattern
 EXCLUDES="node_modules|dist|.git|.quasar|vendor|__pycache__|venv|*.lock|migrations|references|artifacts|tmp|*.log|*.txt|*.jpg|*.png|*.pdf|*.json|*.html"
 
+# Function to sanitize sensitive data
+sanitize_content() {
+    sed -E 's/(VPN_PASS|POSTGRES_PASSWORD|ENCRYPTION_KEY|BETTER_AUTH_SECRET|S3_SECRET_KEY|VPN_COOKIE)=.*/\1=[REDACTED]/g'
+}
+
 echo "🚀 Generating HIGHLY OPTIMIZED project dump to $OUTPUT_FILE..."
 
 {
@@ -1417,7 +1422,7 @@ echo "🚀 Generating HIGHLY OPTIMIZED project dump to $OUTPUT_FILE..."
   find . -maxdepth 1 -name "docker-compose*.yml" -o -name "*.sh" | while read -r file; do
     echo "### $file"
     echo '```yaml'
-    cat "$file"
+    cat "$file" | sanitize_content
     echo '```'
     echo ""
   done
@@ -1428,7 +1433,7 @@ echo "🚀 Generating HIGHLY OPTIMIZED project dump to $OUTPUT_FILE..."
 
   echo "## ⚙️ Configuration & Environment"
   # Include .env (raw as requested) and main package definitions
-  [ -f ".env" ] && echo "### .env" && echo '```bash' && cat .env && echo '```'
+  [ -f ".env" ] && echo "### .env" && echo '```bash' && cat .env | sanitize_content && echo '```'
   find . -maxdepth 2 -name "package.json" -o -name "requirements.txt" | while read -r file; do
     echo "### $file"
     echo '```json'
@@ -1462,7 +1467,7 @@ echo "🚀 Generating HIGHLY OPTIMIZED project dump to $OUTPUT_FILE..."
         *.sh) echo '```bash' ;;
         *) echo '```' ;;
       esac
-      cat "$file"
+      cat "$file" | sanitize_content
       echo '```'
       echo ""
     fi
@@ -1692,31 +1697,31 @@ Internal BPS — tidak untuk distribusi publik.
 ```bash
 # PostgreSQL
 POSTGRES_USER=fasih
-POSTGRES_PASSWORD=changeme_generate_random
+POSTGRES_PASSWORD=[REDACTED]
 POSTGRES_DB=fasih_dashboard
 DATABASE_URL=postgresql://fasih:changeme_generate_random@fasih-db:5432/fasih_dashboard
 
 # RPA - encryption key for SSO passwords
-ENCRYPTION_KEY=24f81eeee1f9b8bce1b51d4aa48d288895cf7f0e0b5e2f5a488b63491c07bbda
+ENCRYPTION_KEY=[REDACTED]
 
 # VPN BPS
 VPN_HOST=akses.bps.go.id
 VPN_USER=arinif@bps.go.id
-VPN_PASS=p4sswordarin
+VPN_PASS=[REDACTED]
 VPN_TRUSTED_CERT=de74481c56635274320d58e3267de977acbd6ea8cdbc5450042010d7e9544659
-VPN_COOKIE=xrV/Va6G7w0/20ue/gNroS7prlNEZsuOCaRO5TXt6lCJqhPeLqTaf9gLoHzjkudravdojS/fqAWGT8Slrt/IT3D4h0Jqus8peIhUPF6H2J24FlsALAEg1bNypuHH6Gg1W9pRNbBe3fIytgbb3ALhqxheeD6BTssVmIWNwriURYjIIkHI9ClhRq3uC/xSkJnAb1k5TapV8qpG8X5qWkkewoT5XasayHx9H6OahZ3xxBqJWp/fV4RxEal4KVA7Hsu8T8FLDdEpvl4LKC/8esth6XnaJrUjhxSPQbNqWvIYNIbceHpF/7yThccZ9UUxGDLRBEXep7mMDlD1Tan0riFSYUc0moZLUys=
+VPN_COOKIE=[REDACTED]
 SKIP_DETAIL_FETCH=false
 
 # SeaweedFS Image Vault
 S3_ACCESS_KEY=cdcadmin
-S3_SECRET_KEY=cdc_secure_secret_2026
+S3_SECRET_KEY=[REDACTED]
 S3_BUCKET=survey-images
 S3_ENDPOINT=http://s3:8333
 STORAGE_LOCAL_DOMAIN=http://127.0.0.1:3000
 PUBLIC_BASE_URL=http://127.0.0.1:9000
 
 # Better Auth
-BETTER_AUTH_SECRET=c6065adbae6f2d29b152b61de771feb2c1508a8281677ad81f9f190c9675b6c2
+BETTER_AUTH_SECRET=[REDACTED]
 BETTER_AUTH_URL=http://127.0.0.1:3000
 ```
 ### ./rpa/requirements.txt
@@ -1742,7 +1747,7 @@ aiobotocore>=2.11.0
   "private": true,
   "scripts": {
     "dev": "bun run --watch server/index.ts",
-    "build": "cd client && bun install && bunx quasar build",
+    "build": "cd client && bunx quasar build",
     "start": "bun run server/index.ts",
     "db:push": "bunx drizzle-kit push"
   },
@@ -3396,9 +3401,9 @@ if [ -n "$S3_IP" ]; then
     echo "$S3_IP s3" >> /etc/hosts
 fi
 
-# 📉 Set eth0 MTU to 500 to prevent fragmentation on BPS network
-echo "📉 Setting eth0 MTU to 500..."
-ip link set eth0 mtu 500 2>/dev/null || true
+# 📉 Restore eth0 MTU to default (1500) for stable inter-container comms
+echo "📉 Ensuring eth0 MTU is 1500..."
+ip link set eth0 mtu 1500 2>/dev/null || true
 
 GATEWAY_IP=$(ip route | grep default | awk '{print $3}')
 
@@ -3778,9 +3783,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+1682362 optimize: dashboard build process for better memory efficiency and caching
+d8a4b03 fix: set MTU to 500 and add 90s dashboard timeout to prevent Cloudflare 524
 847f08d docs: final architecture snapshot with autoheal and deep healthchecks
 3273044 feat: implement autoheal supervisor and fix missing dns in coolify
 f64ae19 chore: include rpa routes and worker logic in project dump
-9c05129 feat: implement smart bootstrap, global locking, and zombie network healing
-24f510a fix: implement vpn retry loop and sync coolify rpa environment
 ```
