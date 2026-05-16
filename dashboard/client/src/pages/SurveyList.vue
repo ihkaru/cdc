@@ -147,6 +147,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useQuasar } from 'quasar'
 import { vpnStatus } from '../composables/useVpn'
+import { api } from 'src/boot/axios'
 
 const $q = useQuasar()
 const searchQuery = ref('')
@@ -170,11 +171,11 @@ async function loadData() {
   loading.value = true
   try {
     const [surveysRes, statusRes] = await Promise.all([
-      fetch('/api/surveys'),
-      fetch('/api/surveys/sync/status')
+      api.get('/surveys'),
+      api.get('/surveys/sync/status')
     ])
-    surveys.value = await surveysRes.json()
-    rpaStatus.value = await statusRes.json()
+    surveys.value = surveysRes.data
+    rpaStatus.value = statusRes.data
   } catch (e) {
     console.error(e)
   } finally {
@@ -184,8 +185,8 @@ async function loadData() {
 
 async function refreshStatus() {
   try {
-    const res = await fetch('/api/surveys/sync/status')
-    rpaStatus.value = await res.json()
+    const res = await api.get('/surveys/sync/status')
+    rpaStatus.value = res.data
   } catch {}
 }
 
@@ -216,20 +217,17 @@ async function triggerSync(id: string) {
   if (syncingId.value) return
   syncingId.value = id
   try {
-    const res = await fetch(`/api/surveys/${id}/sync`, { method: 'POST' })
-    const data = await res.json()
-    if (res.ok) {
-      if (data.status === 'already_queued') {
-        $q.notify({ type: 'warning', message: data.message })
-      } else {
-        $q.notify({ type: 'positive', message: data.message || 'Sync queued!' })
-      }
-      refreshStatus()
+    const res = await api.post(`/surveys/${id}/sync`)
+    const data = res.data
+    if (data.status === 'already_queued') {
+      $q.notify({ type: 'warning', message: data.message })
     } else {
-      $q.notify({ type: 'negative', message: 'Error: ' + (data.message || data.detail) })
+      $q.notify({ type: 'positive', message: data.message || 'Sync queued!' })
     }
-  } catch (e) {
-    $q.notify({ type: 'negative', message: 'Failed to trigger sync' })
+    refreshStatus()
+  } catch (e: any) {
+    const msg = e.response?.data?.message || e.response?.data?.detail || e.message || 'Failed to trigger sync'
+    $q.notify({ type: 'negative', message: 'Error: ' + msg })
   } finally {
     syncingId.value = null
   }
@@ -237,11 +235,9 @@ async function triggerSync(id: string) {
 
 async function cancelJob(jobId: number, surveyName: string) {
   try {
-    const res = await fetch(`/api/surveys/sync/${jobId}`, { method: 'DELETE' })
-    if (res.ok) {
-      $q.notify({ type: 'info', message: `Sync "${surveyName}" dibatalkan` })
-      refreshStatus()
-    }
+    const res = await api.delete(`/surveys/sync/${jobId}`)
+    $q.notify({ type: 'info', message: `Sync "${surveyName}" dibatalkan` })
+    refreshStatus()
   } catch {
     $q.notify({ type: 'negative', message: 'Gagal membatalkan job' })
   }
@@ -256,11 +252,9 @@ function deleteSurvey(id: string) {
     dark: true
   }).onOk(async () => {
     try {
-      const res = await fetch(`/api/surveys/${id}`, { method: 'DELETE' })
-      if (res.ok) {
-        $q.notify({ type: 'info', message: 'Survey deleted' })
-        loadData()
-      }
+      await api.delete(`/surveys/${id}`)
+      $q.notify({ type: 'info', message: 'Survey deleted' })
+      loadData()
     } catch (e) {
       $q.notify({ type: 'negative', message: 'Failed to delete' })
     }

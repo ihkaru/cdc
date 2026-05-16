@@ -62,6 +62,24 @@ async def lifespan(fastapi_app):
         print("🕒 Startup: Starting Routine Sync Scheduler...")
         asyncio.create_task(routine_sync_loop())
 
+        # 4. Headless VPN Bootstrap: Fetch cookie using environment credentials
+        vpn_user = os.getenv("VPN_USER")
+        vpn_pass = os.getenv("VPN_PASS")
+        if vpn_user and vpn_pass:
+            from auth import fetch_vpn_cookie, sync_cookie_to_db
+            async def bootstrap_vpn():
+                # Delay slightly to let the server stabilize
+                await asyncio.sleep(5)
+                print(f"🌐 [Startup] Auto-bootstrapping VPN for {vpn_user}...")
+                cookie = await fetch_vpn_cookie(vpn_user, vpn_pass)
+                if cookie:
+                    await sync_cookie_to_db(cookie)
+                    print("✅ [Startup] VPN Auto-bootstrap successful.")
+                else:
+                    print("❌ [Startup] VPN Auto-bootstrap failed.")
+            
+            asyncio.create_task(bootstrap_vpn())
+
     except Exception as e:
         print(f"⚠️ Startup cleanup/recovery failed: {e}")
     

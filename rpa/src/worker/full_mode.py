@@ -7,7 +7,8 @@ from db.repository import get_existing_modifications_by_ids_batched, BatchUpsert
 from pages.detail_page import fetch_assignments_concurrent
 from state import sync_state
 
-FASIH_CONCURRENCY = int(os.getenv("FASIH_CONCURRENCY", "3"))
+FASIH_CONCURRENCY = int(os.getenv("FASIH_CONCURRENCY", "1"))
+DETAIL_CONCURRENCY = int(os.getenv("FETCH_CONCURRENCY", "20"))
 
 
 async def _fetch_one(
@@ -60,9 +61,7 @@ async def run_full_sync(
     1. Smart Metadata Fetch: Fan-out per user. Jika user > 1000 (cap), slice per-kecamatan.
     2. Streaming Detail Fetch: Fetch response detail JSON + real-time Batch Upsert.
     """
-    DETAIL_CONCURRENCY = int(os.getenv("FETCH_CONCURRENCY", "100"))
-    if DETAIL_CONCURRENCY < 10:
-        DETAIL_CONCURRENCY = 100
+    # Concurrency is now managed via global constants for better reliability
     TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
 
     users_total = len(filters_to_run)
@@ -184,7 +183,9 @@ async def run_full_sync(
     sync_state.progress.assignments_total = len(to_fetch_links)
     sync_state.progress.assignments_fetched = 0
 
-    upserter = BatchUpserterBulk(session, batch_size=2000, sync_log_id=sync_log_id)
+    # Extremely small batch size for verification
+    print(f"   🔍 Dedup check {total_found:,} records starting...")
+    upserter = BatchUpserterBulk(session, batch_size=10, sync_log_id=sync_log_id)
 
     def on_progress(fetched_count: int, total: int, data_json: Optional[Dict]):
         sync_state.progress.assignments_fetched = fetched_count

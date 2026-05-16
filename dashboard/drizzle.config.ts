@@ -5,6 +5,6 @@ export default defineConfig({
     out: "./server/db/migrations",
     dialect: "postgresql",
     dbCredentials: {
-        url: process.env.DATABASE_URL || "postgresql://fasih:changeme@localhost:5432/fasih_dashboard",
+        url: process.env.DATABASE_URL || "postgresql://fasih:changeme@127.0.0.1:5432/fasih_dashboard",
     },
 });

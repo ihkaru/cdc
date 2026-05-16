@@ -1,6 +1,5 @@
 """
 Database connection — PostgreSQL via SQLAlchemy.
-Falls back to SQLite for local development.
 """
 import os
 from sqlalchemy import create_engine
@@ -22,10 +21,7 @@ def get_engine(database_url: str = ""):
     global _engine
     if _engine is None:
         url = database_url or get_database_url()
-        kwargs = {"echo": False}
-        if url.startswith("sqlite"):
-            kwargs["connect_args"] = {"check_same_thread": False}
-        _engine = create_engine(url, **kwargs)
+        _engine = create_engine(url, echo=False)
     return _engine
 
 

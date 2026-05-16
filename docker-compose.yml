@@ -10,6 +10,9 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=coolify"
       - "coolify.managed=true"
+    volumes:
+      - ./dashboard/server:/app/server
+      - ./dashboard/entrypoint.sh:/app/entrypoint.sh
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - RPA_URL=http://vpn:8000
@@ -18,11 +21,13 @@ services:
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
       - BETTER_AUTH_URL=${BETTER_AUTH_URL}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
+      - VPN_USER=${VPN_USER}
+      - VPN_PASS=${VPN_PASS}
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:3000/api/health').then(r => r.ok ? process.exit(0) : process.exit(1))\""]
+      test: ["CMD-SHELL", "bun -e \"fetch('http://127.0.0.1:3000/api/health').then(r => r.ok ? process.exit(0) : process.exit(1))\""]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -39,6 +44,9 @@ services:
       - /dev/ppp
     dns:
       - 127.0.0.11
+      - 172.16.2.2
+      - 172.16.2.3
+      - 8.8.8.8
     networks:
       - fasih_internal
     labels:
@@ -51,14 +59,18 @@ services:
       - VPN_USER=${VPN_USER}
       - VPN_PASS=${VPN_PASS}
       - VPN_COOKIE=${VPN_COOKIE}
+    extra_hosts:
+      - "fasih-sm.bps.go.id:10.1.110.13"
     depends_on:
       postgres:
         condition: service_healthy
+      s3:
+        condition: service_started
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fks --connect-timeout 5 https://fasih-sm.bps.go.id/oauth_login.html -o /dev/null && echo ok || exit 1" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      test: [ "CMD-SHELL", "curl -fks --connect-timeout 15 https://fasih-sm.bps.go.id/oauth_login.html -o /dev/null && echo ok || exit 1" ]
+      interval: 45s
+      timeout: 20s
+      retries: 5
       start_period: 60s
     restart: unless-stopped
     stop_grace_period: 15s
@@ -71,6 +83,8 @@ services:
     network_mode: "service:vpn"
     labels:
       - "coolify.managed=false"
+    volumes:
+      - ./rpa:/app
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -79,9 +93,17 @@ services:
       - FASIH_CONCURRENCY=${FASIH_CONCURRENCY:-3}
       - FETCH_CONCURRENCY=${FETCH_CONCURRENCY:-3}
       - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
+      - VPN_USER=${VPN_USER}
+      - VPN_PASS=${VPN_PASS}
     depends_on:
       vpn:
         condition: service_started
+    command: sh -c "echo '10.1.110.13 fasih-sm.bps.go.id' >> /etc/hosts && python -m uvicorn src.app:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=15)\""]
+      interval: 45s
+      timeout: 20s
+      retries: 5
     restart: unless-stopped
 
   vpn-auth:
@@ -90,16 +112,22 @@ services:
     network_mode: "service:vpn"
     labels:
       - "coolify.managed=false"
+    volumes:
+      - ./rpa:/app
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - PYTHONPATH=/app:/app/src
     depends_on:
       vpn:
         condition: service_started
       rpa:
         condition: service_started
-    command: python -m uvicorn src.app:app --host 0.0.0.0 --port 8001
+    command: sh -c "echo '10.1.110.13 fasih-sm.bps.go.id' >> /etc/hosts && python -m uvicorn src.app:app --host 0.0.0.0 --port 8001"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     restart: unless-stopped
 
   archiver:
@@ -108,6 +136,8 @@ services:
     network_mode: "service:vpn"
     labels:
       - "coolify.managed=false"
+    volumes:
+      - ./rpa:/app
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
@@ -191,6 +221,7 @@ services:
 
   s3:
     image: chrislusf/seaweedfs:latest
+    container_name: fasih-nexus-s3
     command: "s3 -filer=filer:8888"
     networks:
       - fasih_internal

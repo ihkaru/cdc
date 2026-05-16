@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { createHash, createDecipheriv } from "crypto";
 
 const RPA_URL = process.env.RPA_URL || "http://vpn:8000";
-const VPN_AUTH_URL = process.env.VPN_AUTH_URL || "http://vpn-auth:8000";
+const VPN_AUTH_URL = process.env.VPN_AUTH_URL || "http://vpn:8001";
 
 function decryptPassword(ciphertext: string): string {
     const key = process.env.ENCRYPTION_KEY || "";
@@ -258,38 +258,49 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 
         const password = decryptPassword(survey.ssoPasswordEncrypted);
         
-        const fetchRes = await fetch(`${VPN_AUTH_URL}/vpn/auto-fetch`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                sso_username: survey.ssoUsername,
-                sso_password: password
-            }),
-            signal: AbortSignal.timeout(300000)
-        });
+        try {
+            const fetchRes = await fetch(`${VPN_AUTH_URL}/vpn/auto-fetch`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    sso_username: survey.ssoUsername,
+                    sso_password: password
+                }),
+                signal: AbortSignal.timeout(300000)
+            });
 
-        if (!fetchRes.ok) {
-            const err = await fetchRes.json().catch(() => ({}));
-            const detail = (err as any).detail || `Auth service error ${fetchRes.status}`;
-            console.error(`   ❌ VPN Auto-fetch failed: ${detail}`);
-            set.status = fetchRes.status === 401 ? 401 : 400;
-            return { error: detail };
+            if (!fetchRes.ok) {
+                const text = await fetchRes.text().catch(() => "");
+                let detail = `Auth service error ${fetchRes.status}`;
+                try {
+                    const err = JSON.parse(text);
+                    detail = err.detail || detail;
+                } catch {
+                    if (text && text.length < 100) detail = text;
+                }
+                
+                console.error(`   ❌ VPN Auto-fetch failed: ${detail}`);
+                set.status = fetchRes.status === 401 ? 401 : 400;
+                return { error: detail };
+            }
+
+            return await fetchRes.json();
+        } catch (e: any) {
+            console.error(`   ❌ VPN Auto-fetch connection failed: ${e.message}`);
+            set.status = 503;
+            return { error: `Gagal menghubungi service VPN-Auth: ${e.message}` };
         }
-
-        return await fetchRes.json();
     });
 
-// Use 127.0.0.1 instead of localhost for local dev to avoid IPv6 issues
-const RPA_API_URL = RPA_URL.replace("localhost", "127.0.0.1");
-const VPN_AUTH_API_URL = VPN_AUTH_URL.replace("localhost", "127.0.0.1");
+const RPA_API_URL = RPA_URL;
 
 // ===== VPN Auto-Pilot Background Loop =====
 // Check VPN status periodically. If disconnected, trigger RPA to auto-fetch the cookie.
 const checkVpnAndFetchCookie = async () => {
     try {
-        // Use a strict timeout for the health check to avoid blocking the loop
+        console.log(`📡 [Auto-Pilot] Checking VPN status via: ${RPA_API_URL}/vpn/check`);
         const statusRes = await fetch(`${RPA_API_URL}/vpn/check`, { 
-            signal: AbortSignal.timeout(15000) 
+            signal: AbortSignal.timeout(20000) 
         }).then(r => r.json()).catch(() => ({ connected: false })) as any;
 
         if (!statusRes.connected) {
@@ -318,7 +329,7 @@ const checkVpnAndFetchCookie = async () => {
                 // Fallback: Check if we have Master SSO credentials in .env
                 if (process.env.VPN_USER && process.env.VPN_PASS) {
                     console.log("   🚀 No active survey found, but using Master SSO (VPN_USER) for bootstrap...");
-                    const fetchRes = await fetch(`${VPN_AUTH_API_URL}/vpn/auto-fetch`, {
+                    const fetchRes = await fetch(`${RPA_API_URL}/vpn/auto-fetch`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
@@ -343,7 +354,7 @@ const checkVpnAndFetchCookie = async () => {
             console.log(`   🔑 Borrowing credentials from: ${survey.ssoUsername} (Survey: ${survey.surveyName})`);
             const password = decryptPassword(survey.ssoPasswordEncrypted);
             
-            const fetchRes = await fetch(`${VPN_AUTH_API_URL}/vpn/auto-fetch`, {
+            const fetchRes = await fetch(`${RPA_API_URL}/vpn/auto-fetch`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

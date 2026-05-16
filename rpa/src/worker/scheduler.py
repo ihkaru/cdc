@@ -29,23 +29,19 @@ async def routine_sync_loop():
 
             # --- STALE JOB CLEANUP ---
             # If a job is 'running' for more than 45 minutes, it's likely stuck/zombie.
-            # Normal syncs take 1-10 mins. 45 mins is very safe.
-            from sqlalchemy import text
-            stale_cutoff = datetime.now(timezone.utc).replace(tzinfo=None)
-            result = session.execute(
-                text("UPDATE sync_logs SET status = 'failed', notes = 'Marked as failed by auto-cleanup (stuck > 45m)', finished_at = :now "
-                     "WHERE status = 'running' AND started_at < :cutoff"),
-                {"now": datetime.now(timezone.utc), "cutoff": datetime.now(timezone.utc) - asyncio.Duration(minutes=45) if hasattr(asyncio, 'Duration') else datetime.now(timezone.utc).replace(minute=0)} 
-            )
-            # Actually, let's do it properly with timedelta
             from datetime import timedelta
             cutoff = datetime.now(timezone.utc) - timedelta(minutes=45)
-            stale_jobs = session.query(SyncLog).filter(SyncLog.status == "running", SyncLog.started_at < cutoff).all()
+            
+            stale_jobs = session.query(SyncLog).filter(
+                SyncLog.status == "running", 
+                SyncLog.started_at < cutoff
+            ).all()
+            
             if stale_jobs:
                 print(f"🧹 Scheduler: Found {len(stale_jobs)} stale job(s). Cleaning up...", flush=True)
                 for job in stale_jobs:
                     job.status = "failed"
-                    job.notes = f"Killed by auto-cleanup (stuck since {job.started_at})"
+                    job.notes = f"Marked as failed by auto-cleanup (stuck since {job.started_at})"
                     job.finished_at = datetime.now(timezone.utc)
                 session.commit()
             

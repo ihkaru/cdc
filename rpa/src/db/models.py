@@ -1,5 +1,5 @@
 """
-Database models — SQLAlchemy ORM (PostgreSQL + SQLite compatible)
+Database models — SQLAlchemy ORM (PostgreSQL)
 """
 from datetime import datetime, timezone
 

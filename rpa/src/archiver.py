@@ -32,11 +32,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("CDC-Archiver")
 
-async def download_image(url: str) -> bytes | None:
-    """Download image content from remote URL."""
+async def download_image(url: str, rpa=None) -> bytes | None:
+    """Download image content from remote URL. Uses RPA session for authentication if available."""
+    if rpa and hasattr(rpa, 'download_content'):
+        return await rpa.download_content(url)
+
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://fasih-sm.bps.go.id/",
+        "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36",
         "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
     }
     try:
@@ -62,7 +64,8 @@ async def mirror_assignment_images(db: Session, assignment: Assignment, rpa=None
     Find all photo URLs in assignment data, download them,
     and mirror them to local SeaweedFS S3 storage.
     """
-    log_prefix = f"   [ARCHIVER:{assignment.id[:8]}]"
+    id_str = str(assignment.id)
+    log_prefix = f"   [ARCHIVER:{id_str[:8]}]"
     try:
         # Ultra-Robust Greedy JSON Unpacker
         def greedy_unpack(val):
@@ -117,7 +120,7 @@ async def mirror_assignment_images(db: Session, assignment: Assignment, rpa=None
                         clean_filename = f"{assignment.id}/{key}.{ext}"
                         
                         logger.info(f"{log_prefix} 🔎 Mirroring '{key}' (Source: {str(value)[:60]}...)")
-                        content = await download_image(value)
+                        content = await download_image(value, rpa=rpa)
                         
                         if content:
                             local_path = await upload_image(content, clean_filename)
@@ -142,7 +145,7 @@ async def mirror_assignment_images(db: Session, assignment: Assignment, rpa=None
                     continue
                 key = f"scraped_{i}"
                 logger.info(f"{log_prefix} [Scraping] {key}... URL: {url[:60]}...")
-                content = await download_image(url)
+                content = await download_image(url, rpa=rpa)
                 if content:
                     ext = "jpg"; 
                     if ".png" in url.lower(): ext = "png"
@@ -197,8 +200,8 @@ async def mirror_assignment_images(db: Session, assignment: Assignment, rpa=None
                 if file_names_to_refresh:
                     logger.info(f"{log_prefix} 💊 [Healing] Requesting refresh for {len(file_names_to_refresh)} files via RPA API...")
                     new_urls = await rpa.get_fresh_image_urls(
-                        assignment.survey_period_id,
-                        [{"assignmentId": assignment.id, "fileNames": file_names_to_refresh}]
+                        str(assignment.survey_period_id),
+                        [{"assignmentId": str(assignment.id), "fileNames": file_names_to_refresh}]
                     )
 
                     if new_urls:
@@ -220,33 +223,50 @@ async def mirror_assignment_images(db: Session, assignment: Assignment, rpa=None
 
                 if fresh_urls_map:
                     def perform_global_substitution(data_obj, urls_map):
-                        import re
-                        try:
-                            original_str = json.dumps(data_obj)
-                            new_str = original_str
-                            sub_count = 0
-                            
-                            for fname, fresh_url in urls_map.items():
-                                # Regex that handles escaped slashes and various delimiters
-                                # Match until quote, whitespace, or bracket
-                                pattern = rf'https?[^"\'\s<>\\\[\]]*?{re.escape(fname)}[^"\'\s<>\\\[\]]*'
+                        replaced_any = False
+                        
+                        def recursive_replace(obj):
+                            nonlocal replaced_any
+                            if isinstance(obj, dict):
+                                return {k: recursive_replace(v) for k, v in obj.items()}
+                            elif isinstance(obj, list):
+                                return [recursive_replace(item) for item in obj]
+                            elif isinstance(obj, str):
+                                new_str = obj
+                                # Parse and replace inside stringified JSON
+                                if (new_str.startswith("{") and new_str.endswith("}")) or (new_str.startswith("[") and new_str.endswith("]")):
+                                    try:
+                                        import json
+                                        inner = json.loads(new_str)
+                                        replaced_inner = recursive_replace(inner)
+                                        if inner != replaced_inner:
+                                            new_str = json.dumps(replaced_inner, separators=(',', ':'))
+                                    except:
+                                        pass
                                 
-                                matches = re.findall(pattern, new_str)
-                                for m in set(matches):
-                                    # Keep original escaping style for the replacement URL
-                                    repl = fresh_url
-                                    if "\\/" in m:
-                                        repl = fresh_url.replace("/", "\\/")
-                                    
-                                    new_str = new_str.replace(m, repl)
-                                    sub_count += 1
-                                    logger.info(f"{log_prefix} 🛠️ [Substitution] SUCCESS: {fname}")
-                                    
-                            if sub_count > 0:
-                                return json.loads(new_str), True
+                                # Replace URL strings directly
+                                for fname, fresh_url in urls_map.items():
+                                    if fname in new_str:
+                                        import re
+                                        pattern = rf'https?[^"\'\s<>\\\[\]]*?{re.escape(fname)}[^"\'\s<>\\\[\]]*'
+                                        matches = re.findall(pattern, new_str)
+                                        for m in set(matches):
+                                            repl = fresh_url
+                                            if "\\/" in m:
+                                                repl = fresh_url.replace("/", "\\/")
+                                            new_str = new_str.replace(m, repl)
+                                            replaced_any = True
+                                            logger.info(f"{log_prefix} 🛠️ [Substitution] SUCCESS: {fname}")
+                                return new_str
+                            return obj
+                            
+                        try:
+                            logger.info(f"{log_prefix} 🛠️ [Archiver] Initiating global URL substitution pass for assignment {assignment.id}...")
+                            new_data_obj = recursive_replace(data_obj)
+                            return new_data_obj, replaced_any
                         except Exception as e:
                             logger.error(f"{log_prefix} ❌ [Substitution] Failure: {e}")
-                        return data_obj, False
+                            return data_obj, False
 
                     logger.info(f"{log_prefix} 🛠️ [Archiver] Initiating global URL substitution pass for assignment {assignment.id}...")
                     fresh_data_json, replaced = perform_global_substitution(data_json, fresh_urls_map)

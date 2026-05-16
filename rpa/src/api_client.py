@@ -81,9 +81,11 @@ class FasihApiClient:
         """Dynamically build headers with latest XSRF-TOKEN from cookie jar."""
         headers = {
             "Accept": "application/json, text/plain, */*",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": f"{TARGET_URL}/",
-            "Origin": TARGET_URL,
+            "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
             "X-Requested-With": "XMLHttpRequest",
         }
         
@@ -274,8 +276,9 @@ class FasihApiClient:
                     data = await resp.json()
                     regions = data.get("data", [])
                     
+                    # Improved cleaning: Strip all bracketed prefixes like [61] [61]
                     clean_prov_name = re.sub(r'\[\d+\]', '', provinsi_name).lower().strip()
-                    search_words = [w for w in clean_prov_name.split(' ') if w]
+                    search_words = [w for w in clean_prov_name.split(' ') if len(w) > 2] # Skip short words like 'DI'
                     print(f"   🔍 [API] Mencari Provinsi: {search_words} di {len(regions)} regions...")
                     
                     for r in regions:
@@ -296,8 +299,9 @@ class FasihApiClient:
                     data = await resp.json()
                     regions = data.get("data", [])
                     
+                    # Strip all [XX] prefixes
                     clean_kab_name = re.sub(r'\[\d+\]', '', kabupaten_name).lower().strip()
-                    search_words = [w for w in clean_kab_name.split(' ') if w]
+                    search_words = [w for w in clean_kab_name.split(' ') if len(w) > 2]
                     print(f"   🔍 [API] Mencari Kabupaten: {search_words} di {len(regions)} regions...")
                     
                     for r in regions:
@@ -378,6 +382,8 @@ class FasihApiClient:
                     if resp.status != 200:
                         raise Exception(f"HTTP {resp.status} while resolving survey ID")
                     body = await resp.json()
+                    if not body.get("data"):
+                        print(f"   🔬 [DEBUG] User list empty for Role {role_id}. Body: {body}")
                     for user in body.get("data", []):
                         _add_user(user, user.get('isPencacah', False))
 
@@ -393,6 +399,7 @@ class FasihApiClient:
                         f"&surveyRoleId={role_id}"
                     )
                     payload = {"pageNumber": 0, "pageSize": 200, "sortBy": "ID", "sortDirection": "ASC", "keywordSearch": ""}
+                    print(f"   🔍 [DEBUG] Trying Datatable for Role {role_id} via {dt_url}...")
                     async with session.post(dt_url, json=payload, headers=self._get_headers()) as resp:
 
                         if resp.status != 200:
@@ -459,19 +466,24 @@ class FasihApiClient:
                     "region2Id": kab_uuid,
                     "region3Id": kec_uuid,
                     "region4Id": desa_uuid,
-                    # BUG FIX: currentUserId="" menyebabkan server memfilter per-user → return 0
-                    # Hanya kirim jika ada user ID spesifik, atau omit (None = tanpa filter user)
-                    "userIdResponsibility": None,
-                    "currentUserId": pencacah_id or pengawas_id or None,
                     "surveyPeriodId": period_id,
                     "assignmentErrorStatusType": -1,
-                    "assignmentStatusAlias": None,
-                    # BUG FIX: None menyebabkan server tidak apply filter yang benar
-                    # "TARGET_ONLY" = hanya assignment yang assigned ke user ini
-                    "filterTargetType": "TARGET_ONLY",
+                    "filterTargetType": "ALL" if not (pencacah_id or pengawas_id) else "TARGET_ONLY",
                     "regionGroupId": region_group_id
                 }
             }
+
+            # Cleanup None values from params to avoid API filtering/mapping issues
+            extra_params = {k: v for k, v in payload["assignmentExtraParam"].items() if v is not None}
+            
+            # Add User IDs only if present
+            if pencacah_id or pengawas_id:
+                extra_params["currentUserId"] = pencacah_id or pengawas_id
+            
+            payload["assignmentExtraParam"] = extra_params
+
+            import json
+            print(f"   🔬 [DEBUG] Sending Datatable Payload: {json.dumps(payload, indent=2)}")
 
             async with self.session.post(url, json=payload, headers=self._get_headers()) as resp:
 
@@ -587,13 +599,26 @@ class FasihApiClient:
         try:
             url = f"{TARGET_URL}/assignment-general/api/image/presigned-url-get?surveyPeriodId={survey_period_id}"
             
-            print(f"   🔄 [API] Requesting {sum(len(a.get('fileNames', [])) for a in assignments_payload)} fresh presigned URLs...", flush=True)
+            # Sanitize payload: Ensure fileNames only contain the simplified identifier (basename),
+            # stripping any surveyPeriodId/ or other path prefixes to avoid 400 Bad Request errors.
+            sanitized_payload = []
+            for item in assignments_payload:
+                clean_filenames = []
+                for fn in item.get("fileNames", []):
+                    clean_fn = fn.split("/")[-1].split("?")[0]
+                    clean_filenames.append(clean_fn)
+                sanitized_payload.append({
+                    "assignmentId": item.get("assignmentId"),
+                    "fileNames": clean_filenames
+                })
+            
+            print(f"   🔄 [API] Requesting {sum(len(a.get('fileNames', [])) for a in sanitized_payload)} fresh presigned URLs...", flush=True)
             
             headers = self._get_headers()
             print(f"   🐛 [API] X-XSRF-TOKEN in header: {headers.get('X-XSRF-TOKEN', 'MISSING')[:10]}...", flush=True)
 
             async with await self.create_session() as session:
-                async with session.post(url, json=assignments_payload, headers=headers, timeout=45) as resp:
+                async with session.post(url, json=sanitized_payload, headers=headers, timeout=45) as resp:
                     status = resp.status
                     print(f"   🐛 [API] POST /presigned-url-get returned status {status}", flush=True)
                     
@@ -630,4 +655,31 @@ class FasihApiClient:
             print(f"   ❌ [API] Error fetching presigned URLs: {e}", flush=True)
             import traceback
             traceback.print_exc()
+            return None
+
+    @with_retry(retries=3, delay=2)
+    async def download_content(self, url: str) -> Optional[bytes]:
+        """Download raw content from a URL using the authenticated session, forcing cookies for cross-domain S3."""
+        if not self._session:
+            return None
+            
+        # Manually extract cookies from jar to bypass domain restrictions in aiohttp
+        cookie_header = ""
+        try:
+            cookies = []
+            for cookie in self.jar:
+                cookies.append(f"{cookie.key}={cookie.value}")
+            cookie_header = "; ".join(cookies)
+        except:
+            pass
+
+        headers = self._get_headers()
+        if cookie_header:
+            headers["Cookie"] = cookie_header
+            
+        async with self._session.get(url, headers=headers, timeout=60) as resp:
+            if resp.status == 200:
+                return await resp.read()
+            
+            print(f"   ❌ [API] Content download failed (HTTP {resp.status}): {url[:100]}...")
             return None

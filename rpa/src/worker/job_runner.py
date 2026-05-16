@@ -112,6 +112,14 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                         _progress("resolve_survey", "🗺️ Mengambil metadata region...")
                         prov_uuid, region_filter, kab_full_code, region_group_id = await api.get_region_metadata(req.filter_provinsi, req.filter_kabupaten, survey_id)
 
+                        # Safety Gate: Jika provinsi diisi tapi tidak ketemu di API, jangan lanjut.
+                        # Ini mencegah robot menarik data se-Indonesia/se-Provinsi secara tidak sengaja yang memicu timeout.
+                        if req.filter_provinsi and not prov_uuid:
+                            raise Exception(f"Gagal memetakan wilayah: '{req.filter_provinsi}' tidak ditemukan di API FASIH")
+                        
+                        if req.filter_kabupaten and not kab_full_code:
+                            print(f"   ⚠️ Warning: Kabupaten '{req.filter_kabupaten}' tidak ter-resolve, fallback ke Provinsi")
+
                         # --- MODE: USER SLICING (DIRECT) ---
                         # Looping langsung per Petugas (Pencacah/Pengawas).
                         # Strategi ini lebih cepat karena jumlah switch filter lebih sedikit.
@@ -131,7 +139,6 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                             for idx, user in enumerate(pengawas_list):
                                 filters_to_run.append({
                                     "label": f"[{len(pencacah_list)+idx+1}/{len(pencacah_list)+len(pengawas_list)}] Pengawas: {user['fullname']}",
-                                    "pengawas_id": user['userId'],
                                     "pencacah_id": None
                                 })
                         else:
@@ -141,6 +148,14 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                                     "pengawas_id": user['userId'],
                                     "pencacah_id": None
                                 })
+                        
+                        # Fallback if no users found: fetch region-wide
+                        if not filters_to_run:
+                            filters_to_run.append({
+                                "label": "[1/1] Wilayah Saja (Tanpa Pengawas/Pencacah)",
+                                "pengawas_id": None,
+                                "pencacah_id": None
+                            })
 
                         users_count = len(filters_to_run)
                         _progress("fetch_assignments", f"⚡ Memulai fetch {users_count} petugas secara concurrent...", users_total=users_count, users_done=0)

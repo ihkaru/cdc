@@ -10,11 +10,12 @@ echo "🚀 Starting Dashboard Container Entrypoint..."
 # 2. Run Database Migrations / Sync Schema
 echo "🩺 Running Advanced Self-Healing Migration Check..."
 # Single robust PL/pgSQL block to handle UUID conversion and sequence cleanup
-psql "$DATABASE_URL" -c "
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
 DO \$\$ 
 DECLARE
     r RECORD;
 BEGIN 
+    SET statement_timeout = '60000'; -- 60 seconds
     RAISE NOTICE 'Starting self-healing process...';
 
     -- A. Force drop constraints that might block type changes

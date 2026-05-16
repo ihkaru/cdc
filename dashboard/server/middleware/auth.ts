@@ -5,8 +5,12 @@ import { eq } from "drizzle-orm";
 
 // Parse cookie string → { name: value } map
 function parseCookies(cookieHeader: string | null): Record<string, string> {
-    if (!cookieHeader) return {};
-    return Object.fromEntries(
+    if (!cookieHeader) {
+        console.warn("[Auth] parseCookies: No cookie header provided");
+        return {};
+    }
+    console.log(`[Auth] parseCookies: Raw header: ${cookieHeader}`);
+    const cookies = Object.fromEntries(
         cookieHeader.split(";").map(c => {
             const parts = c.trim().split("=");
             const k = parts[0] || "";
@@ -14,6 +18,8 @@ function parseCookies(cookieHeader: string | null): Record<string, string> {
             return [k.trim(), decodeURIComponent(v)];
         }).filter(([k]) => k !== "")
     );
+    console.log(`[Auth] parseCookies: Parsed keys: ${Object.keys(cookies).join(", ")}`);
+    return cookies;
 }
 
 /**
@@ -21,7 +27,7 @@ function parseCookies(cookieHeader: string | null): Record<string, string> {
  *
  * Root Cause: auth.api.getSession() internally validates the `Origin` / `Host`
  * header against BETTER_AUTH_URL. In dev mode, Quasar proxy forwards
- * Origin: localhost:9000 while BETTER_AUTH_URL=localhost:3000. Even after
+ * Origin: 127.0.0.1:9000 while BETTER_AUTH_URL=127.0.0.1:3000. Even after
  * stripping Origin, Better Auth may check Host or perform internal fetches
  * that are subject to similar mismatches.
  *
@@ -37,11 +43,13 @@ export const getAuthContext = async (request: Request) => {
     const sessionToken = cookies["__Secure-cdc_auth.session_token"] || cookies["cdc_auth.session_token"];
 
     if (!sessionToken) {
+        console.warn(`[Auth] No session token found in cookies. Available: ${Object.keys(cookies).join(", ")}`);
         return { user: null, roles: [] };
     }
 
     const rawToken = sessionToken.split(".")[0];
     if (!rawToken) {
+        console.warn(`[Auth] Failed to parse raw token from: ${sessionToken}`);
         return { user: null, roles: [] };
     }
 
@@ -50,7 +58,13 @@ export const getAuthContext = async (request: Request) => {
         where: eq(schema.sessions.token, rawToken),
     });
 
-    if (!sessionRow || sessionRow.expiresAt < new Date()) {
+    if (!sessionRow) {
+        console.warn(`[Auth] Session token not found in DB: ${rawToken}`);
+        return { user: null, roles: [] };
+    }
+    
+    if (sessionRow.expiresAt < new Date()) {
+        console.warn(`[Auth] Session expired: ${sessionRow.expiresAt}`);
         return { user: null, roles: [] };
     }
 

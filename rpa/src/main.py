@@ -8,7 +8,7 @@ Fully automated robot yang:
    b. Dapatkan Region Metadata & List Pengguna (Pengawas/Pencacah)
    c. Iterate pagination Datatable Assignment (bypass limit batas baris via filter)
    d. Fetch form detail individual secara concurrent
-3. Upsert ke SQLite
+3. Upsert ke PostgreSQL
 4. Berjalan otomatis setiap N menit
 
 Usage:
@@ -144,19 +144,11 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
     prov_code, region_filter, region_full_code, region_group_id = await api.get_region_metadata(settings.filter_provinsi, settings.filter_kabupaten, survey_id)
     timings["metadata"] = int((time.perf_counter() - phase_start) * 1000)
     
-    # Init DB
-    survey_slug = re.sub(r'[^a-z0-9]+', '_', settings.survey_name.lower()).strip('_')
-    survey_data_dir = os.path.join(os.path.dirname(settings.db_path), survey_slug)
-    survey_db_path = os.path.join(survey_data_dir, "sync.db")
-    
+    # Init DB (Central PostgreSQL only)
     if not dry_run:
-        from db.connection import reset_engine
-        reset_engine()
-        os.makedirs(survey_data_dir, exist_ok=True)
-        survey_db_url = f"sqlite:///{survey_db_path}"
-        init_db(survey_db_url)
-        session = get_session(survey_db_url)
-        print(f"   📂 Data dir: {survey_data_dir}/")
+        init_db()
+        session = get_session()
+        print(f"   📂 Using central PostgreSQL database")
 
     # --- FASE 3: ROTASI & FETCH ASSIGNMENTS ---
     print("\n--- FASE 3: Extract Assignment Metadata ---")
@@ -272,6 +264,10 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
                 stats.total_failed += len(to_fetch) - len(results)
             
             # (Note: BatchUpserterBulk handles commits internally or during finish)
+        else:
+            print("   ⚠️ Tidak ada assignment ditemukan untuk kriteria ini.")
+            stats.total_fetched = 0
+            stats.total_upserted = 0
 
         # Logging
         timings["upsert"] = int((time.perf_counter() - phase_start) * 1000)

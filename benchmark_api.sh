@@ -18,7 +18,7 @@ echo -e "${BLUE}=================================================${NC}"
 # 1. Test Dashboard Base Latency (Bun/Elysia)
 echo -ne "🚀 [1/3] Dashboard Base Latency... "
 START=$(date +%s%N)
-curl -s -o /dev/null http://localhost:9000/api/surveys/vpn/status
+curl -s -o /dev/null http://127.0.0.1:9000/api/surveys/vpn/status
 END=$(date +%s%N)
 DIFF=$((($END - $START)/1000000))
 echo -e "${GREEN}${DIFF}ms${NC}"
@@ -26,7 +26,7 @@ echo -e "${GREEN}${DIFF}ms${NC}"
 # 2. Test VPN Tunnel Latency (Direct to FASIH-SM via RPA Proxy)
 echo -ne "🔒 [2/3] VPN Tunnel Reachability... "
 START=$(date +%s%N)
-curl -s -o /dev/null http://localhost:8000/vpn/check
+curl -s -o /dev/null http://127.0.0.1:8000/vpn/check
 END=$(date +%s%N)
 DIFF=$((($END - $START)/1000000))
 if [ $DIFF -lt 2000 ]; then
@@ -47,7 +47,7 @@ if [ -z "$SSO_USER" ]; then
     echo -e "${RED}   Gagal: SSO_USER tidak ditemukan di .env. Lewati tes lookup.${NC}"
 else
     START_LOOKUP=$(date +%s)
-    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:8000/lookup/metadata \
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://127.0.0.1:8000/lookup/metadata \
         -H "Content-Type: application/json" \
         -d "{\"sso_username\": \"$SSO_USER\", \"sso_password\": \"$SSO_PASS\"}")
     

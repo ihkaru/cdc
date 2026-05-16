@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { createAuthClient } from 'better-auth/vue'
-import { api } from 'boot/axios'
+import { api } from 'src/boot/axios'
 
 // Better Auth Client Initialization
 const authClient = createAuthClient({
@@ -36,7 +36,7 @@ export const useAuthStore = defineStore('auth', {
           // Axios cannot reliably send HttpOnly cookies across the dev proxy
           // port boundary (9000 → 3000). authClient.$fetch uses the same
           // cookie transport mechanism as getSession() which is proven to work.
-          const rolesRes = await authClient.$fetch<{ roles: string[] }>('/api/me/roles', {
+          const rolesRes = await authClient.$fetch<{ roles: string[] }>('me/roles', {
             credentials: 'include'
           })
           this.roles = (rolesRes as any)?.roles ?? []

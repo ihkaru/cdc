@@ -41,15 +41,16 @@
               <div class="col-12 col-md-6">
                 <div class="text-subtitle2 text-grey-5 q-mb-xs">Password SSO</div>
                 <q-input v-model="form.ssoPassword" dark filled type="password" 
-                  :placeholder="isEdit ? '(Dikosongkan jika tidak ingin ganti)' : 'Password'" :disable="!vpnStatus?.connected" />
+                  :placeholder="isEdit ? '(Dikosongkan jika tidak ingin ganti)' : 'Password'" />
               </div>
             </div>
 
-            <q-banner v-if="!vpnStatus?.connected" class="bg-negative text-white q-mt-md rounded-borders" rounded>
+            <!-- VPN Warning: Now non-blocking because RPA can bridge it -->
+            <q-banner v-if="!vpnStatus?.connected" dense class="bg-orange-9 text-white q-mb-lg rounded-borders">
               <template v-slot:avatar>
-                <q-icon name="warning" />
+                <q-icon name="cloud_off" />
               </template>
-              Koneksi VPN BPS terputus. Anda tidak dapat melakukan pencarian survei dan wilayah dari API FASIH.
+              Koneksi VPN terputus. Sistem akan otomatis menyambungkan VPN setelah Anda berhasil login SSO di bawah.
             </q-banner>
 
             <q-stepper-navigation class="row justify-end q-mt-lg">
@@ -57,7 +58,7 @@
                 @click="onConnectFasih"
                 color="primary"
                 :loading="connecting"
-                :disable="!form.ssoUsername || (!isEdit && !form.ssoPassword) || !vpnStatus?.connected"
+                :disable="!form.ssoUsername || (!isEdit && !form.ssoPassword)"
                 label="Hubungkan ke FASIH"
                 icon-right="link"
                 unelevated
@@ -204,6 +205,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { vpnStatus } from '../composables/useVpn'
+import { api } from 'src/boot/axios'
 
 const $q = useQuasar()
 const router = useRouter()
@@ -250,8 +252,8 @@ async function loadData() {
   if (!isEdit.value) return
   loading.value = true
   try {
-    const res = await fetch(`/api/surveys/${route.params.id}`)
-    const data = await res.json()
+    const res = await api.get(`/surveys/${route.params.id}`)
+    const data = res.data
     // Populate form
     form.value = { ...data, ssoPassword: '' }
     
@@ -288,21 +290,12 @@ async function loadData() {
 async function onConnectFasih() {
   connecting.value = true
   try {
-    const res = await fetch('/api/surveys/fasih/lookup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const res = await api.post('/surveys/fasih/lookup', {
         ssoUsername: form.value.ssoUsername,
         ssoPassword: form.value.ssoPassword
-      })
     })
 
-    if (!res.ok) {
-      const err = await res.json()
-      throw new Error(err.message || 'Login FASIH gagal')
-    }
-
-    const data = await res.json()
+    const data = res.data
     
     // Process Surveys
     rawSurveys.value = data.surveys || []
@@ -311,10 +304,11 @@ async function onConnectFasih() {
     // Process Provinsi
     // Prefix the name with code to match legacy string format 
     // "[61] KALIMANTAN BARAT" as requested by existing system
-    rawProvinsi.value = (data.provinces || []).map((p: any) => ({
-      ...p,
-      name: `[${p.fullCode}] ${p.name}`
-    }))
+    rawProvinsi.value = (data.provinces || []).map((p: any) => {
+      // Check if p.name already starts with [XX]
+      const name = p.name.startsWith('[') ? p.name : `[${p.fullCode}] ${p.name}`
+      return { ...p, name }
+    })
     provinsiOptions.value = [...rawProvinsi.value]
 
     $q.notify({ type: 'positive', message: `Berhasil login! Menemukan ${rawSurveys.value.length} survey.` })
@@ -347,25 +341,19 @@ async function loadKabupaten(provFullCode: string) {
   kabupatenOptions.value = []
   
   try {
-    const res = await fetch('/api/surveys/fasih/kabupaten', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const res = await api.post('/surveys/fasih/kabupaten', {
         ssoUsername: form.value.ssoUsername,
         ssoPassword: form.value.ssoPassword,
         provFullCode: provFullCode
-      })
     })
 
-    if (res.ok) {
-      const data = await res.json()
-      rawKabupaten.value = (data.kabupaten || []).map((k: any) => ({
-        ...k,
-        name: `[${k.fullCode.substring(2)}] ${k.name}` // [04] MEMPAWAH
-      }))
+    const data = res.data
+      rawKabupaten.value = (data.kabupaten || []).map((k: any) => {
+        const name = k.name.startsWith('[') ? k.name : `[${k.fullCode.substring(2)}] ${k.name}`
+        return { ...k, name }
+      })
       kabupatenOptions.value = [...rawKabupaten.value]
-    }
-  } catch (e) {
+    } catch (e) {
     console.error('Failed to load kabupaten:', e)
     $q.notify({ type: 'warning', message: 'Gagal memuat daftar kabupaten' })
   } finally {
@@ -411,27 +399,23 @@ function filterKabupaten(val: string, update: Function) {
 async function save() {
   saving.value = true
   try {
-    const url = isEdit.value ? `/api/surveys/${route.params.id}` : '/api/surveys'
-    const method = isEdit.value ? 'PUT' : 'POST'
+    const url = isEdit.value ? `/surveys/${route.params.id}` : '/surveys'
+    const method = isEdit.value ? 'put' : 'post'
     
     const payload = { ...form.value }
     if (isEdit.value && !payload.ssoPassword) delete (payload as any).ssoPassword
 
-    const res = await fetch(url, {
+    const res = await api({
+      url,
       method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      data: payload
     })
     
-    if (res.ok) {
-      $q.notify({ type: 'positive', message: 'Survey berhasil disimpan' })
-      router.push('/')
-    } else {
-      const err = await res.json()
-      $q.notify({ type: 'negative', message: 'Error: ' + err.message })
-    }
-  } catch (e) {
-    $q.notify({ type: 'negative', message: 'Network error' })
+    $q.notify({ type: 'positive', message: 'Survey berhasil disimpan' })
+    router.push('/')
+  } catch (e: any) {
+    const msg = e.response?.data?.message || e.message || 'Network error'
+    $q.notify({ type: 'negative', message: 'Error: ' + msg })
   } finally {
     saving.value = false
   }

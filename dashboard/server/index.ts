@@ -49,6 +49,10 @@ const authRoutes = new Elysia({ prefix: "/api/auth" })
         set.status = 403;
         return { error: "Public registration is disabled for security hardening." };
     })
+    .get("/me/roles", ({ user, roles }: any) => {
+        if (!user) return { roles: [] };
+        return { user, roles };
+    })
     .get("/*", async (ctx) => {
         return auth.handler(ctx.request);
     })
@@ -59,7 +63,7 @@ const authRoutes = new Elysia({ prefix: "/api/auth" })
 const app = new Elysia()
     .use(cors({
         credentials: true,
-        origin: process.env.PUBLIC_BASE_URL || "http://localhost:3000",
+        origin: process.env.PUBLIC_BASE_URL || "http://127.0.0.1:3000",
         allowedHeaders: ["Content-Type", "Authorization"],
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     }))
@@ -69,7 +73,7 @@ const app = new Elysia()
         return await getAuthContext(request);
     })
     // Global Security Gate & Headers
-    .onBeforeHandle(({ path, user, set }: any) => {
+    .onBeforeHandle(({ path, user, set, request }: any) => {
         // 1. Security Headers
         set.headers["X-Frame-Options"] = "DENY";
         set.headers["X-Content-Type-Options"] = "nosniff";
@@ -83,15 +87,14 @@ const app = new Elysia()
         const isProtectedApi = path.startsWith("/api/") || path.startsWith("/storage/");
 
         if (isProtectedApi && !isPublicAuth && !isPublicStatus && !user) {
-            console.warn(`[Security] Unauthorized access attempt to ${path}`);
+            console.warn(`[Security] 401 Unauthorized ${request.method} ${path} (User: ${user ? 'found' : 'null'})`);
             set.status = 401;
             return { error: "Unauthorized" };
         }
-    })
-    // Auth info helper
-    .get("/api/me/roles", ({ user, roles }: any) => {
-        if (!user) return { roles: [] };
-        return { user, roles };
+        
+        if (isProtectedApi) {
+            console.log(`[Security] 200 Authorized ${request.method} ${path} for user ${user?.email || 'unknown'}`);
+        }
     })
     // Protected Routes
     .use(surveysRoutes)
@@ -125,4 +128,4 @@ const app = new Elysia()
     })
     .listen(process.env.PORT || 3000);
 
-console.log(`🚀 Dashboard running at http://localhost:${app.server?.port}`);
+console.log(`🚀 Dashboard running at http://127.0.0.1:${app.server?.port}`);

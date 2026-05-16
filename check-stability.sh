@@ -58,7 +58,7 @@ for service in "${SERVICES[@]}"; do
             
             if [ -n "$VPN_USER" ] && [ -n "$VPN_PASS" ]; then
                 # Trigger RPA Auto-Fetch (vpn-auth runs on port 8000)
-                RESP=$(curl -s -X POST http://localhost:8000/vpn/auto-fetch \
+                RESP=$(curl -s -X POST http://127.0.0.1:8000/vpn/auto-fetch \
                     -H "Content-Type: application/json" \
                     -d "{\"sso_username\":\"$VPN_USER\", \"sso_password\":\"$VPN_PASS\"}")
                 
@@ -98,7 +98,7 @@ echo -e "\n${YELLOW}🌐 Simulating Traffic Routing...${NC}"
 # Dashboard API Health (with retry)
 DASHBOARD_OK=false
 for i in {1..5}; do
-    if curl -s -f http://localhost:3000/api/health > /dev/null; then
+    if curl -s -f http://127.0.0.1:3000/api/health > /dev/null; then
         DASHBOARD_OK=true
         break
     fi
@@ -115,7 +115,7 @@ fi
 # RPA API Health (with retry)
 RPA_OK=false
 for i in {1..5}; do
-    if curl -s -f http://localhost:8000/health > /dev/null; then
+    if curl -s -f http://127.0.0.1:8000/health > /dev/null; then
         RPA_OK=true
         break
     fi

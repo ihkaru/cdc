@@ -39,18 +39,18 @@ async def check_fasih_reachable() -> tuple[bool, str]:
                 return False, f"Unexpected status: {resp.status}"
     except asyncio.TimeoutError:
         # HTTP timeout — but tunnel might still be fine
-        # Check ppp0 as secondary signal
-        has_ppp = os.path.exists("/sys/class/net/ppp0")
-        if has_ppp:
+        # Check tun0 or ppp0 as secondary signal
+        has_vpn = os.path.exists("/sys/class/net/tun0") or os.path.exists("/sys/class/net/ppp0")
+        if has_vpn:
             # Interface exists — tunnel is up, just slow
-            return True, "Reachable (ppp0 UP, HTTP slow)"
+            return True, "Reachable (VPN UP, HTTP slow)"
         return False, "Connection timeout"
     except Exception as e:
-        has_ppp = os.path.exists("/sys/class/net/ppp0")
+        has_vpn = os.path.exists("/sys/class/net/tun0") or os.path.exists("/sys/class/net/ppp0")
         err_type = type(e).__name__
         err_msg = str(e)
-        if has_ppp:
-            return True, f"Reachable (ppp0 UP, probe error: {err_type})"
+        if has_vpn:
+            return True, f"Reachable (VPN UP, probe error: {err_type})"
         return False, f"Connection error: {err_type} {err_msg}".strip()
 
 

@@ -83,11 +83,13 @@ cp .env.example .env
 4. Isi Environment Variables di UI Coolify sesuai `.env.example`.
 5. Klik **Deploy**.
 
-## Troubleshooting & Best Practices
+## Troubleshooting & Hard-won Lessons
 
-1. **DNS Failure di Archiver/RPA**: Pastikan service `vpn` memiliki `dns: 127.0.0.11`. Tanpa ini, service yang menggunakan `network_mode: service:vpn` tidak bisa memanggil `postgres` atau `s3`.
-2. **VPN Cookie Expired**: Jika container VPN unhealthy, login ulang ke `akses.bps.go.id` dan update cookie via Dashboard.
-3. **Traefik Non-Deterministic IP**: Gunakan label `traefik.docker.network=coolify` pada service `dashboard` (sudah ada di docker-compose.yml default).
+1. **Circular Dependency Resolution**: Service yang menumpang di VPN (RPA, Archiver) harus menggunakan `condition: service_started` pada `depends_on: vpn`. Ini memungkinkan RPA melakukan login SSO ke portal publik untuk menyetor cookie ke database sebelum VPN mencoba menyambung.
+2. **Routing Refresh (The "Shadow" Interface)**: Dalam mode `network_mode: service:vpn`, kontainer yang menumpang terkadang tidak mendeteksi interface `tun0`/`ppp0` atau tabel routing baru jika ia sudah menyala sebelum tunnel VPN terbentuk. **Solusi**: Restart kontainer RPA setelah VPN dipastikan `Connected`.
+3. **Portal SAML Stabilization**: Portal BPS (`akses.bps.go.id`) memerlukan waktu ~5 detik untuk memuat skrip latar belakang setelah halaman tampil. Mengklik tombol login terlalu cepat akan memicu error **403 Forbidden**. Gunakan `asyncio.sleep(5)` wajib di Playwright.
+4. **DNS & Host Pinning**: VPN secara agresif menimpa `/etc/resolv.conf`. Gunakan DNS Pinning (`127.0.0.11` di baris pertama) dan lakukan pemetaan manual IP database ke `/etc/hosts` di dalam kontainer VPN agar layanan internal tetap dapat saling berkomunikasi.
+5. **MTU Sensitivity**: Selalu gunakan MTU **1000** untuk interface VPN. Angka yang lebih besar (1500/1350) sering menyebabkan paket data besar (JSON survey) terfragmentasi dan gagal terkirim (timeout).
 
 ## Lisensi
 

@@ -141,15 +141,22 @@ async def check_vpn():
         reachable, reason = await check_fasih_reachable()
         
         # 2. Check physical interface (Informational only)
+        has_tun = os.path.exists("/sys/class/net/tun0")
         has_ppp = os.path.exists("/sys/class/net/ppp0")
+        has_vpn = has_tun or has_ppp
         
         if reachable:
-            info = "VPN Connected (via ppp0)" if has_ppp else "VPN Connected (Transparently via Host)"
+            if has_tun:
+                info = "VPN Connected (via tun0)"
+            elif has_ppp:
+                info = "VPN Connected (via ppp0)"
+            else:
+                info = "VPN Connected (Transparently via Host)"
             return {"connected": True, "info": info}
             
         return {
             "connected": False, 
-            "reason": f"FASIH-SM unreachable: {reason} (Interface ppp0: {'Exist' if has_ppp else 'Missing'})"
+            "reason": f"FASIH-SM unreachable: {reason} (Interface: {'tun0/ppp0 UP' if has_vpn else 'Missing'})"
         }
         
     except Exception as e:
@@ -163,9 +170,14 @@ async def auto_fetch_vpn(req: VpnCookieRequest):
     if sync_state.is_vpn_fetching:
         return {"status": "already_fetching", "message": "Proses auto-fetch VPN sedang berjalan..."}
 
+    if not req.sso_username or not req.sso_password:
+        print("   ❌ Gagal: Username atau Password SSO kosong!")
+        raise HTTPException(status_code=400, detail="SSO Username and Password are required")
+
     sync_state.is_vpn_fetching = True
     try:
-        print(f"🔄 Memulai auto-fetch VPN cookie untuk user {req.sso_username}...")
+        user_display = f"{req.sso_username[:3]}***" if req.sso_username else "None"
+        print(f"🔄 Memulai auto-fetch VPN cookie untuk user {user_display}...")
         cookie = await fetch_vpn_cookie(req.sso_username, req.sso_password)
     finally:
         sync_state.is_vpn_fetching = False

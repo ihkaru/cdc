@@ -220,7 +220,11 @@ def get_unsynced(session: Session, limit: int = 1000) -> list[Assignment]:
 
 def mark_synced(session: Session, ids: list[str]):
     """Tandai assignment sebagai sudah dikirim."""
-    session.query(Assignment).filter(Assignment.id.in_(ids)).update(
+    if not ids:
+        return
+    # Convert string IDs to UUID objects for PostgreSQL compatibility
+    uuid_ids = [uuid.UUID(str(i)) for i in ids]
+    session.query(Assignment).filter(Assignment.id.in_(uuid_ids)).update(
         {Assignment.synced_to_api: True}, synchronize_session="fetch"
     )
     session.commit()
@@ -236,9 +240,20 @@ def get_existing_modifications_by_ids(session: Session, ids: list[str]) -> dict[
     if not ids:
         return {}
 
+    # Convert string IDs to UUID objects
+    uuid_ids = []
+    for i in ids:
+        try:
+            uuid_ids.append(uuid.UUID(str(i)))
+        except:
+            continue
+
+    if not uuid_ids:
+        return {}
+
     results = (
         session.query(Assignment.id, Assignment.date_modified_remote)
-        .filter(Assignment.id.in_(ids))
+        .filter(Assignment.id.in_(uuid_ids))
         .all()
     )
     return {str(r.id): r.date_modified_remote for r in results}
@@ -262,9 +277,20 @@ def get_existing_modifications_by_ids_batched(
     result: dict[str, str] = {}
     for i in range(0, len(ids), chunk_size):
         chunk = ids[i : i + chunk_size]
+        # Convert chunk to UUIDs
+        uuid_chunk = []
+        for cid in chunk:
+            try:
+                uuid_chunk.append(uuid.UUID(str(cid)))
+            except:
+                continue
+        
+        if not uuid_chunk:
+            continue
+
         rows = (
             session.query(Assignment.id, Assignment.date_modified_remote)
-            .filter(Assignment.id.in_(chunk))
+            .filter(Assignment.id.in_(uuid_chunk))
             .all()
         )
         result.update({str(r.id): r.date_modified_remote for r in rows})
@@ -451,7 +477,7 @@ class BatchUpserterBulk:
             print(f"   💾 Bulk flush: {len(self._buffer)} rows → {inserted_or_updated} upserted, {skipped} skipped")
 
         except Exception as e:
-            # Fallback to per-row ORM if bulk insert fails (e.g. SQLite in test mode)
+            # Fallback to per-row ORM if bulk insert fails
             print(f"   ⚠️ Bulk upsert failed ({e}), falling back to per-row ORM...")
             self.session.rollback()
             self.session.rollback()

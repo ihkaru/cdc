@@ -1,0 +1,73 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml" class="login-pf"><head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="robots" content="noindex, nofollow">
+
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Log in to Single Sign-On BPS</title>
+    <link rel="icon" href="/auth/resources/9p4qg/login/bps-theme-mfa/img/favicon.ico">
+            <link href="/auth/resources/9p4qg/login/bps-theme-mfa/node_modules/patternfly/dist/css/patternfly.min.css" rel="stylesheet">
+            <link href="/auth/resources/9p4qg/login/bps-theme-mfa/node_modules/patternfly/dist/css/patternfly-additions.min.css" rel="stylesheet">
+            <link href="/auth/resources/9p4qg/login/bps-theme-mfa/lib/zocial/zocial.css" rel="stylesheet">
+            <link href="/auth/resources/9p4qg/login/bps-theme-mfa/css/login.css" rel="stylesheet">
+            <link href="/auth/resources/9p4qg/login/bps-theme-mfa/css/login-custom.css" rel="stylesheet">
+            <script src="/auth/resources/9p4qg/login/bps-theme-mfa/js/login-custom.js" type="text/javascript"></script>
+</head>
+
+<body class="">
+  <div class="login-pf-page">
+    <div id="kc-header" class="login-pf-page-header">
+      <div id="kc-header-wrapper" class="">Single Sign-On BPS</div>
+    </div>
+    <div class="card-pf ">
+      <header class="login-pf-header">
+        <h1 id="kc-page-title">Sign In <p>To Access Application</p></h1>
+      </header>
+      <div id="kc-content">
+        <div id="kc-content-wrapper">
+
+
+    <div id="kc-form">
+      <div id="kc-form-wrapper">
+            <form id="kc-form-login" onsubmit="login.disabled = true; return true;" action="https://sso.bps.go.id/auth/realms/pegawai-bps/login-actions/authenticate?session_code=hqnPphmmRs-V35MJ_MhGPVdj7PigG3H2IkKpNwDwfoY&amp;execution=196cd6d6-6090-46a2-b936-9d7cebd223a3&amp;client_id=https%3A%2F%2Fakses.bps.go.id%2Fremote%2Fsaml%2Fmetadata%2F&amp;tab_id=AYBd_LJApJo" method="post">
+                <div class="form-group">
+                    <label for="username" class="control-label">Username or email</label>
+                        <input tabindex="1" id="username" class="form-control" name="username" value="" type="text" autofocus="" autocomplete="off" placeholder="Username">
+                </div>
+
+                <div class="form-group">
+                    <label for="password" class="control-label">Password</label>
+                    <input tabindex="2" id="password" class="form-control" name="password" type="password" autocomplete="off" placeholder="Password">
+                </div>
+
+                <div class="form-group login-pf-settings">
+                    <div id="kc-form-options">
+                        </div>
+                        <div class="">
+                        </div>
+
+                  </div>
+
+                  <div id="kc-form-buttons" class="form-group">
+                      <input type="hidden" id="id-hidden-input" name="credentialId">
+                      <input tabindex="4" class="btn btn-primary btn-block btn-lg" name="login" id="kc-login" type="submit" value="Log In">
+                  </div>
+            </form>
+        </div>
+      </div>
+
+
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+
+<script id="f5_cspm">(function(){var f5_cspm={f5_p:'FJAKMJFJFLEPFNGJMGONHOMJPKJONCLLMMCKNIIACKHFIIKNKPJKGCMJEICBFLLKBDABFHFKAAPCABMGPJMAEOMHAAGDEICAHCOJIMKEMPICJDJHKOBODPIJCNCFKBNJ',setCharAt:function(str,index,chr){if(index>str.length-1)return str;return str.substr(0,index)+chr+str.substr(index+1);},get_byte:function(str,i){var s=(i/16)|0;i=(i&15);s=s*32;return((str.charCodeAt(i+16+s)-65)<<4)|(str.charCodeAt(i+s)-65);},set_byte:function(str,i,b){var s=(i/16)|0;i=(i&15);s=s*32;str=f5_cspm.setCharAt(str,(i+16+s),String.fromCharCode((b>>4)+65));str=f5_cspm.setCharAt(str,(i+s),String.fromCharCode((b&15)+65));return str;},set_latency:function(str,latency){latency=latency&0xffff;str=f5_cspm.set_byte(str,40,(latency>>8));str=f5_cspm.set_byte(str,41,(latency&0xff));str=f5_cspm.set_byte(str,35,2);return str;},wait_perf_data:function(){try{var wp=window.performance.timing;if(wp.loadEventEnd>0){var res=wp.loadEventEnd-wp.navigationStart;if(res<60001){var cookie_val=f5_cspm.set_latency(f5_cspm.f5_p,res);window.document.cookie='f5avr0983709960aaaaaaaaaaaaaaaa_cspm_='+encodeURIComponent(cookie_val)+';path=/;'+'';}
+return;}}
+catch(err){return;}
+setTimeout(f5_cspm.wait_perf_data,100);return;},go:function(){var chunk=window.document.cookie.split(/\s*;\s*/);for(var i=0;i<chunk.length;++i){var pair=chunk[i].split(/\s*=\s*/);if(pair[0]=='f5_cspm'&&pair[1]=='1234')
+{var d=new Date();d.setTime(d.getTime()-1000);window.document.cookie='f5_cspm=;expires='+d.toUTCString()+';path=/;'+';';setTimeout(f5_cspm.wait_perf_data,100);}}}}
+f5_cspm.go();}());</script></body></html>

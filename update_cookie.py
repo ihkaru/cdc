@@ -7,7 +7,7 @@ with open("new_vpn_cookie.txt", "r") as f:
 
 # Extract SVPNCOOKIE part if needed, or store full string
 # Dashboard sync.ts stores cookie.trim() directly
-db_url = os.getenv("DATABASE_URL", "postgresql://fasih:fasih123@localhost:5432/fasih_dashboard")
+db_url = os.getenv("DATABASE_URL", "postgresql://fasih:fasih123@127.0.0.1:5432/fasih_dashboard")
 engine = create_engine(db_url)
 
 with engine.connect() as conn:

@@ -2,10 +2,10 @@
 
 # RPA berbagi network dengan container VPN (network_mode: service:vpn)
 # Port 8000 tidak di-expose ke host — akses lewat IP VPN container di Docker bridge network
-API_URL="http://172.18.0.7:8000/lookup/metadata"
+API_URL="http://172.18.0.5:8000/lookup/metadata"
 # Membaca kredensial dari .env (pastikan file .env ada di direktori root)
-SSO_USER=$(grep SSO_USER .env | cut -d '=' -f2 | xargs 2>/dev/null || echo "ihzakarunia")
-SSO_PASS=$(grep SSO_PASS .env | cut -d '=' -f2 | xargs 2>/dev/null || echo "PASSWORD_ANDA")
+SSO_USER="ihzakarunia@bps.go.id"
+SSO_PASS='Fikrizaki2!'
 
 echo "================================================="
 echo "   FasihNexus UX Benchmark: RCA Transparent Mode "

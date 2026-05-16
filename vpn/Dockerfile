@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
     postgresql-client \
+    openconnect \
     && rm -rf /var/lib/apt/lists/*
 
 # Script untuk monitoring & reconnect

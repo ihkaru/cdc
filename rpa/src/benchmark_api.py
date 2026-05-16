@@ -206,7 +206,7 @@ async def get_valid_cookies(sc, password: str) -> tuple:
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
-        login_ok, cookies_dict = await auto_login(page, sc.sso_username, password)
+        login_ok, cookies_dict, err_msg = await auto_login(page, sc.sso_username, password)
         await browser.close()
     login_ms = (time.perf_counter() - t0) * 1000
     if not login_ok or not cookies_dict:
