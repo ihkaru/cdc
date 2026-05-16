@@ -17,7 +17,8 @@ from pages.assignment_page import get_all_assignments_metadata
 
 from worker.fast_mode import run_fast_sync
 from worker.full_mode import run_full_sync
-from connectivity import ensure_connected
+from connectivity import ensure_connected, FasihConnectionError
+from api_client import FasihAuthError
 
 
 def _progress(phase: str, label: str, **kwargs):
@@ -251,6 +252,21 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    except (FasihConnectionError, FasihAuthError) as e:
+        print(f"❌ Connection/Auth Failure: {e}")
+        log = session.query(SyncLog).get(sync_log.id)
+        log.finished_at = datetime.now(timezone.utc)
+        log.status = "failed"
+        log.notes = f"Infrastructure Failure: {str(e)}"
+        session.commit()
+
+        sync_state.last_result = {
+            "status": "failed",
+            "survey": req.survey_name,
+            "job_id": sync_log.id,
+            "error": str(e),
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
     except TimeoutError:
         print(f"❌ Job Timeout: Sync for {req.survey_name} took longer than 20 minutes.")
         log = session.query(SyncLog).get(sync_log.id)
@@ -266,6 +282,23 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
             "error": "Global timeout exceeded (20 mins)",
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
+    except asyncio.CancelledError:
+        print(f"🛑 Job Cancelled: Sync for {req.survey_name} was interrupted by system shutdown.")
+        log = session.query(SyncLog).get(sync_log.id)
+        log.finished_at = datetime.now(timezone.utc)
+        log.status = "failed"
+        log.notes = "Interrupted by system shutdown (SIGTERM/Restart)"
+        session.commit()
+        
+        sync_state.last_result = {
+            "status": "failed",
+            "survey": req.survey_name,
+            "job_id": sync_log.id,
+            "error": "Interrupted by system shutdown",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+        # Re-raise to allow final cleanup
+        raise
     except Exception as e:
         log = session.query(SyncLog).get(sync_log.id)
         log.finished_at = datetime.now(timezone.utc)

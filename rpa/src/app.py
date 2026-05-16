@@ -93,6 +93,11 @@ async def lifespan(fastapi_app):
         print(f"⚠️ Startup cleanup/recovery failed: {e}")
     
     yield  # Server runs here
+    
+    # On shutdown
+    from state import sync_state
+    sync_state.is_shutting_down = True
+    print("🛑 Shutdown: Signal received. Setting is_shutting_down = True for all workers.")
 
 app = FastAPI(title="FASIH-SM RPA Sync API", version="1.0.0", lifespan=lifespan)
 

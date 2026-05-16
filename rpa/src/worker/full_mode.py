@@ -96,25 +96,26 @@ async def run_full_sync(
         
         # If capped at 1000, we must slice immediately
         if len(results) >= 1000 and parent_full_code:
-            print(f"   ⚠️  [CAP] {f_user.get('label')} hit {len(results)} limit. Diving into sub-regions (Parent: {parent_full_code})...")
+            if sync_state.is_shutting_down: return
+            
+            print(f"   ⚠️  [CAP] {f_user.get('label')} hit {len(results)} limit. Diving into sub-regions...")
             sync_state.progress.phase_label = f"🔬 Slicing {f_user.get('label')}..."
             
             l3_list = await api_client.get_sub_regions(3, region_group_id, parent_full_code)
             if l3_list:
                 async def _slice_l3(l3):
+                    if sync_state.is_shutting_down: return {}
                     sub_f = f_user.copy()
                     sub_f["kec_uuid"] = l3.get("id")
                     sub_f["label"] = f"{f_user.get('label')} - {l3.get('name')}"
-                    sync_state.progress.phase_label = f"🔬 Slicing {f_user.get('label')} -> {l3.get('name')}..."
                     _, sub_res = await _fetch_one(api_client, period_id, prov_code, region_filter, region_group_id, sub_f, sem, 0)
                     local_map = {m.get("id"): m for m in sub_res if m.get("id")}
                     
-                    # Nested Slicing to Level 4 (e.g. RBM)
-                    if len(sub_res) >= 1000:
+                    if len(sub_res) >= 1000 and not sync_state.is_shutting_down:
                         l4_list = await api_client.get_sub_regions(4, region_group_id, l3.get("fullCode"))
                         if l4_list:
-                            print(f"      ⚠️ L3 {l3.get('name')} still capped. Diving to L4...")
                             async def _slice_l4(l4):
+                                if sync_state.is_shutting_down: return {}
                                 sub_f4 = sub_f.copy()
                                 sub_f4["desa_uuid"] = l4.get("id")
                                 _, res4 = await _fetch_one(api_client, period_id, prov_code, region_filter, region_group_id, sub_f4, sem, 0)
@@ -138,6 +139,9 @@ async def run_full_sync(
         print(f"   {status} [{done_count}/{users_total}] {f_user.get('label','?')}: {found_for_this_user} records")
 
     for coro in asyncio.as_completed(all_tasks):
+        if sync_state.is_shutting_down:
+            print("🛑 [FULL] Shutdown detected during metadata fetch.")
+            break
         f, results = await coro
         await _handle_results(f, results)
 
@@ -157,6 +161,7 @@ async def run_full_sync(
     total_skipped = 0
 
     for m in unique_metadata:
+        if sync_state.is_shutting_down: break
         rec_id = m.get("id")
         api_val = m.get("dateModifiedRemote")
         db_val = existing_mods.get(rec_id)
@@ -177,36 +182,29 @@ async def run_full_sync(
         return stats
 
     # --- STEP 3 & 4: Streaming Fetch & Upsert ---
-    # Inisialisasi upserter SEBELUM fetch loop agar bisa streaming commit
     sync_state.progress.phase = "streaming_sync"
-    sync_state.progress.phase_label = f"🚀 Streaming fetch & upsert {len(to_fetch_links):,} records..."
     sync_state.progress.assignments_total = len(to_fetch_links)
     sync_state.progress.assignments_fetched = 0
 
-    # Extremely small batch size for verification
-    print(f"   🔍 Dedup check {total_found:,} records starting...")
-    upserter = BatchUpserterBulk(session, batch_size=10, sync_log_id=sync_log_id)
+    upserter = BatchUpserterBulk(session, batch_size=500, sync_log_id=sync_log_id)
+    
+    try:
+        def on_progress(fetched_count: int, total: int, data_json: Optional[Dict]):
+            sync_state.progress.assignments_fetched = fetched_count
+            sync_state.progress.phase_label = f"⬇️ Detail: {fetched_count}/{total} fetched..."
+            if data_json and not sync_state.is_shutting_down:
+                data_json["_survey_config_id"] = survey_config_id
+                upserter.add(data_json)
 
-    def on_progress(fetched_count: int, total: int, data_json: Optional[Dict]):
-        sync_state.progress.assignments_fetched = fetched_count
-        sync_state.progress.phase_label = (
-            f"⬇️  Detail: {fetched_count}/{total} fetched & streamed..."
+        await fetch_assignments_concurrent(
+            cookie_dict, to_fetch_links,
+            concurrency=DETAIL_CONCURRENCY,
+            on_progress=on_progress
         )
-        if data_json:
-            data_json["_survey_config_id"] = survey_config_id
-            upserter.add(data_json)
-
-    # Menjalankan concurrent fetch, tapi upsert terjadi via callback di dalamnya
-    # fetch_assignments_concurrent tidak lagi perlu return list raksasa
-    await fetch_assignments_concurrent(
-        cookie_dict, to_fetch_links,
-        concurrency=DETAIL_CONCURRENCY,
-        on_progress=on_progress
-    )
-
-    # Final commit untuk sisa batch terakhir
-    stats = upserter.finish()
-    stats.total_skipped += total_skipped
+    finally:
+        # Final commit even if interrupted
+        stats = upserter.finish()
+        stats.total_skipped += total_skipped
     
     print(f"   ✅ Full sync selesai: processed={stats.total_fetched:,}, new={stats.total_new:,}, skipped={stats.total_skipped:,}")
     return stats

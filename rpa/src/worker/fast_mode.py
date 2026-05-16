@@ -123,9 +123,13 @@ async def run_fast_sync(
 
     print(f"🚀 Launching Steady Sync (Concurrency: {FASIH_CONCURRENCY}) for {users_total} users...")
     
-    # Jalankan user dalam batch kecil (misal 10 user sekaligus) agar tidak memukul server di detik yang sama
+    # Jalankan user dalam batch kecil
     BATCH_SIZE = 10
     for i in range(0, users_total, BATCH_SIZE):
+        if sync_state.is_shutting_down:
+            print("🛑 [FAST] Shutdown detected. Stopping fetch loop early...")
+            break
+            
         batch = filters_to_run[i:i+BATCH_SIZE]
         await asyncio.gather(*[_process_user(f) for f in batch])
 
@@ -143,27 +147,33 @@ async def run_fast_sync(
     existing_mods = {}
     CHUNK = 5000
     for i in range(0, len(all_ids), CHUNK):
+        if sync_state.is_shutting_down: break
         existing_mods.update(get_existing_modifications_by_ids(session, all_ids[i:i+CHUNK]))
 
     upserter = BatchUpserterBulk(session, batch_size=2000, sync_log_id=sync_log_id)
-    total_skipped = 0
-    
-    for m in unique_metadata:
-        rec_id = m.get("id")
-        remote_date = m.get("dateModifiedRemote")
-        norm_api = normalize_bps_date(remote_date)
-        norm_db = normalize_bps_date(existing_mods.get(rec_id))
+    try:
+        total_skipped = 0
+        for m in unique_metadata:
+            if sync_state.is_shutting_down:
+                print("🛑 [FAST] Shutdown detected during upsert. Triggering emergency flush...")
+                break
+                
+            rec_id = m.get("id")
+            remote_date = m.get("dateModifiedRemote")
+            norm_api = normalize_bps_date(remote_date)
+            norm_db = normalize_bps_date(existing_mods.get(rec_id))
 
-        if rec_id in existing_mods and norm_db == norm_api and norm_db != "":
-            total_skipped += 1
-        else:
-            upserter.add({
-                "_id": rec_id,
-                "assignment": m,
-                "responses": [],
-                "_survey_config_id": survey_config_id
-            })
-
-    stats = upserter.finish()
-    stats.total_skipped += total_skipped
+            if rec_id in existing_mods and norm_db == norm_api and norm_db != "":
+                total_skipped += 1
+            else:
+                upserter.add({
+                    "_id": rec_id,
+                    "assignment": m,
+                    "responses": [],
+                    "_survey_config_id": survey_config_id
+                })
+    finally:
+        stats = upserter.finish()
+        stats.total_skipped += total_skipped
+        
     return stats

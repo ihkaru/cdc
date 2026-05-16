@@ -9,6 +9,10 @@ from db.models import SurveyConfig, SystemSettings
 from crypto import decrypt_password
 from auth import fetch_vpn_cookie
 
+class FasihConnectionError(Exception):
+    """Raised when VPN or BPS network is fundamentally unreachable."""
+    pass
+
 TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
 
 async def check_fasih_reachable() -> tuple[bool, str]:
@@ -95,9 +99,7 @@ async def ensure_connected():
         # 1. Borrow SSO credentials dari survey aktif
         survey = session.query(SurveyConfig).filter(SurveyConfig.is_active == True).first()
         if not survey:
-            print("   ❌ Tidak ada survey aktif untuk digunakan sebagai kredensial VPN refresh.")
-            print("   ⚠️  Melanjutkan sync meski VPN mungkin bermasalah...")
-            return False
+            raise FasihConnectionError("No active survey found to provide credentials for VPN self-healing.")
 
         username = survey.sso_username
         password = decrypt_password(survey.sso_password_encrypted)
@@ -131,14 +133,15 @@ async def ensure_connected():
                 return True
             print(f"   ⏳ Menunggu reconnect... [{attempt+1}/12] — {info}")
 
-        print("   ⚠️ Cookie diperbarui tapi FASIH masih unreachable setelah 60s.")
-        print("   ⚠️  Melanjutkan sync — mungkin tunnel sudah up tapi check belum stabil...")
-        return False
+        print("   ❌ Cookie diperbarui tapi FASIH masih unreachable setelah 60s.")
+        raise FasihConnectionError(f"VPN self-healing failed: BPS Network unreachable ({info})")
 
+    except FasihConnectionError:
+        raise
     except Exception as e:
         import traceback
         print(f"   ❌ Self-healing error: {e}")
         traceback.print_exc()
-        return False
+        raise FasihConnectionError(f"VPN self-healing exception: {str(e)}")
     finally:
         session.close()

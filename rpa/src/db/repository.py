@@ -436,12 +436,13 @@ class BatchUpserterBulk:
         if len(self._buffer) >= self.batch_size:
             self.flush()
 
-    def flush(self):
+    def flush(self, is_emergency: bool = False):
         """Execute a single INSERT ... ON CONFLICT DO UPDATE for the entire batch."""
         if not self._buffer:
             return
 
         from sqlalchemy.dialects.postgresql import insert as pg_insert
+        prefix = "🚨 [EMERGENCY FLUSH]" if is_emergency else "💾 [BULK FLUSH]"
 
         try:
             stmt = pg_insert(Assignment).values(self._buffer)
@@ -452,7 +453,6 @@ class BatchUpserterBulk:
                     "code_identity", "survey_period_id", "assignment_status_alias",
                     "current_user_username", "data_json", "flat_data",
                     "date_modified_remote", "date_synced", "synced_to_api", "sync_log_id",
-                    # Reset mirrored flag so archiver re-processes with fresh presigned URLs
                     "local_image_mirrored", "local_image_paths",
                 ]
             }
@@ -461,33 +461,37 @@ class BatchUpserterBulk:
                 index_elements=["id"],
                 set_=update_cols,
                 where=(
-                    # Only update rows where the remote data actually changed
-                    # (new status, date, or fresh presigned URLs from FASIH)
-                    Assignment.date_modified_remote != stmt.excluded.date_modified_remote
+                    # Always update if it's an emergency flush to ensure latest state is captured,
+                    # otherwise only update if remote date changed.
+                    (Assignment.date_modified_remote != stmt.excluded.date_modified_remote) or is_emergency
                 )
             )
 
             result = self.session.execute(upsert_stmt)
             self.session.commit()
 
-            # rowcount = rows actually inserted/updated (excludes no-op conflicts)
             inserted_or_updated = result.rowcount if result.rowcount >= 0 else len(self._buffer)
             skipped = len(self._buffer) - inserted_or_updated
-            self.stats.total_new += inserted_or_updated  # Approximate — new+updated combined
+            self.stats.total_new += inserted_or_updated
             self.stats.total_skipped += max(0, skipped)
 
-            print(f"   💾 Bulk flush: {len(self._buffer)} rows → {inserted_or_updated} upserted, {skipped} skipped")
+            print(f"   {prefix} {len(self._buffer)} rows → {inserted_or_updated} upserted, {skipped} skipped")
 
         except Exception as e:
-            # Fallback to per-row ORM if bulk insert fails
-            print(f"   ⚠️ Bulk upsert failed ({e}), falling back to per-row ORM...")
-            self.session.rollback()
+            print(f"   ⚠️ {prefix} failed ({e}), falling back to per-row ORM...")
             self.session.rollback()
             for row_data in self._buffer:
-                upsert_assignment(self.session, row_data, stats=self.stats, sync_log_id=self.sync_log_id)
+                try:
+                    upsert_assignment(self.session, row_data, stats=self.stats, sync_log_id=self.sync_log_id)
+                except Exception as row_err:
+                    print(f"      ❌ Fatal error on single row fallback: {row_err}")
             self.session.commit()
 
         self._buffer.clear()
+
+    def emergency_flush(self):
+        """Called by signal handlers to save data before shutdown."""
+        self.flush(is_emergency=True)
 
     def finish(self) -> SyncStats:
         """Flush remaining and return stats."""
