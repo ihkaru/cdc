@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sat May 16 07:24:56 PM WIB 2026
+Generated at: Sat May 16 07:33:11 PM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -1097,9 +1097,12 @@ services:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - PYTHONPATH=/app:/app/src
+      - VPN_USER=${VPN_USER}
+      - VPN_PASS=${VPN_PASS}
     depends_on:
       vpn:
         condition: service_started
+    command: sh -c "echo '10.1.110.13 fasih-sm.bps.go.id' >> /etc/hosts && python -m uvicorn src.app:app --host 0.0.0.0 --port 8000"
     restart: unless-stopped
 
   vpn-auth:
@@ -1110,10 +1113,12 @@ services:
       - DATABASE_URL=postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - PYTHONPATH=/app:/app/src
+      - VPN_USER=${VPN_USER}
+      - VPN_PASS=${VPN_PASS}
     depends_on:
       vpn:
         condition: service_started
-    command: python -m uvicorn src.app:app --host 0.0.0.0 --port 8001
+    command: sh -c "echo '10.1.110.13 fasih-sm.bps.go.id' >> /etc/hosts && python -m uvicorn src.app:app --host 0.0.0.0 --port 8001"
     restart: unless-stopped
 
   archiver:
@@ -2921,11 +2926,19 @@ while true; do
         else
             echo "⏳ No cookie found in database. Triggering RPA auto-fetch via internet..."
             # RPA shares the same network namespace, so we use 127.0.0.1
-            # We also pass the credentials we already have in our environment.
-            curl -s -X POST "http://127.0.0.1:8000/vpn/auto-fetch" \
-                -H "Content-Type: application/json" \
-                -d "{\"sso_username\":\"$VPN_USER\", \"sso_password\":\"$VPN_PASS\"}" > /dev/null 2>&1 || true
-            sleep 10
+            # We use a retry loop because RPA might still be starting its web server.
+            for attempt in $(seq 1 6); do
+                RESP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:8000/vpn/auto-fetch" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"sso_username\":\"$VPN_USER\", \"sso_password\":\"$VPN_PASS\"}")
+                
+                if [ "$RESP" = "200" ]; then
+                    echo "   ✅ RPA auto-fetch triggered successfully."
+                    break
+                fi
+                echo "   ⚠️ RPA not ready yet ($attempt/6, code: $RESP), retrying in 10s..."
+                sleep 10
+            done
         fi
     fi
 
@@ -3161,9 +3174,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+24f510a fix: implement vpn retry loop and sync coolify rpa environment
 34db98c fix: resolve vpn-rpa circular dependency and update local db hostname in .env
 670e670 chore: harden infrastructure, optimize project dump, and sync coolify config
 cb9481e chore: implement safe naming for database and harden RPA authentication timeouts
 27e6115 chore(deploy): restructure compose files for production stability and local dev
-976a054 fix(deploy): remove volume bind mounts to resolve Coolify OCI runtime errors
 ```

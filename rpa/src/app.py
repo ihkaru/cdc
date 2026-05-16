@@ -66,17 +66,26 @@ async def lifespan(fastapi_app):
         vpn_user = os.getenv("VPN_USER")
         vpn_pass = os.getenv("VPN_PASS")
         if vpn_user and vpn_pass:
-            from auth import fetch_vpn_cookie, sync_cookie_to_db
+            from auth import fetch_vpn_cookie, sync_cookie_to_db, get_current_cookie, FETCH_LOCK
             async def bootstrap_vpn():
-                # Delay slightly to let the server stabilize
-                await asyncio.sleep(5)
-                print(f"🌐 [Startup] Auto-bootstrapping VPN for {vpn_user}...")
-                cookie = await fetch_vpn_cookie(vpn_user, vpn_pass)
-                if cookie:
-                    await sync_cookie_to_db(cookie)
-                    print("✅ [Startup] VPN Auto-bootstrap successful.")
-                else:
-                    print("❌ [Startup] VPN Auto-bootstrap failed.")
+                # Delay slightly to let the infrastructure stabilize (DB, VPN container, etc)
+                await asyncio.sleep(10)
+                
+                async with FETCH_LOCK:
+                    # CHECK DB FIRST: Don't fetch if we already have a cookie
+                    # This prevents redundant Playwright sessions on every RPA restart
+                    existing = await get_current_cookie()
+                    if existing:
+                        print("ℹ️ [Startup] VPN Cookie already exists in DB. Skipping auto-bootstrap.")
+                        return
+
+                    print(f"🌐 [Startup] No cookie found. Auto-bootstrapping VPN for {vpn_user}...")
+                    cookie = await fetch_vpn_cookie(vpn_user, vpn_pass)
+                    if cookie:
+                        await sync_cookie_to_db(cookie)
+                        print("✅ [Startup] VPN Auto-bootstrap successful.")
+                    else:
+                        print("❌ [Startup] VPN Auto-bootstrap failed.")
             
             asyncio.create_task(bootstrap_vpn())
 

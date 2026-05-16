@@ -167,44 +167,33 @@ async def check_vpn():
 @router.post("/vpn/auto-fetch")
 async def auto_fetch_vpn(req: VpnCookieRequest):
     """Otomasi ambil VPN cookie dan simpan ke database."""
-    if sync_state.is_vpn_fetching:
+    from auth import FETCH_LOCK, get_current_cookie, sync_cookie_to_db
+
+    if FETCH_LOCK.locked():
         return {"status": "already_fetching", "message": "Proses auto-fetch VPN sedang berjalan..."}
 
     if not req.sso_username or not req.sso_password:
         print("   ❌ Gagal: Username atau Password SSO kosong!")
         raise HTTPException(status_code=400, detail="SSO Username and Password are required")
 
-    sync_state.is_vpn_fetching = True
-    try:
-        user_display = f"{req.sso_username[:3]}***" if req.sso_username else "None"
-        print(f"🔄 Memulai auto-fetch VPN cookie untuk user {user_display}...")
-        cookie = await fetch_vpn_cookie(req.sso_username, req.sso_password)
-    finally:
-        sync_state.is_vpn_fetching = False
-    
-    if cookie:
+    async with FETCH_LOCK:
+        # Check if cookie already exists (maybe another trigger finished just now)
+        existing = await get_current_cookie()
+        if existing:
+            return {"status": "success", "message": "Cookie sudah ada di database, melewati fetch."}
+
         try:
-            reset_engine()
-            init_db()
-            session = get_session()
+            user_display = f"{req.sso_username[:3]}***" if req.sso_username else "None"
+            print(f"🔄 Memulai auto-fetch VPN cookie untuk user {user_display}...")
+            cookie = await fetch_vpn_cookie(req.sso_username, req.sso_password)
             
-            # Upsert
-            setting = session.query(SystemSettings).filter_by(key="vpn_cookie").first()
-            if setting:
-                setting.value = cookie
-                setting.updated_at = datetime.now(timezone.utc)
+            if cookie:
+                await sync_cookie_to_db(cookie)
+                return {"status": "success", "message": "VPN cookie berhasil diperbarui"}
             else:
-                setting = SystemSettings(key="vpn_cookie", value=cookie)
-                session.add(setting)
-                
-            session.commit()
-            session.close()
-            
-            return {"status": "success", "message": "VPN cookie berhasil diperbarui"}
+                raise HTTPException(status_code=400, detail="Gagal mendapatkan VPN cookie dari Keycloak SSO")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Database error: {e}")
-    else:
-        raise HTTPException(status_code=400, detail="Gagal mendapatkan VPN cookie dari Keycloak SSO")
+            raise HTTPException(status_code=500, detail=f"Fetch error: {e}")
 
 
 @router.post("/sync/refresh-assignment/{assignment_id}")

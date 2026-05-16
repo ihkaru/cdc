@@ -4,6 +4,23 @@ import psycopg2
 import json
 from playwright.async_api import async_playwright
 
+# Global lock to prevent multiple simultaneous Playwright sessions for cookie fetching
+FETCH_LOCK = asyncio.Lock()
+
+async def get_current_cookie():
+    """Retrieve the current vpn_cookie from the database."""
+    try:
+        db_url = os.getenv("DATABASE_URL")
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM system_settings WHERE key = 'vpn_cookie'")
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row[0] if row else None
+    except Exception:
+        return None
+
 async def launch_stealth_browser(p):
     """Launch a browser optimized for BPS portal compatibility."""
     return await p.chromium.launch(
