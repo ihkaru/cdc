@@ -173,6 +173,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ sso_username: ssoUsername, sso_password: ssoPassword }),
+            signal: AbortSignal.timeout(90000)
         });
 
         if (!response.ok) {
@@ -222,6 +223,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
                 sso_password: ssoPassword,
                 prov_full_code: provFullCode,
             }),
+            signal: AbortSignal.timeout(90000)
         });
 
         if (!response.ok) {

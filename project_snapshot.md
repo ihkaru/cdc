@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sat May 16 07:40:00 PM WIB 2026
+Generated at: Sat May 16 08:04:10 PM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -3396,9 +3396,9 @@ if [ -n "$S3_IP" ]; then
     echo "$S3_IP s3" >> /etc/hosts
 fi
 
-# 📉 Set eth0 MTU to 900 to prevent fragmentation on BPS network
-echo "📉 Setting eth0 MTU to 900..."
-ip link set eth0 mtu 900 2>/dev/null || true
+# 📉 Set eth0 MTU to 500 to prevent fragmentation on BPS network
+echo "📉 Setting eth0 MTU to 500..."
+ip link set eth0 mtu 500 2>/dev/null || true
 
 GATEWAY_IP=$(ip route | grep default | awk '{print $3}')
 
@@ -3493,8 +3493,8 @@ apply_smart_routing() {
             ip route add 172.16.2.3/32 dev "$VPN_IF" 2>/dev/null || true
             ip route add 10.0.0.0/8 dev "$VPN_IF" 2>/dev/null || true
             
-            echo "📉 Setting $VPN_IF MTU to 900..."
-            ip link set dev "$VPN_IF" mtu 900 || true
+            echo "📉 Setting $VPN_IF MTU to 500..."
+            ip link set dev "$VPN_IF" mtu 500 || true
             
             echo "✅ BPS Routing updated."
         else
@@ -3778,9 +3778,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+847f08d docs: final architecture snapshot with autoheal and deep healthchecks
 3273044 feat: implement autoheal supervisor and fix missing dns in coolify
 f64ae19 chore: include rpa routes and worker logic in project dump
 9c05129 feat: implement smart bootstrap, global locking, and zombie network healing
 24f510a fix: implement vpn retry loop and sync coolify rpa environment
-34db98c fix: resolve vpn-rpa circular dependency and update local db hostname in .env
 ```
