@@ -83,6 +83,49 @@ class FasihApiClient:
 
         return self
 
+    async def _request(self, method: str, path: str, **kwargs) -> Optional[dict]:
+        """Perform a request using the persistent ClientSession, with Response Guardian redirect checks."""
+        url = f"{TARGET_URL}/{path.lstrip('/')}"
+        
+        # Merge dynamic headers
+        req_headers = self._get_headers()
+        if "headers" in kwargs:
+            req_headers.update(kwargs.pop("headers"))
+            
+        try:
+            async with self.session.request(method, url, headers=req_headers, **kwargs) as resp:
+                # 1. Response Guardian: Detect SSO Login redirects (Scenario 2)
+                if "oauth_login" in str(resp.url) or "sso.bps.go.id" in str(resp.url):
+                    print("   🚨 [API] Response Guardian: Detected redirection to SSO login. Session expired!", flush=True)
+                    raise FasihAuthError("Session expired: redirected to SSO login")
+                
+                # 2. Check for explicit authentication statuses
+                if resp.status in (401, 403):
+                    print(f"   🚨 [API] Authentication failed (HTTP {resp.status})", flush=True)
+                    raise FasihAuthError(f"Authentication failed with HTTP {resp.status}")
+                
+                if resp.status != 200:
+                    text = await resp.text()
+                    print(f"   ⚠️ [API] Request to {path} failed (HTTP {resp.status}): {text[:200]}", flush=True)
+                    return None
+                
+                # Try to parse json
+                try:
+                    return await resp.json()
+                except Exception as json_err:
+                    text = await resp.text()
+                    # If it's HTML, check if it's the SSO login page (in case redirect wasn't fully detected by URL)
+                    if "<html" in text.lower() and ("login" in text.lower() or "sso" in text.lower()):
+                        print("   🚨 [API] Response Guardian: Detected HTML login page structure. Session expired!", flush=True)
+                        raise FasihAuthError("Session expired: returned HTML login page instead of JSON")
+                    print(f"   ⚠️ [API] Failed to parse JSON response from {path}: {json_err}", flush=True)
+                    return None
+        except FasihAuthError:
+            raise
+        except Exception as e:
+            print(f"   ⚠️ [API] Connection error during request to {path}: {e}", flush=True)
+            raise
+
     def _get_headers(self) -> Dict[str, str]:
         """Dynamically build headers with latest XSRF-TOKEN from cookie jar."""
         headers = {

@@ -20,6 +20,8 @@ from sqlalchemy import select, and_, cast, Text, update, or_
 from db.connection import get_session
 from db.models import Assignment, SurveyConfig
 from storage import upload_image
+from connectivity import check_fasih_reachable
+from api_client import FasihAuthError
 import time
 
 # Domain pattern for BPS images (can be fasih-sm.bps.go.id or bucket1.cloud.bps.go.id)
@@ -314,6 +316,8 @@ async def mirror_assignment_images(db: Session, assignment: Assignment, rpa=None
             logger.warning(f"{log_prefix} ⏳ 403 healing failed — will retry next cycle.")
             return False
 
+    except FasihAuthError:
+        raise
     except Exception as e:
         logger.error(f"Error mirroring assignment {assignment.id}: {e}")
         db.rollback()
@@ -407,6 +411,18 @@ async def archiver_worker():
     
     while True:
         try:
+            # 1. Connectivity Guard: Verify VPN tunnel and BPS reachability
+            reachable, reason = await check_fasih_reachable()
+            if not reachable:
+                logger.warning(f"⏳ [Archiver] BPS VPN Network unreachable ({reason}). Pausing for 60s...")
+                try:
+                    with open("/tmp/archiver_heartbeat", "w") as f:
+                        f.write(str(time.time()))
+                except:
+                    pass
+                await asyncio.sleep(60)
+                continue
+
             db = get_session()
 
             # --- PASS 1: Only fetch assignments that actually contain image URLs ---
@@ -472,8 +488,16 @@ async def archiver_worker():
                     logger.info(f"   🔑 [Archiver] SSO cookies loaded ({len(cookies_dict)} cookies). Healing capability: ENABLED.")
                 except Exception as ce:
                     logger.warning(f"   ⚠️ [Archiver] Failed to parse sso_cookies: {ce}")
-            else:
-                logger.warning("   ⚠️ [Archiver] No 'sso_cookies' in system_settings. Run a Sync first to populate. Healing: DISABLED.")
+            
+            if not cookies_dict:
+                logger.warning("⏳ [Archiver] No valid 'sso_cookies' in system_settings. Stale or empty session cookies. Pausing for 5 minutes waiting for RPA Sync to auto-reauthenticate...")
+                try:
+                    with open("/tmp/archiver_heartbeat", "w") as f:
+                        f.write(str(time.time()))
+                except:
+                    pass
+                await asyncio.sleep(300)
+                continue
 
             semaphore = asyncio.Semaphore(10)
             
@@ -506,6 +530,9 @@ async def archiver_worker():
                                      {"cnt": count_to_add, "log_id": log_id}
                                  )
                                  task_db.commit()
+                    except FasihAuthError:
+                        task_db.rollback()
+                        raise
                     except Exception as e:
                         logger.error(f"   ❌ Mirroring task error for {assignment_id}: {e}")
                         import traceback
@@ -523,6 +550,14 @@ async def archiver_worker():
 
             logger.info(f"Batch complete. Continuing loop...")
             
+        except FasihAuthError as ae:
+            logger.warning(f"🔑 [Archiver] SSO session/cookie authentication failed: {ae}. Pausing for 5 minutes to let RPA scheduler perform SSO re-authentication...")
+            try:
+                with open("/tmp/archiver_heartbeat", "w") as f:
+                    f.write(str(time.time()))
+            except:
+                pass
+            await asyncio.sleep(300)
         except Exception as e:
             logger.error(f"Archiver loop error: {e}")
             await asyncio.sleep(5)
