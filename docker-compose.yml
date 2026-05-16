@@ -10,9 +10,6 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=coolify"
       - "coolify.managed=true"
-    volumes:
-      - ./dashboard/server:/app/server
-      - ./dashboard/entrypoint.sh:/app/entrypoint.sh
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - RPA_URL=http://vpn:8000
@@ -83,8 +80,6 @@ services:
     network_mode: "service:vpn"
     labels:
       - "coolify.managed=false"
-    volumes:
-      - ./rpa:/app
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -112,8 +107,6 @@ services:
     network_mode: "service:vpn"
     labels:
       - "coolify.managed=false"
-    volumes:
-      - ./rpa:/app
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -136,8 +129,6 @@ services:
     network_mode: "service:vpn"
     labels:
       - "coolify.managed=false"
-    volumes:
-      - ./rpa:/app
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - S3_ACCESS_KEY=${S3_ACCESS_KEY:-fasihadmin}
