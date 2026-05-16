@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sun May 17 05:34:31 AM WIB 2026
+Generated at: Sun May 17 05:56:38 AM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -1392,6 +1392,12 @@ echo "🚀 Generating HIGHLY OPTIMIZED project dump to $OUTPUT_FILE..."
     "dashboard/server/db/index.ts"
     "rpa/src/app.py"
     "rpa/src/auth.py"
+    "rpa/src/api_client.py"
+    "rpa/src/worker/job_runner.py"
+    "rpa/src/db/repository.py"
+    "rpa/src/connectivity.py"
+    "rpa/src/state.py"
+    "rpa/src/pages/detail_page.py"
     "rpa/src/routes/sync.py"
     "rpa/src/worker/scheduler.py"
     "rpa/src/worker/queue.py"
@@ -2234,6 +2240,11 @@ async def lifespan(fastapi_app):
         print(f"⚠️ Startup cleanup/recovery failed: {e}")
     
     yield  # Server runs here
+    
+    # On shutdown
+    from state import sync_state
+    sync_state.is_shutting_down = True
+    print("🛑 Shutdown: Signal received. Setting is_shutting_down = True for all workers.")
 
 app = FastAPI(title="FASIH-SM RPA Sync API", version="1.0.0", lifespan=lifespan)
 
@@ -2482,6 +2493,1801 @@ async def new_stealth_context(browser, **kwargs):
     }
     options = {**defaults, **kwargs}
     return await browser.new_context(**options)
+```
+
+### rpa/src/api_client.py
+```python
+import os
+import aiohttp
+import ssl
+import re
+from typing import List, Dict, Tuple, Optional
+
+import asyncio
+from functools import wraps
+
+TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
+
+class FasihAuthError(Exception):
+    """Exception raised when SSO session is expired or redirected to login page."""
+    pass
+
+def with_retry(retries=3, delay=5):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            last_err = None
+            for attempt in range(1, retries + 1):
+                try:
+                    return await func(*args, **kwargs)
+                except FasihAuthError:
+                    raise
+                except Exception as e:
+                    last_err = e
+                    print(f"   ⚠️ [API] Attempt {attempt}/{retries} failed: {e}. Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+            print(f"   ❌ [API] Failed after {retries} attempts.")
+            raise last_err
+        return wrapper
+    return decorator
+
+class FasihApiClient:
+    def __init__(self, cookies: Dict[str, str]):
+        self.cookies = cookies
+        self.ssl_ctx = ssl.create_default_context()
+        self.ssl_ctx.check_hostname = False
+        self.ssl_ctx.verify_mode = ssl.CERT_NONE
+        
+        # Use a persistent cookie jar and session
+        self.jar = aiohttp.CookieJar(unsafe=True)
+        self._session: Optional[aiohttp.ClientSession] = None
+        
+        # Pre-populate jar with initial cookies from Playwright
+        from yarl import URL
+        target_url = URL(TARGET_URL)
+        for name, value in self.cookies.items():
+            self.jar.update_cookies({name: value}, target_url)
+
+    async def __aenter__(self):
+        """Open a single persistent ClientSession for the entire sync cycle."""
+        # Initial headers bootstrap
+        headers = self._get_headers()
+
+        self._session = aiohttp.ClientSession(
+            cookie_jar=self.jar,
+            headers=headers,
+            connector=aiohttp.TCPConnector(ssl=self.ssl_ctx, limit=100, limit_per_host=30),
+            timeout=aiohttp.ClientTimeout(total=45, connect=15)
+        )
+        
+        # Optional: Bootstrap hit to ensure session and F5 cookies are active
+        try:
+            async with self._session.get(f"{TARGET_URL}/") as resp:
+                if resp.status == 200:
+                    print(f"   🌐 [API] Session bootstrapped successfully (HTTP 200)")
+                else:
+                    print(f"   ⚠️ [API] Session bootstrap returned status {resp.status}")
+        except Exception as e:
+            print(f"   ⚠️ [API] Session bootstrap failed: {e}")
+        
+        # Log active cookies sample for debugging (masked for security)
+        try:
+            sample = []
+            for c in self.jar:
+                val = c.value[:4] + "..." if len(c.value) > 4 else "***"
+                sample.append(f"{c.key}={val}")
+            print(f"   🐛 [API] Active Cookies: {', '.join(sample)}")
+        except:
+            pass
+
+        return self
+
+    def _get_headers(self) -> Dict[str, str]:
+        """Dynamically build headers with latest XSRF-TOKEN from cookie jar."""
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        
+        # Try to find XSRF-TOKEN in the cookie jar
+        xsrf_token = None
+        for cookie in self.jar:
+            if cookie.key == "XSRF-TOKEN":
+                from urllib.parse import unquote
+                raw_token = cookie.value
+                xsrf_token = unquote(raw_token)
+                if raw_token != xsrf_token:
+                    print(f"   🐛 [API] Header XSRF-TOKEN unquoted: {raw_token[:5]}... -> {xsrf_token[:5]}...")
+                break
+        
+        if xsrf_token:
+            headers["X-XSRF-TOKEN"] = xsrf_token
+            
+        return headers
+
+    async def close(self):
+        await self.__aexit__()
+
+    async def __aexit__(self, *args):
+        if self._session:
+            await self._session.close()
+            self._session = None
+
+    @property
+    def session(self) -> aiohttp.ClientSession:
+        if not self._session:
+            self._session = aiohttp.ClientSession(
+                cookie_jar=self.jar,
+                headers=self._get_headers(),
+                connector=aiohttp.TCPConnector(ssl=self.ssl_ctx, limit=100, limit_per_host=30),
+                timeout=aiohttp.ClientTimeout(total=45, connect=15)
+            )
+        return self._session
+
+    # Keep backward-compat for old code that calls create_session()
+    async def create_session(self) -> aiohttp.ClientSession:
+        """Deprecated: returns self._session if open, otherwise creates a temp one."""
+        if self._session and not self._session.closed:
+            class _Noop:
+                """Fake async context manager wrapping existing session."""
+                def __init__(self, s): self._s = s
+                async def __aenter__(self): return self._s
+                async def __aexit__(self, *a): pass
+            return _Noop(self._session)  # type: ignore
+        # Fallback for any call outside context manager
+        return aiohttp.ClientSession(
+            cookie_jar=self.jar,
+            headers=self._get_headers(),
+            connector=aiohttp.TCPConnector(ssl=self.ssl_ctx, limit=100),
+            timeout=aiohttp.ClientTimeout(total=45, connect=15)
+        )
+
+    @with_retry()
+    async def get_survey_id(self, survey_name: str) -> Optional[str]:
+        """Cari Survey ID berdasarkan nama survey"""
+        print(f"📋 [API] Mencari survey: '{survey_name}'...")
+        
+        path = "survey/api/v1/surveys/datatable?surveyType=Pencacahan"
+        target_clean = re.sub(r'[^a-z0-9]', '', survey_name.lower())
+        
+        page = 0
+        while True:
+            payload = {
+                "pageNumber": page,
+                "pageSize": 100,
+                "sortBy": "CREATED_AT",
+                "sortDirection": "DESC",
+                "keywordSearch": ""
+            }
+            
+            body = await self._request("POST", path, json=payload)
+            if not body or not body.get("success"):
+                return None
+                
+            data = body.get("data", {}).get("content", [])
+            if not data:
+                break
+                
+            for survey in data:
+                s_name = survey.get("name", "")
+                s_clean = re.sub(r'[^a-z0-9]', '', s_name.lower())
+                if target_clean and (target_clean in s_clean or s_clean in target_clean):
+                    s_id = survey.get("id")
+                    print(f"   ✅ [API] Ditemukan: '{s_name}' → ID: {s_id}")
+                    return s_id
+                    
+            total_pages = body.get("data", {}).get("totalPage", 1)
+            if page >= total_pages - 1:
+                break
+            
+            page += 1
+                    
+        print(f"   ❌ [API] Survey '{survey_name}' tidak ditemukan dari seluruh halaman.")
+        return None
+
+    @with_retry()
+    async def get_survey_period_and_roles(self, survey_id: str) -> Tuple[Optional[str], List[str], Optional[str]]:
+        """Mendapatkan Active Period ID, semua Role ID, dan surveyRoleGroupId untuk suatu survey."""
+        print(f"   📋 [API] Mencari periode survey dan role untuk ID: {survey_id}...")
+        
+        path = f"survey/api/v1/survey-periods?surveyId={survey_id}"
+        body = await self._request("GET", path)
+        if not body:
+            return None, [], None
+            
+        periods = body.get("data", [])
+        if not periods:
+            print(f"   ❌ [API] Tidak ada periode ditemukan.")
+            return None, [], None
+            
+        period_id = periods[0].get("id")
+        
+        # Also check /my endpoint
+        my_body = await self._request("GET", f"survey/api/v1/survey-periods/my?surveyId={survey_id}")
+        if my_body and my_body.get("data"):
+            period_id = my_body["data"][0].get("id")
+            print(f"   📅 [API] Menggunakan period dari /my: {period_id}")
+        
+        # Fetch role ID + role group ID
+        role_body = await self._request("GET", f"survey/api/v1/survey-roles?surveyId={survey_id}")
+        if not role_body:
+            return period_id, [], None
+
+        roles = role_body.get("data", [])
+        role_ids = [r.get("id") for r in roles] if roles else []
+        role_group_id = roles[0].get("surveyRoleGroupId") if roles else None
+            
+        print(f"   ✅ [API] Period: {period_id}, {len(role_ids)} roles, group: {role_group_id}")
+        return period_id, role_ids, role_group_id
+        return None, [], None
+
+    @with_retry()
+    async def get_region_metadata(self, provinsi_name: Optional[str], kabupaten_name: Optional[str], survey_id: str) -> Tuple[Optional[str], Optional[str], Optional[str], str]:
+        """Mencari UUID region berdasarkan teks filter UI."""
+        print("   🔍 [API] Menarik struktur metadata region...")
+        
+        # Get Region Group ID
+        group_id = "82af087a-d063-48b9-8633-71c84c4e7422"  # Standard fallback
+        s_data = await self._request("GET", f"survey/api/v1/surveys/{survey_id}")
+        if s_data and s_data.get("data"):
+            fetched_group = s_data["data"].get("regionGroupId")
+            if fetched_group:
+                group_id = fetched_group
+                print(f"   ✅ [API] Extracted dynamic regionGroupId: {group_id}")
+
+        # Get Provincial Region Code
+        prov_uuid, prov_full_code = None, None
+        if provinsi_name:
+            data = await self._request("GET", f"region/api/v1/region/level1?groupId={group_id}")
+            if data:
+                regions = data.get("data", [])
+                clean_prov_name = re.sub(r'\[\d+\]', '', provinsi_name).lower().strip()
+                search_words = [w for w in clean_prov_name.split(' ') if len(w) > 2]
+                for r in regions:
+                    label = r.get("name", "").lower()
+                    if all(word in label for word in search_words):
+                        prov_uuid = r.get("id")
+                        prov_full_code = r.get("fullCode")
+                        break
+                            
+        # Get Kabupaten Region UUID
+        kab_uuid, kab_full_code = None, None
+        if kabupaten_name and prov_full_code:
+            data = await self._request("GET", f"region/api/v1/region/level2?groupId={group_id}&level1FullCode={prov_full_code}")
+            if data:
+                regions = data.get("data", [])
+                clean_kab_name = re.sub(r'\[\d+\]', '', kabupaten_name).lower().strip()
+                search_words = [w for w in clean_kab_name.split(' ') if len(w) > 2]
+                for r in regions:
+                    label = r.get("name", "").lower()
+                    if all(word in label for word in search_words):
+                        kab_uuid = r.get("id")
+                        kab_full_code = r.get("fullCode")
+                        break
+            
+        region_uuid_for_filter = kab_uuid if kab_uuid else prov_uuid
+        region_full_code = kab_full_code if kab_full_code else prov_full_code
+        return prov_uuid, region_uuid_for_filter, region_full_code, group_id
+
+    @with_retry()
+    async def get_users_by_region(
+        self, period_id: str, role_ids: List[str],
+        region_code: str, role_group_id: Optional[str] = None
+    ) -> Tuple[List[Dict], List[Dict]]:
+        """Mendapatkan pengawas & pencacah."""
+        pengawas_list = []
+        pencacah_list = []
+        seen_ids: set = set()
+
+        def _add_user(user: dict, is_pencacah: bool):
+            uid = user.get('userId') or user.get('id')
+            if not uid or uid in seen_ids:
+                return
+            seen_ids.add(uid)
+            entry = {
+                'fullname': user.get('fullname', '') or user.get('user', {}).get('fullname', ''),
+                'username': user.get('username', '') or user.get('user', {}).get('username', ''),
+                'userId': uid,
+                'isPencacah': is_pencacah,
+                'description': user.get('description', ''),
+            }
+            if is_pencacah: pencacah_list.append(entry)
+            else: pengawas_list.append(entry)
+
+        for role_id in role_ids:
+            path = f"survey/api/v1/survey-period-role-users/region?surveyPeriodId={period_id}&surveyRoleId={role_id}&regionCode={region_code}"
+            body = await self._request("GET", path)
+            if body and body.get("data"):
+                for user in body["data"]:
+                    _add_user(user, user.get('isPencacah', False))
+
+        if role_group_id:
+            for role_id in role_ids:
+                dt_url = f"analytic/api/v2/survey-period-role-user/datatable?surveyPeriodId={period_id}&surveyRoleGroupId={role_group_id}&surveyRoleId={role_id}"
+                payload = {"pageNumber": 0, "pageSize": 200, "sortBy": "ID", "sortDirection": "ASC", "keywordSearch": ""}
+                body = await self._request("POST", dt_url, json=payload)
+                if body and body.get("data"):
+                    for user in body["data"].get("searchData", []):
+                        role_info = user.get("surveyRole", {})
+                        is_pencacah = role_info.get("isPencacah", False)
+                        flat = {
+                            'userId': user.get("userId"),
+                            'fullname': user.get("user", {}).get("fullname", ""),
+                            'username': user.get("user", {}).get("username", ""),
+                            'description': role_info.get("description", ""),
+                            'isPencacah': is_pencacah,
+                        }
+                        _add_user(flat, is_pencacah)
+
+        return pengawas_list, pencacah_list
+
+    @with_retry()
+    async def get_assignments_metadata(self, period_id: str, prov_uuid: Optional[str] = None, kab_uuid: Optional[str] = None, 
+                                       kec_uuid: Optional[str] = None, desa_uuid: Optional[str] = None,
+                                       pengawas_id: Optional[str] = None, pencacah_id: Optional[str] = None, region_group_id: Optional[str] = None) -> List[Dict]:
+        """Tarik Assignment Datatable hingga habis."""
+        path = "analytic/api/v2/assignment/datatable-all-user-survey-periode"
+        all_metadata = []
+        page_start = 0
+        page_size = 1000
+        while True:
+            payload = {
+                "draw": (page_start // page_size) + 1,
+                "columns": [{"data": "id", "name": "", "searchable": True, "orderable": False, "search": {"value": "", "regex": False}}],
+                "order": [{"column": 0, "dir": "asc"}],
+                "start": page_start,
+                "length": page_size,
+                "search": {"value": "", "regex": False},
+                "assignmentExtraParam": {
+                    "region1Id": prov_uuid, "region2Id": kab_uuid, "region3Id": kec_uuid, "region4Id": desa_uuid,
+                    "surveyPeriodId": period_id, "assignmentErrorStatusType": -1,
+                    "filterTargetType": "ALL" if not (pencacah_id or pengawas_id) else "TARGET_ONLY",
+                    "regionGroupId": region_group_id
+                }
+            }
+            if pencacah_id or pengawas_id:
+                payload["assignmentExtraParam"]["currentUserId"] = pencacah_id or pengawas_id
+            
+            body = await self._request("POST", path, json=payload)
+            if not body: break
+            
+            search_data = body.get("data", body.get("searchData", []))
+            if not search_data: break
+
+            for item in search_data:
+                rec_id = item.get("id") or item.get("_id") or item.get("assignmentId")
+                remote_date_raw = (item.get("dateModified") or item.get("updatedAt") or item.get("dateModifiedRemote") or item.get("date_modified"))
+                
+                def _norm_date(d_raw):
+                    if not d_raw: return ""
+                    s = str(d_raw).strip()
+                    if s.isdigit() and len(s) == 14: return s
+                    from datetime import datetime, timedelta
+                    try:
+                        dt = datetime.strptime(s, "%b %d, %Y, %I:%M:%S %p")
+                        return (dt - timedelta(hours=7)).strftime("%Y%m%d%H%M%S")
+                    except: return re.sub(r'\D', '', s)[:14]
+
+                if rec_id:
+                    all_metadata.append({"id": rec_id, "dateModifiedRemote": _norm_date(remote_date_raw)})
+
+            if len(search_data) < page_size: break
+            page_start += page_size
+        
+        return all_metadata
+
+    @with_retry(retries=3, delay=2)
+    async def get_assignment_detail(self, assignment_id: str) -> Optional[Dict]:
+        """Fetch the latest assignment detail JSON (includes fresh S3 links)."""
+        url = f"{TARGET_URL}/assignment-general/api/assignment/get-by-id-with-data-for-scm?id={assignment_id}"
+        print(f"   🔄 [API] Refreshing detail for assignment: {assignment_id}...")
+        
+        async with await self.create_session() as session:
+            async with session.get(url, headers=self._get_headers()) as resp:
+
+                if resp.status != 200:
+                    text = await resp.text()
+                    print(f"   ❌ [API] Failed to fetch detail (HTTP {resp.status}): {text[:200]}")
+                    return None
+                    
+                body = await resp.json()
+                if body and body.get("success"):
+                    data = body.get("data")
+                    if data:
+                        # Log data keys to trace structure
+                        keys = list(data.keys()) if isinstance(data, dict) else "list"
+                        print(f"   ✨ [API] Detail fetch success. Top-level keys: {keys}")
+                    return data
+                
+                print(f"   ❌ [API] Detail fetch failed success=False. Body: {body}")
+                return None
+
+    @with_retry(retries=3, delay=2)
+    async def get_fresh_image_urls(self, survey_period_id: str, assignments_payload: list[dict]) -> dict:
+        """
+        Request new S3 presigned URLs for expired images.
+        Payload structure matching BPS backend:
+        [{"assignmentId": "...", "fileNames": ["filename.jpg", ...]}]
+        """
+        try:
+            url = f"{TARGET_URL}/assignment-general/api/image/presigned-url-get?surveyPeriodId={survey_period_id}"
+            
+            # Sanitize payload: Ensure fileNames only contain the simplified identifier (basename),
+            # stripping any surveyPeriodId/ or other path prefixes to avoid 400 Bad Request errors.
+            sanitized_payload = []
+            for item in assignments_payload:
+                clean_filenames = []
+                for fn in item.get("fileNames", []):
+                    clean_fn = fn.split("/")[-1].split("?")[0]
+                    clean_filenames.append(clean_fn)
+                sanitized_payload.append({
+                    "assignmentId": item.get("assignmentId"),
+                    "fileNames": clean_filenames
+                })
+            
+            print(f"   🔄 [API] Requesting {sum(len(a.get('fileNames', [])) for a in sanitized_payload)} fresh presigned URLs...", flush=True)
+            
+            headers = self._get_headers()
+            print(f"   🐛 [API] X-XSRF-TOKEN in header: {headers.get('X-XSRF-TOKEN', 'MISSING')[:10]}...", flush=True)
+
+            async with await self.create_session() as session:
+                async with session.post(url, json=sanitized_payload, headers=headers, timeout=45) as resp:
+                    status = resp.status
+                    print(f"   🐛 [API] POST /presigned-url-get returned status {status}", flush=True)
+                    
+                    if status != 200:
+                        text = await resp.text()
+                        print(f"   ❌ [API] Failed to fetch fresh presigned URLs (HTTP {status})", flush=True)
+                        print(f"   🐛 [API] Request URL: {url}", flush=True)
+                        print(f"   🐛 [API] Error Body: {text[:500]}", flush=True)
+                        return None
+                    
+                    raw_data = await resp.json()
+                    print(f"   🐛 [API] raw_data received: {str(raw_data)[:100]}...", flush=True)
+                    
+                    # Unwrap BPS API standard response { "success": true, "data": ... }
+                    if isinstance(raw_data, dict) and "success" in raw_data and "data" in raw_data:
+                        actual_data = raw_data.get("data", [])
+                    else:
+                        actual_data = raw_data
+                        
+                    result_map = {}
+                    if isinstance(actual_data, list):
+                        for item in actual_data:
+                            if isinstance(item, dict):
+                                urls_list = item.get("presignedUrls", [])
+                                for url_obj in urls_list:
+                                    if isinstance(url_obj, dict) and "fileName" in url_obj and "presignedUrl" in url_obj:
+                                        result_map[url_obj["fileName"]] = url_obj["presignedUrl"]
+                    elif isinstance(actual_data, dict):
+                        result_map = actual_data
+                    
+                    print(f"   🐛 [API] Found {len(result_map)} urls in result_map", flush=True)
+                    return result_map
+        except Exception as e:
+            print(f"   ❌ [API] Error fetching presigned URLs: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return None
+
+    @with_retry(retries=3, delay=2)
+    async def download_content(self, url: str) -> Optional[bytes]:
+        """Download raw content from a URL using the authenticated session, forcing cookies for cross-domain S3."""
+        if not self._session:
+            return None
+            
+        # Manually extract cookies from jar to bypass domain restrictions in aiohttp
+        cookie_header = ""
+        try:
+            cookies = []
+            for cookie in self.jar:
+                cookies.append(f"{cookie.key}={cookie.value}")
+            cookie_header = "; ".join(cookies)
+        except:
+            pass
+
+        headers = self._get_headers()
+        if cookie_header:
+            headers["Cookie"] = cookie_header
+            
+        async with self._session.get(url, headers=headers, timeout=60) as resp:
+            if resp.status == 200:
+                return await resp.read()
+            
+            print(f"   ❌ [API] Content download failed (HTTP {resp.status}): {url[:100]}...")
+            return None
+```
+
+### rpa/src/worker/job_runner.py
+```python
+import os
+import asyncio
+from datetime import datetime, timezone
+from playwright.async_api import async_playwright
+
+from db.connection import init_db, get_session, reset_engine
+from db.models import SyncLog, SystemSettings, Assignment
+from db.repository import SyncStats
+
+from state import sync_state
+from schemas import SyncRequest
+from auth import auto_login, launch_stealth_browser, new_stealth_context
+from api_client import FasihApiClient
+from pages.survey_navigator import find_survey_id, navigate_to_data_tab
+from pages.filter_rotator import iterate_filters, get_total_entries
+from pages.assignment_page import get_all_assignments_metadata
+
+from worker.fast_mode import run_fast_sync
+from worker.full_mode import run_full_sync
+from connectivity import ensure_connected, FasihConnectionError
+from api_client import FasihAuthError
+
+
+def _progress(phase: str, label: str, **kwargs):
+    """Update sync_state.progress with current phase info."""
+    sync_state.progress.phase = phase
+    sync_state.progress.phase_label = label
+    for k, v in kwargs.items():
+        if hasattr(sync_state.progress, k):
+            setattr(sync_state.progress, k, v)
+    print(f"📊 [PROGRESS] [{phase}] {label}")
+
+async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
+    """Run the actual sync cycle for one job."""
+    
+    # Check and self-heal connectivity (VPN/Cookie)
+    await ensure_connected()
+    
+    SKIP_DETAIL_FETCH = os.getenv("SKIP_DETAIL_FETCH", "false").lower() == "true"
+
+    reset_engine()
+    init_db()
+    session = get_session()
+
+    # Update log to running
+    log = session.query(SyncLog).get(sync_log.id)
+    log.status = "running"
+    log.started_at = datetime.now(timezone.utc)
+    session.commit()
+
+    sync_state.is_running = True
+    sync_state.current_survey = req.survey_name
+    sync_state.current_survey_config_id = req.survey_config_id
+    sync_state.current_job_id = log.id
+    sync_state.started_at = datetime.now(timezone.utc)
+    sync_state.progress.reset()
+
+    stats = SyncStats()
+
+    try:
+        # Global timeout to prevent infinite hang (e.g. DNS or asyncio deadlock)
+        async with asyncio.timeout(1200): # 20 minutes
+            async with async_playwright() as p:
+                browser = await launch_stealth_browser(p)
+                context = await new_stealth_context(
+                    browser,
+                    viewport={"width": 1280, "height": 800}
+                )
+
+                try:
+                    page = await context.new_page()
+
+                    # Login
+                    _progress("login", "🔐 Login SSO BPS via Playwright...")
+                    login_ok, cookie_dict, err_msg = await auto_login(page, req.sso_username, req.sso_password)
+                    if not login_ok:
+                        raise Exception(f"Login gagal: {err_msg}")
+
+                    # Close browser right after login!
+                    await browser.close()
+                    browser = None  # To avoid closing twice in finally
+                    
+                    # Save cookies to DB for self-healing archiver (Multi-survey support)
+                    try:
+                        import json
+                        db_session = get_session()
+                        setting = db_session.query(SystemSettings).filter_by(key="sso_cookies").first()
+                        if setting:
+                            setting.value = json.dumps(cookie_dict)
+                            setting.updated_at = datetime.now(timezone.utc)
+                        else:
+                            setting = SystemSettings(key="sso_cookies", value=json.dumps(cookie_dict))
+                            db_session.add(setting)
+                        db_session.commit()
+                        db_session.close()
+                        print("   💾 SSO cookies saved to DB (Ready for multi-survey self-healing).")
+                    except Exception as db_e:
+                        print(f"   ⚠️ Warning: Failed to save SSO cookies to DB: {db_e}")
+
+                    async with FasihApiClient(cookie_dict) as api:
+
+                        print("\n--- FASE 2: Resolving API Metadata ---")
+                        _progress("resolve_survey", f"🔍 Mencari survey: {req.survey_name}...")
+                        survey_id = await api.get_survey_id(req.survey_name)
+                        if not survey_id:
+                            raise Exception(f"Survey '{req.survey_name}' tidak ditemukan")
+
+                        _progress("resolve_survey", "📅 Mengambil periode dan role...")
+                        period_id, role_ids, survey_role_group_id = await api.get_survey_period_and_roles(survey_id)
+                        if not period_id or not role_ids:
+                            raise Exception(f"Period/Role tidak ditemukan untuk survey {survey_id}")
+
+                        _progress("resolve_survey", "🗺️ Mengambil metadata region...")
+                        prov_uuid, region_filter, kab_full_code, region_group_id = await api.get_region_metadata(req.filter_provinsi, req.filter_kabupaten, survey_id)
+
+                        # Safety Gate: Jika provinsi diisi tapi tidak ketemu di API, jangan lanjut.
+                        # Ini mencegah robot menarik data se-Indonesia/se-Provinsi secara tidak sengaja yang memicu timeout.
+                        if req.filter_provinsi and not prov_uuid:
+                            raise Exception(f"Gagal memetakan wilayah: '{req.filter_provinsi}' tidak ditemukan di API FASIH")
+                        
+                        if req.filter_kabupaten and not kab_full_code:
+                            print(f"   ⚠️ Warning: Kabupaten '{req.filter_kabupaten}' tidak ter-resolve, fallback ke Provinsi")
+
+                        # --- MODE: USER SLICING (DIRECT) ---
+                        # Looping langsung per Petugas (Pencacah/Pengawas).
+                        # Strategi ini lebih cepat karena jumlah switch filter lebih sedikit.
+                        
+                        filters_to_run = []
+
+                        _progress("fetch_users", "👥 Mengambil daftar petugas...")
+                        pengawas_list, pencacah_list = await api.get_users_by_region(period_id, role_ids, kab_full_code, survey_role_group_id)
+
+                        if req.filter_rotation == "pencacah" and pencacah_list:
+                            for idx, user in enumerate(pencacah_list):
+                                filters_to_run.append({
+                                    "label": f"[{idx+1}/{len(pencacah_list)}] Pencacah: {user['fullname']}",
+                                    "pengawas_id": None,
+                                    "pencacah_id": user['userId']
+                                })
+                            for idx, user in enumerate(pengawas_list):
+                                filters_to_run.append({
+                                    "label": f"[{len(pencacah_list)+idx+1}/{len(pencacah_list)+len(pengawas_list)}] Pengawas: {user['fullname']}",
+                                    "pencacah_id": None
+                                })
+                        else:
+                            for idx, user in enumerate(pengawas_list):
+                                filters_to_run.append({
+                                    "label": f"[{idx+1}/{len(pengawas_list)}] Pengawas: {user['fullname']}",
+                                    "pengawas_id": user['userId'],
+                                    "pencacah_id": None
+                                })
+                        
+                        # Fallback if no users found: fetch region-wide
+                        if not filters_to_run:
+                            filters_to_run.append({
+                                "label": "[1/1] Wilayah Saja (Tanpa Pengawas/Pencacah)",
+                                "pengawas_id": None,
+                                "pencacah_id": None
+                            })
+
+                        users_count = len(filters_to_run)
+                        _progress("fetch_assignments", f"⚡ Memulai fetch {users_count} petugas secara concurrent...", users_total=users_count, users_done=0)
+
+                        if SKIP_DETAIL_FETCH:
+                            # Fast sync stats
+                            run_stats = await run_fast_sync(
+                                session=session,
+                                api_client=api,
+                                survey_id=survey_id,
+                                period_id=period_id,
+                                survey_config_id=req.survey_config_id,
+                                prov_code=prov_uuid,
+                                region_filter=region_filter,
+                                region_full_code=kab_full_code,
+                                region_group_id=region_group_id,
+                                filters_to_run=filters_to_run,
+                                sync_log_id=sync_log.id
+                            )
+                        else:
+                            # Full sync stats (Full results are in run_stats.total_fetched)
+                            run_stats = await run_full_sync(
+                                session=session,
+                                api_client=api,
+                                cookie_dict=cookie_dict,
+                                survey_id=survey_id,
+                                period_id=period_id,
+                                survey_config_id=req.survey_config_id,
+                                prov_code=prov_uuid,
+                                region_filter=region_filter,
+                                region_full_code=kab_full_code,
+                                region_group_id=region_group_id,
+                                filters_to_run=filters_to_run,
+                                sync_log_id=sync_log.id
+                            )
+                        
+                        stats = run_stats
+
+                finally:
+                    if 'browser' in locals() and browser:
+                        await browser.close()
+
+        # Calculate total images found in this run
+        total_images_in_run = 0
+        from extractors.json_logic import extract_variables_from_json
+        import json
+        
+        # We find assignments updated in this survey_config during this specific sync
+        # Since we don't have the full list of objects easily from BulkUpserter,
+        # we query the DB for the survey_config_id and date_synced (approximate)
+        # OR better: we query all assignments for this survey_config that are NOT mirrored yet
+        # but belong to this sync window.
+        
+        # Simplified: Just count all un-mirrored images for this survey_config 
+        # to give a realistic "Remaining Work" for the archiver.
+        upserted_assignments = session.query(Assignment).filter(
+            Assignment.survey_config_id == req.survey_config_id,
+            Assignment.local_image_mirrored == False
+        ).all()
+        
+        for a in upserted_assignments:
+            data = json.loads(a.data_json)
+            vars_map = extract_variables_from_json(data)
+            for k, v in vars_map.items():
+                if isinstance(v, str) and v.startswith("http"):
+                    is_image = any(ext in v.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']) or \
+                               any(kw in k.lower() or kw in v.lower() for kw in ['foto', 'image', 'media'])
+                    if is_image:
+                        total_images_in_run += 1
+
+        # Update sync log → success
+        log = session.query(SyncLog).get(sync_log.id)
+        log.finished_at = datetime.now(timezone.utc)
+        log.total_fetched = stats.total_fetched
+        log.total_new = stats.total_new
+        log.total_updated = stats.total_updated
+        log.total_skipped = stats.total_skipped
+        log.total_failed = stats.total_failed
+        log.total_images = total_images_in_run
+        log.images_mirrored = 0 # Will be updated by archiver in background
+        log.status = "success"
+        session.commit()
+
+        sync_state.last_result = {
+            "status": "success",
+            "survey": req.survey_name,
+            "job_id": sync_log.id,
+            "fetched": stats.total_fetched,
+            "new": stats.total_new,
+            "updated": stats.total_updated,
+            "skipped": stats.total_skipped,
+            "failed": stats.total_failed,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    except (FasihConnectionError, FasihAuthError) as e:
+        print(f"❌ Connection/Auth Failure: {e}")
+        log = session.query(SyncLog).get(sync_log.id)
+        log.finished_at = datetime.now(timezone.utc)
+        log.status = "failed"
+        log.notes = f"Infrastructure Failure: {str(e)}"
+        session.commit()
+
+        sync_state.last_result = {
+            "status": "failed",
+            "survey": req.survey_name,
+            "job_id": sync_log.id,
+            "error": str(e),
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except TimeoutError:
+        print(f"❌ Job Timeout: Sync for {req.survey_name} took longer than 20 minutes.")
+        log = session.query(SyncLog).get(sync_log.id)
+        log.finished_at = datetime.now(timezone.utc)
+        log.status = "failed"
+        log.notes = "Killed by global timeout (20 mins)"
+        session.commit()
+
+        sync_state.last_result = {
+            "status": "failed",
+            "survey": req.survey_name,
+            "job_id": sync_log.id,
+            "error": "Global timeout exceeded (20 mins)",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except asyncio.CancelledError:
+        print(f"🛑 Job Cancelled: Sync for {req.survey_name} was interrupted by system shutdown.")
+        log = session.query(SyncLog).get(sync_log.id)
+        log.finished_at = datetime.now(timezone.utc)
+        log.status = "failed"
+        log.notes = "Interrupted by system shutdown (SIGTERM/Restart)"
+        session.commit()
+        
+        sync_state.last_result = {
+            "status": "failed",
+            "survey": req.survey_name,
+            "job_id": sync_log.id,
+            "error": "Interrupted by system shutdown",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+        # Re-raise to allow final cleanup
+        raise
+    except Exception as e:
+        log = session.query(SyncLog).get(sync_log.id)
+        log.finished_at = datetime.now(timezone.utc)
+        log.status = "failed"
+        log.notes = str(e)
+        session.commit()
+
+        sync_state.last_result = {
+            "status": "failed",
+            "survey": req.survey_name,
+            "job_id": sync_log.id,
+            "error": str(e),
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    finally:
+        sync_state.is_running = False
+        sync_state.current_survey = None
+        sync_state.current_survey_config_id = None
+        sync_state.current_job_id = None
+        sync_state.started_at = None
+        sync_state.progress.reset()
+        session.close()
+```
+
+### rpa/src/db/repository.py
+```python
+"""
+Repository — operasi CRUD dan upsert untuk Assignment
+"""
+import json
+import uuid
+from datetime import datetime, timezone
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from .models import Assignment, SyncLog
+
+
+class SyncStats:
+    """Counter statistik per-cycle"""
+    def __init__(self):
+        self.total_fetched = 0
+        self.total_new = 0
+        self.total_updated = 0
+        self.total_skipped = 0
+        self.total_failed = 0
+        self.total_images = 0
+        self.images_mirrored = 0
+
+    def __repr__(self):
+        return (
+            f"Fetched={self.total_fetched} | "
+            f"New={self.total_new} | "
+            f"Updated={self.total_updated} | "
+            f"Skipped={self.total_skipped} | "
+            f"Failed={self.total_failed} | "
+            f"Images={self.images_mirrored}/{self.total_images}"
+        )
+
+
+def extract_flat_data(data: dict) -> dict:
+    flat = {}
+    for k, v in data.items():
+        if not isinstance(v, (dict, list)):
+            if isinstance(v, str) and (v.startswith('{') or v.startswith('[')):
+                continue
+            flat[k] = v
+            
+    pre_str = data.get("pre_defined_data")
+    if pre_str and isinstance(pre_str, str) and pre_str.startswith('{'):
+        try:
+            for item in json.loads(pre_str).get("predata", []):
+                if isinstance(item, dict) and "dataKey" in item:
+                    flat[item["dataKey"]] = item.get("answer")
+        except:
+            pass
+            
+    content = data.get("content")
+    if content:
+        if isinstance(content, str) and content.startswith('{'):
+            try: content = json.loads(content)
+            except: content = {}
+        if isinstance(content, dict):
+            for item in content.get("data", []):
+                if isinstance(item, dict) and "dataKey" in item:
+                    flat[item["dataKey"]] = item.get("answer")
+                    
+    region = data.get("region_metadata")
+    if isinstance(region, dict):
+        for k, v in region.items():
+            if not isinstance(v, (dict, list)):
+                flat[f"region_{k}"] = v
+            elif k == "level" and isinstance(v, list):
+                for lvl in v:
+                    if isinstance(lvl, dict):
+                        flat[f"region_level_{lvl.get('id')}"] = lvl.get("name")
+    return flat
+
+
+def normalize_bps_date(date_str: any) -> str:
+    if not date_str:
+        return ""
+    s = str(date_str).strip()
+    if s.isdigit() and len(s) == 14:
+        return s
+    from datetime import datetime, timedelta
+    try:
+        # Format: 'Dec 9, 2025, 11:07:12 AM'
+        dt = datetime.strptime(s, "%b %d, %Y, %I:%M:%S %p")
+        # Convert WIB to UTC (Assuming BPS local is WIB/UTC+7)
+        dt_utc = dt - timedelta(hours=7)
+        return dt_utc.strftime("%Y%m%d%H%M%S")
+    except:
+        import re
+        return re.sub(r'\D', '', s)[:14]
+
+
+def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] = None, sync_log_id: int = None) -> str:
+    """
+    Upsert satu assignment ke database.
+    
+    Returns:
+        "new" | "updated" | "skipped"
+    """
+    # Hubungi ID dari berbagai kemungkinan (API detail vs API datatable)
+    record_id = data.get("_id") or data.get("id") or data.get("assignment", {}).get("id")
+    if not record_id:
+        if stats:
+            stats.total_failed += 1
+        return "failed"
+
+    # Ensure UUID object for PostgreSQL
+    try:
+        db_uuid = uuid.UUID(str(record_id))
+    except (ValueError, TypeError):
+        if stats: stats.total_failed += 1
+        return "failed"
+
+    # Hubungi Date Modified dari berbagai kemungkinan
+    date_modified_raw = (
+        data.get("date_modified") or 
+        data.get("dateModifiedRemote") or 
+        data.get("assignment", {}).get("dateModifiedRemote") or
+        ""
+    )
+    date_modified = normalize_bps_date(date_modified_raw)
+    data_json_str = json.dumps(data, ensure_ascii=False)
+    flat_data = extract_flat_data(data)
+
+    existing = session.get(Assignment, db_uuid)
+
+    if existing is None:
+        # INSERT baru
+        
+        # Helper to safely parse UUID or return None
+        def safe_uuid(val):
+            if not val: return None
+            try: return uuid.UUID(str(val))
+            except: return None
+
+        assignment = Assignment(
+            id=db_uuid,
+            survey_config_id=safe_uuid(data.get("_survey_config_id")),
+            code_identity=(
+                data.get("code_identity") or 
+                data.get("assignment", {}).get("codeIdentity") or 
+                ""
+            ),
+            survey_period_id=safe_uuid(
+                data.get("survey_period_id") or 
+                data.get("assignment", {}).get("surveyPeriodId")
+            ),
+            assignment_status_alias=(
+                data.get("assignment_status_alias") or 
+                data.get("assignment", {}).get("assignmentStatusAlias") or 
+                ""
+            ),
+            current_user_username=(
+                data.get("current_user_username") or 
+                data.get("assignment", {}).get("currentUserUsername") or 
+                ""
+            ),
+            data_json=data_json_str,
+            flat_data=flat_data,
+            date_modified_remote=date_modified,
+            synced_to_api=False,
+            sync_log_id=sync_log_id,
+        )
+        session.add(assignment)
+        if stats:
+            stats.total_new += 1
+        return "new"
+
+    elif existing.date_modified_remote != date_modified:
+        # UPDATE — data berubah dari remote (status/tanggal berubah)
+        existing.code_identity = (
+            data.get("code_identity") or 
+            data.get("assignment", {}).get("codeIdentity") or 
+            existing.code_identity
+        )
+        existing.survey_period_id = (
+            data.get("survey_period_id") or 
+            data.get("assignment", {}).get("surveyPeriodId") or 
+            existing.survey_period_id
+        )
+        existing.assignment_status_alias = (
+            data.get("assignment_status_alias") or 
+            data.get("assignment", {}).get("assignmentStatusAlias") or 
+            existing.assignment_status_alias
+        )
+        existing.current_user_username = (
+            data.get("current_user_username") or 
+            data.get("assignment", {}).get("currentUserUsername") or 
+            existing.current_user_username
+        )
+        existing.sync_log_id = sync_log_id
+        existing.data_json = data_json_str
+        existing.flat_data = flat_data
+        existing.date_modified_remote = date_modified
+        existing.date_synced = datetime.now(timezone.utc)
+        existing.synced_to_api = False
+        # Reset mirrored flag so archiver re-processes with fresh presigned URLs
+        existing.local_image_mirrored = False
+        existing.local_image_paths = {}
+        if stats:
+            stats.total_updated += 1
+        return "updated"
+
+    else:
+        # SKIP — data identik
+        if stats:
+            stats.total_skipped += 1
+        return "skipped"
+
+
+def get_unsynced(session: Session, limit: int = 1000) -> list[Assignment]:
+    """Ambil assignment yang belum dikirim ke API downstream."""
+    return (
+        session.query(Assignment)
+        .filter(Assignment.synced_to_api == False)
+        .limit(limit)
+        .all()
+    )
+
+
+def mark_synced(session: Session, ids: list[str]):
+    """Tandai assignment sebagai sudah dikirim."""
+    if not ids:
+        return
+    # Convert string IDs to UUID objects for PostgreSQL compatibility
+    uuid_ids = [uuid.UUID(str(i)) for i in ids]
+    session.query(Assignment).filter(Assignment.id.in_(uuid_ids)).update(
+        {Assignment.synced_to_api: True}, synchronize_session="fetch"
+    )
+    session.commit()
+
+
+def get_existing_modifications_by_ids(session: Session, ids: list[str]) -> dict[str, str]:
+    """
+    Ambil mapping {id: date_modified_remote} untuk list ID tertentu.
+    Digunakan untuk delta check sebelum fetching detail dari API.
+
+    Untuk dataset besar (>10k IDs), gunakan get_existing_modifications_by_ids_batched.
+    """
+    if not ids:
+        return {}
+
+    # Convert string IDs to UUID objects
+    uuid_ids = []
+    for i in ids:
+        try:
+            uuid_ids.append(uuid.UUID(str(i)))
+        except:
+            continue
+
+    if not uuid_ids:
+        return {}
+
+    results = (
+        session.query(Assignment.id, Assignment.date_modified_remote)
+        .filter(Assignment.id.in_(uuid_ids))
+        .all()
+    )
+    return {str(r.id): r.date_modified_remote for r in results}
+
+
+def get_existing_modifications_by_ids_batched(
+    session: Session, ids: list[str], chunk_size: int = 10_000
+) -> dict[str, str]:
+    """
+    Versi chunked dari get_existing_modifications_by_ids untuk dataset besar (300k+).
+
+    Memecah list ID menjadi chunk maksimal chunk_size agar tidak membuat
+    satu IN clause raksasa yang bisa timeout atau OOM di PostgreSQL.
+
+    Returns:
+        dict {assignment_id (str): date_modified_remote (str | None)}
+    """
+    if not ids:
+        return {}
+
+    result: dict[str, str] = {}
+    for i in range(0, len(ids), chunk_size):
+        chunk = ids[i : i + chunk_size]
+        # Convert chunk to UUIDs
+        uuid_chunk = []
+        for cid in chunk:
+            try:
+                uuid_chunk.append(uuid.UUID(str(cid)))
+            except:
+                continue
+        
+        if not uuid_chunk:
+            continue
+
+        rows = (
+            session.query(Assignment.id, Assignment.date_modified_remote)
+            .filter(Assignment.id.in_(uuid_chunk))
+            .all()
+        )
+        result.update({str(r.id): r.date_modified_remote for r in rows})
+
+    return result
+
+
+
+def log_sync_run(
+    session: Session,
+    started_at: datetime,
+    stats: SyncStats,
+    notes: str = "",
+    survey_config_id: str = "",
+    timings: dict = None,
+) -> SyncLog:
+    """Catat log satu cycle sinkronisasi."""
+    log = SyncLog(
+        survey_config_id=survey_config_id,
+        started_at=started_at,
+        finished_at=datetime.now(timezone.utc),
+        total_fetched=stats.total_fetched,
+        total_new=stats.total_new,
+        total_updated=stats.total_updated,
+        total_skipped=stats.total_skipped,
+        total_failed=stats.total_failed,
+        total_images=stats.total_images,
+        images_mirrored=stats.images_mirrored,
+        notes=notes,
+        timings=timings
+    )
+    session.add(log)
+    session.commit()
+    return log
+
+
+def patch_sync_log(session: Session, log_id: int, **kwargs):
+    """Update fields in an existing SyncLog entry (status, counts, etc)."""
+    session.query(SyncLog).filter(SyncLog.id == log_id).update(kwargs)
+    session.commit()
+
+
+class BatchUpserter:
+    """
+    Batch upsert for assignments — collects records and flushes in bulk.
+    Uses ORM-level upsert (per-row) — kept for compatibility.
+    For new code, prefer BatchUpserterBulk which uses SQL-level batch insert.
+    """
+
+    def __init__(self, session: Session, batch_size: int = 500):
+        self.session = session
+        self.batch_size = batch_size
+        self._buffer: list[dict] = []
+        self.stats = SyncStats()
+
+    def add(self, data: dict):
+        """Add a record to the buffer. Auto-flushes when batch_size is reached."""
+        self.stats.total_fetched += 1
+        record_id = data.get("_id")
+        if not record_id:
+            self.stats.total_failed += 1
+            return
+
+        self._buffer.append(data)
+        if len(self._buffer) >= self.batch_size:
+            self.flush()
+
+    def flush(self):
+        """Flush buffered records to database using batch upsert."""
+        if not self._buffer:
+            return
+
+        for data in self._buffer:
+            upsert_assignment(self.session, data, self.stats)
+
+        self.session.commit()
+        self._buffer.clear()
+
+    def finish(self) -> SyncStats:
+        """Flush remaining records and return final stats."""
+        self.flush()
+        return self.stats
+
+
+class BatchUpserterBulk:
+    """
+    High-performance bulk upsert using PostgreSQL INSERT ... ON CONFLICT DO UPDATE.
+    Sends ONE SQL statement per batch instead of N ORM calls.
+    Benchmark: ~50-200x faster than per-row ORM for large datasets.
+    """
+
+    def __init__(self, session: Session, batch_size: int = 2000, sync_log_id: int = None):
+        self.session = session
+        self.batch_size = batch_size
+        self.sync_log_id = sync_log_id
+        self._buffer: list[dict] = []
+        self.stats = SyncStats()
+
+    def add(self, row: dict):
+        # Transform row data for column naming to match DB
+        # This part handles the mapping from API-style keys to DB-style keys
+        # as pg_insert expects exact DB column names
+
+        self.stats.total_fetched += 1
+        date_modified_raw = (
+            row.get("date_modified") or 
+            row.get("dateModifiedRemote") or 
+            row.get("assignment", {}).get("dateModifiedRemote") or
+            ""
+        )
+        date_modified = normalize_bps_date(date_modified_raw)
+        
+        db_row = {
+            "id": row.get("_id") or row.get("id") or row.get("assignment", {}).get("id"),
+            "survey_config_id": row.get("_survey_config_id", ""),
+            "code_identity": row.get("code_identity") or row.get("assignment", {}).get("codeIdentity") or "",
+            "survey_period_id": row.get("survey_period_id") or row.get("assignment", {}).get("surveyPeriodId") or "",
+            "assignment_status_alias": row.get("assignment_status_alias") or row.get("assignment", {}).get("assignmentStatusAlias") or "",
+            "current_user_username": row.get("current_user_username") or row.get("assignment", {}).get("currentUserUsername") or "",
+            "data_json": json.dumps(row, ensure_ascii=False),
+            "flat_data": extract_flat_data(row),
+            "date_modified_remote": date_modified,
+            "date_synced": datetime.now(timezone.utc),
+            "synced_to_api": False,
+            "sync_log_id": self.sync_log_id,
+            "local_image_mirrored": False,
+            "local_image_paths": {}
+        }
+        
+        # PostgreSQL requires explicit UUID objects for bulk insert
+        try:
+            db_row["id"] = uuid.UUID(str(db_row["id"]))
+            if db_row.get("survey_config_id"):
+                db_row["survey_config_id"] = uuid.UUID(str(db_row["survey_config_id"]))
+            if db_row.get("survey_period_id"):
+                db_row["survey_period_id"] = uuid.UUID(str(db_row["survey_period_id"]))
+        except (ValueError, TypeError) as e:
+            print(f"   ⚠️ Skipping record with invalid UUID: {db_row['id']} ({e})")
+            self.stats.total_failed += 1
+            return
+
+        self._buffer.append(db_row)
+        if len(self._buffer) >= self.batch_size:
+            self.flush()
+
+    def flush(self, is_emergency: bool = False):
+        """Execute a single INSERT ... ON CONFLICT DO UPDATE for the entire batch."""
+        if not self._buffer:
+            return
+
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        prefix = "🚨 [EMERGENCY FLUSH]" if is_emergency else "💾 [BULK FLUSH]"
+
+        try:
+            stmt = pg_insert(Assignment).values(self._buffer)
+
+            update_cols = {
+                col: stmt.excluded[col]
+                for col in [
+                    "code_identity", "survey_period_id", "assignment_status_alias",
+                    "current_user_username", "data_json", "flat_data",
+                    "date_modified_remote", "date_synced", "synced_to_api", "sync_log_id",
+                    "local_image_mirrored", "local_image_paths",
+                ]
+            }
+
+            upsert_stmt = stmt.on_conflict_do_update(
+                index_elements=["id"],
+                set_=update_cols,
+                where=(
+                    # Always update if it's an emergency flush to ensure latest state is captured,
+                    # otherwise only update if remote date changed.
+                    (Assignment.date_modified_remote != stmt.excluded.date_modified_remote) or is_emergency
+                )
+            )
+
+            result = self.session.execute(upsert_stmt)
+            self.session.commit()
+
+            inserted_or_updated = result.rowcount if result.rowcount >= 0 else len(self._buffer)
+            skipped = len(self._buffer) - inserted_or_updated
+            self.stats.total_new += inserted_or_updated
+            self.stats.total_skipped += max(0, skipped)
+
+            print(f"   {prefix} {len(self._buffer)} rows → {inserted_or_updated} upserted, {skipped} skipped")
+
+        except Exception as e:
+            print(f"   ⚠️ {prefix} failed ({e}), falling back to per-row ORM...")
+            self.session.rollback()
+            for row_data in self._buffer:
+                try:
+                    upsert_assignment(self.session, row_data, stats=self.stats, sync_log_id=self.sync_log_id)
+                except Exception as row_err:
+                    print(f"      ❌ Fatal error on single row fallback: {row_err}")
+            self.session.commit()
+
+        self._buffer.clear()
+
+    def emergency_flush(self):
+        """Called by signal handlers to save data before shutdown."""
+        self.flush(is_emergency=True)
+
+    def finish(self) -> SyncStats:
+        """Flush remaining and return stats."""
+        self.flush()
+        return self.stats
+
+
+
+def get_system_setting(session: Session, key: str) -> Optional[str]:
+    """Ambil nilai dari system_settings."""
+    from .models import SystemSettings
+    setting = session.get(SystemSettings, key)
+    return setting.value if setting else None
+
+
+def set_system_setting(session: Session, key: str, value: str):
+    """Simpan atau update nilai di system_settings."""
+    from .models import SystemSettings
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    stmt = pg_insert(SystemSettings).values(key=key, value=value)
+    upsert_stmt = stmt.on_conflict_do_update(
+        index_elements=["key"],
+        set_={"value": value, "updated_at": datetime.now(timezone.utc)}
+    )
+    session.execute(upsert_stmt)
+    session.commit()
+```
+
+### rpa/src/connectivity.py
+```python
+import os
+import aiohttp
+import asyncio
+from typing import Optional
+from datetime import datetime, timezone
+
+from db.connection import get_session, init_db, reset_engine
+from db.models import SurveyConfig, SystemSettings
+from crypto import decrypt_password
+from auth import fetch_vpn_cookie
+
+class FasihConnectionError(Exception):
+    """Raised when VPN or BPS network is fundamentally unreachable."""
+    pass
+
+TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
+
+async def check_fasih_reachable() -> tuple[bool, str]:
+    """
+    Check if FASIH-SM is reachable via the VPN tunnel.
+    Uses two signals:
+    1. HTTP probe to /oauth_login.html (with SSL bypass for internal cert)
+    2. Fallback: check if ppp0 exists and has an IP (tunnel-level check)
+    Returns: (is_reachable, reason)
+    """
+    import ssl
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    try:
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+        async with aiohttp.ClientSession(
+            connector=connector,
+            timeout=aiohttp.ClientTimeout(total=8, connect=5)
+        ) as session:
+            async with session.get(
+                f"{TARGET_URL}/oauth_login.html",
+                allow_redirects=True
+            ) as resp:
+                if resp.status in [200, 302, 401, 403]:
+                    return True, "Reachable"
+                return False, f"Unexpected status: {resp.status}"
+    except asyncio.TimeoutError:
+        # HTTP timeout — but tunnel might still be fine
+        # Check tun0 or ppp0 as secondary signal
+        has_vpn = os.path.exists("/sys/class/net/tun0") or os.path.exists("/sys/class/net/ppp0")
+        if has_vpn:
+            # Interface exists — tunnel is up, just slow
+            return True, "Reachable (VPN UP, HTTP slow)"
+        return False, "Connection timeout"
+    except Exception as e:
+        has_vpn = os.path.exists("/sys/class/net/tun0") or os.path.exists("/sys/class/net/ppp0")
+        err_type = type(e).__name__
+        err_msg = str(e)
+        if has_vpn:
+            return True, f"Reachable (VPN UP, probe error: {err_type})"
+        return False, f"Connection error: {err_type} {err_msg}".strip()
+
+
+async def is_session_stale() -> bool:
+    """
+    Perform a more thorough check: try to reach an API endpoint.
+    If it redirects to login, the session (VPN cookie) is stale.
+    """
+    try:
+        # We check a known protected API endpoint
+        test_url = f"{TARGET_URL}/survey/api/v1/surveys/datatable?pageSize=1"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with session.get(test_url, allow_redirects=True) as resp:
+                # If the final URL contains oauth_login, it's stale
+                if "oauth_login.html" in str(resp.url):
+                    return True
+                return False
+    except Exception:
+        # If we can't even connect, it's not 'stale', it's 'disconnected'
+        return False
+
+async def ensure_connected():
+    """
+    Proactive Self-Healing:
+    1. Check if FASIH is reachable.
+    2. If not, auto-fetch new VPN cookie via Playwright SSO login.
+    3. Update DB — VPN watcher (entrypoint.sh) picks it up every 10s.
+    4. Poll for reconnect, up to 60s.
+    """
+    reachable, reason = await check_fasih_reachable()
+    
+    if reachable:
+        return True
+
+    print(f"⚠️ FASIH unreachable: {reason}")
+    print("🔄 Self-healing: auto-fetching new VPN cookie via Playwright...")
+
+    reset_engine()
+    init_db()
+    session = get_session()
+    try:
+        # 1. Borrow SSO credentials dari survey aktif
+        survey = session.query(SurveyConfig).filter(SurveyConfig.is_active == True).first()
+        if not survey:
+            raise FasihConnectionError("No active survey found to provide credentials for VPN self-healing.")
+
+        username = survey.sso_username
+        password = decrypt_password(survey.sso_password_encrypted)
+        print(f"   🔑 Menggunakan kredensial: {username[:3]}*** dari survey '{survey.survey_name}'")
+
+        # 2. Fetch cookie baru via Playwright (VPN portal)
+        cookie = await fetch_vpn_cookie(username, password)
+        if not cookie:
+            print("   ❌ Gagal mendapatkan VPN cookie via Playwright.")
+            print("   ⚠️  Melanjutkan sync — mungkin VPN masih bisa terhubung...")
+            return False
+
+        # 3. Simpan ke DB — VPN entrypoint.sh akan pick up dalam ~10s
+        setting = session.query(SystemSettings).filter_by(key="vpn_cookie").first()
+        if setting:
+            setting.value = cookie
+            setting.updated_at = datetime.now(timezone.utc)
+        else:
+            setting = SystemSettings(key="vpn_cookie", value=cookie)
+            session.add(setting)
+        session.commit()
+        print("   ✅ Cookie baru tersimpan di DB. Menunggu VPN tunnel reconnect...")
+
+        # 4. Poll hingga terhubung (maks 60s)
+        # VPN watcher: polling setiap 10s → konek: ~15-20s → total maks ~30-40s
+        for attempt in range(12):  # 12 × 5s = 60s
+            await asyncio.sleep(5)
+            r, info = await check_fasih_reachable()
+            if r:
+                print(f"   ✨ VPN reconnected setelah {(attempt+1)*5}s! ({info})")
+                return True
+            print(f"   ⏳ Menunggu reconnect... [{attempt+1}/12] — {info}")
+
+        print("   ❌ Cookie diperbarui tapi FASIH masih unreachable setelah 60s.")
+        raise FasihConnectionError(f"VPN self-healing failed: BPS Network unreachable ({info})")
+
+    except FasihConnectionError:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"   ❌ Self-healing error: {e}")
+        traceback.print_exc()
+        raise FasihConnectionError(f"VPN self-healing exception: {str(e)}")
+    finally:
+        session.close()
+```
+
+### rpa/src/state.py
+```python
+from typing import Optional
+from datetime import datetime, timezone
+
+class SyncProgress:
+    """Live progress state untuk satu sync job yang sedang berjalan."""
+    phase: str = ""          # "login", "resolve", "fetch_users", "fetch_assignments", "upsert", "done"
+    phase_label: str = ""    # Human-readable label yang tampil di UI
+    users_total: int = 0     # Jumlah user (pencacah/pengawas) yang perlu diiterasi
+    users_done: int = 0      # Berapa user yang sudah selesai diiterasi
+    assignments_total: int = 0
+    assignments_fetched: int = 0
+    assignments_new: int = 0
+    assignments_updated: int = 0
+    assignments_skipped: int = 0
+
+    def reset(self):
+        self.phase = ""
+        self.phase_label = ""
+        self.users_total = 0
+        self.users_done = 0
+        self.assignments_total = 0
+        self.assignments_fetched = 0
+        self.assignments_new = 0
+        self.assignments_updated = 0
+        self.assignments_skipped = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "phase": self.phase,
+            "phase_label": self.phase_label,
+            "users_total": self.users_total,
+            "users_done": self.users_done,
+            "assignments_total": self.assignments_total,
+            "assignments_fetched": self.assignments_fetched,
+            "assignments_new": self.assignments_new,
+            "assignments_updated": self.assignments_updated,
+            "assignments_skipped": self.assignments_skipped,
+        }
+
+
+class SyncState:
+    is_running: bool = False
+    is_shutting_down: bool = False
+    is_vpn_fetching: bool = False
+    current_survey: Optional[str] = None
+    current_survey_config_id: Optional[str] = None
+    current_job_id: Optional[int] = None
+    last_result: Optional[dict] = None
+    started_at: Optional[datetime] = None
+    queue_count: int = 0
+    progress: SyncProgress = SyncProgress()
+
+sync_state = SyncState()
+```
+
+### rpa/src/pages/detail_page.py
+```python
+"""
+Detail Page — Concurrent API Fetch untuk data assignment
+
+Supports both serial (via Playwright page.evaluate) and concurrent (via aiohttp)
+fetching strategies. Concurrent mode uses cookies from the Playwright session
+to make parallel HTTP requests with asyncio.Semaphore for rate-limiting.
+"""
+import os
+import re
+import json
+import asyncio
+import ssl
+from typing import Optional
+
+TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
+API_BASE = f"{TARGET_URL}/assignment-general/api/assignment/get-by-id-with-data-for-scm"
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds
+
+
+def extract_assignment_id(detail_url: str) -> str | None:
+    """
+    Ekstrak Assignment ID dari URL detail.
+    Contoh: /survey-collection/assignment-detail/{ASSIGNMENT_ID}/{SURVEY_ID}
+    """
+    match = re.search(r'/assignment-detail/([a-f0-9\-]+)/', detail_url)
+    if match:
+        return match.group(1)
+    return None
+
+
+async def fetch_assignment_data(page, detail_url: str) -> dict | None:
+    """
+    Panggil API JSON langsung dari browser context via fetch().
+    Memanfaatkan cookies session yang sudah aktif.
+    
+    Dengan retry logic: coba hingga MAX_RETRIES kali jika gagal.
+    
+    Returns:
+        dict data assignment, atau None jika gagal
+    """
+    assignment_id = extract_assignment_id(detail_url)
+    if not assignment_id:
+        print(f"   ⚠️ Gagal parse Assignment ID dari: {detail_url}")
+        return None
+
+    api_url = f"{API_BASE}?id={assignment_id}"
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            result = await page.evaluate('''async (apiUrl) => {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    if (!response.ok) {
+                        return { error: true, status: response.status, message: response.statusText };
+                    }
+                    const json = await response.json();
+                    return json;
+                } catch (e) {
+                    return { error: true, message: e.toString() };
+                }
+            }''', api_url)
+
+            if result and result.get("success"):
+                return result.get("data", {})
+
+            error_msg = result.get("message", "Unknown") if result else "No response"
+            
+            if attempt < MAX_RETRIES:
+                print(f"   ⚠️ Attempt {attempt}/{MAX_RETRIES} gagal ({error_msg}), retry in {RETRY_DELAY}s...")
+                await asyncio.sleep(RETRY_DELAY)
+            else:
+                print(f"   ❌ Gagal setelah {MAX_RETRIES}x: {assignment_id[:8]}... ({error_msg})")
+                return None
+
+        except Exception as e:
+            if attempt < MAX_RETRIES:
+                print(f"   ⚠️ Attempt {attempt}/{MAX_RETRIES} exception: {e}, retry...")
+                await asyncio.sleep(RETRY_DELAY)
+            else:
+                print(f"   ❌ Exception setelah {MAX_RETRIES}x: {e}")
+                return None
+
+    return None
+
+
+# =====================================================================
+# Concurrent Fetcher — uses aiohttp with cookies from Playwright
+# =====================================================================
+
+async def extract_cookies_from_context(context) -> dict:
+    """Extract cookies from Playwright browser context as a dict for aiohttp."""
+    cookies = await context.cookies()
+    return {c["name"]: c["value"] for c in cookies}
+
+
+async def _fetch_one(
+    session,
+    assignment_id: str,
+    semaphore: asyncio.Semaphore,
+    retries: int = MAX_RETRIES,
+) -> Optional[dict]:
+    """Fetch a single assignment detail via aiohttp with retry and semaphore."""
+    import aiohttp
+    api_url = f"{API_BASE}?id={assignment_id}"
+
+    async with semaphore:
+        for attempt in range(1, retries + 1):
+            try:
+                async with session.get(
+                    api_url,
+                    headers={"Accept": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status != 200:
+                        body_text = await resp.text()
+                        print(f"   ❌ {assignment_id[:8]}... HTTP {resp.status}: {body_text[:100]}")
+                        if attempt < retries:
+                            await asyncio.sleep(RETRY_DELAY * attempt)
+                            continue
+                        return None
+
+                    body = await resp.json()
+                    if body and body.get("success"):
+                        return body.get("data", {})
+                    
+                    print(f"   ❌ {assignment_id[:8]}... API returned success=False: {body}")
+
+                    if attempt < retries:
+                        await asyncio.sleep(RETRY_DELAY * attempt)
+                        continue
+                    else:
+                        return None
+
+            except Exception as e:
+                print(f"   ❌ {assignment_id[:8]}... Exception: {e}")
+                if attempt < retries:
+                    await asyncio.sleep(RETRY_DELAY * attempt)
+                else:
+                    return None
+
+    return None
+
+
+async def fetch_assignments_concurrent(
+    cookie_dict: dict,
+    urls: list[str],
+    concurrency: int = 5,
+    on_progress=None,
+) -> list[dict]:
+    """
+    Fetch multiple assignment details concurrently using aiohttp.
+
+    Args:
+        cookie_dict: Dictionary of session cookies
+        urls: List of assignment detail URLs
+        concurrency: Maximum number of concurrent requests
+        on_progress: Optional callback(fetched_count, total_count, data_or_none)
+
+    Returns:
+        List of successfully fetched assignment data dicts
+    """
+    import aiohttp
+    
+    
+    # Create SSL context that doesn't verify (VPN internal network)
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    # Parse assignment IDs from URLs
+    id_map = []
+    for url in urls:
+        aid = extract_assignment_id(url)
+        if aid:
+            id_map.append(aid)
+
+    if not id_map:
+        return []
+
+    print(f"   🚀 Fetching {len(id_map)} assignments with concurrency={concurrency}...")
+
+    semaphore = asyncio.Semaphore(concurrency)
+    results = []
+    completed = 0
+    total = len(id_map)
+    
+    # Use a cookie jar with the extracted cookies
+    jar = aiohttp.CookieJar(unsafe=True)
+    connector = aiohttp.TCPConnector(ssl=ssl_ctx, limit=concurrency + 20)
+
+    async with aiohttp.ClientSession(
+        cookies=cookie_dict,
+        cookie_jar=jar,
+        connector=connector,
+    ) as session:
+        tasks = []
+        for aid in id_map:
+            tasks.append(_fetch_one(session, aid, semaphore))
+
+        for coro in asyncio.as_completed(tasks):
+            data = await coro
+            completed += 1
+
+            # Memory optimization: if on_progress (callback) is provided, 
+            # we don't need to store all results in memory here.
+            # The caller handles the storage (e.g. BatchUpserterBulk).
+            if not on_progress and data:
+                results.append(data)
+
+            if on_progress:
+                on_progress(completed, total, data)
+            elif completed % 100 == 0 or completed == total:
+                # Fallback logging if no callback
+                print(f"   📊 Progress: {completed}/{total}")
+
+    print(f"   ✅ Done: {completed}/{total} processed")
+    return results
 ```
 
 ### rpa/src/routes/sync.py
@@ -3795,9 +5601,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+8dbdbca feat: infrastructure hardening & resiliency (Response Guardian, Atomic Shield, Signal Watchdog)
 536e16e chore: upgrade entrypoint to universal self-healing migration
 9c2cab2 feat: implement archiver heartbeat healthcheck and start-docker cleanup routine
 1ee63cd fix: resolve hidden column inconsistencies in BatchUpserterBulk for image mirroring stability
 42746fe refactor: standardize UUID types across RPA and Dashboard to match physical DB schema
-1d4c5c7 fix: change global metadata cache to user-specific cache to avoid survey leakage between accounts
 ```
