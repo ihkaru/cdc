@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sun May 17 04:51:47 AM WIB 2026
+Generated at: Sun May 17 04:57:12 AM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -1927,10 +1927,10 @@ export const surveyConfigs = pgTable("survey_configs", {
 });
 
 export const assignments = pgTable("assignments", {
-  id: text("id").primaryKey(),
+  id: uuid("id").primaryKey(),
   surveyConfigId: uuid("survey_config_id").references(() => surveyConfigs.id, { onDelete: "cascade" }),
   codeIdentity: text("code_identity"),
-  surveyPeriodId: text("survey_period_id"),
+  surveyPeriodId: uuid("survey_period_id"),
   assignmentStatusAlias: text("assignment_status_alias"),
   currentUserUsername: text("current_user_username"),
   dataJson: jsonb("data_json"),
@@ -3795,9 +3795,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+1d4c5c7 fix: change global metadata cache to user-specific cache to avoid survey leakage between accounts
 0ec2a70 feat: implement global metadata caching to eliminate UX cold starts and Cloudflare timeouts
 1f164f2 fix: install iptables and disable IPv6 to eliminate ERR_CONNECTION_RESET
 eb50b72 feat: implement stealth JS injection and TCP MSS clamping for maximum robustness
 b56c120 security: mask sensitive data in project snapshot and update dump script
-1682362 optimize: dashboard build process for better memory efficiency and caching
 ```

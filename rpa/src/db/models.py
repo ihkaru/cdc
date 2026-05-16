@@ -67,7 +67,7 @@ class Assignment(Base):
     local_image_paths = Column(JSON, default={}, comment="Map S3 paths for images")
 
     def __repr__(self):
-        return f"<Assignment(id={self.id[:8]}..., code={self.code_identity})>"
+        return f"<Assignment(id={str(self.id)[:8]}..., code={self.code_identity})>"
 
 
 class SyncLog(Base):

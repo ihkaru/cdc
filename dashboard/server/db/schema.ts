@@ -18,10 +18,10 @@ export const surveyConfigs = pgTable("survey_configs", {
 });
 
 export const assignments = pgTable("assignments", {
-  id: text("id").primaryKey(),
+  id: uuid("id").primaryKey(),
   surveyConfigId: uuid("survey_config_id").references(() => surveyConfigs.id, { onDelete: "cascade" }),
   codeIdentity: text("code_identity"),
-  surveyPeriodId: text("survey_period_id"),
+  surveyPeriodId: uuid("survey_period_id"),
   assignmentStatusAlias: text("assignment_status_alias"),
   currentUserUsername: text("current_user_username"),
   dataJson: jsonb("data_json"),
