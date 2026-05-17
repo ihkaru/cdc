@@ -3,19 +3,13 @@ services:
   dashboard:
     build: ./dashboard
     container_name: fasih-nexus-dashboard
-    networks:
-      - fasih_internal
-      - coolify
-    ports:
-      - "${DASHBOARD_PORT:-3000}:3000"
+    network_mode: "service:vpn"
     labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=coolify"
-      - "coolify.managed=true"
+      - "coolify.managed=false"
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - RPA_URL=http://vpn:8000
-      - VPN_AUTH_URL=http://vpn:8001
+      - RPA_URL=http://127.0.0.1:8000
+      - VPN_AUTH_URL=http://127.0.0.1:8001
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
       - BETTER_AUTH_URL=${BETTER_AUTH_URL}
@@ -23,8 +17,8 @@ services:
       - VPN_USER=${VPN_USER}
       - VPN_PASS=${VPN_PASS}
     depends_on:
-      fasih-db:
-        condition: service_healthy
+      vpn:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://127.0.0.1:3000/api/health').then(r => r.ok ? process.exit(0) : process.exit(1))\""]
       interval: 10s
@@ -48,11 +42,15 @@ services:
       - 8.8.8.8
     networks:
       - fasih_internal
+      - coolify
     ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
       - "${RPA_PORT:-8000}:8000"
       - "${VPN_AUTH_PORT:-8001}:8001"
     labels:
-      - "coolify.managed=false"
+      - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
+      - "coolify.managed=true"
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - VPN_HOST=akses.bps.go.id
