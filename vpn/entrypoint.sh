@@ -7,6 +7,13 @@ sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
 # Base config
 mkdir -p /etc/openfortivpn
 
+# Ensure vpnc-script symlink exists so openconnect can set up routing correctly
+mkdir -p /etc/vpnc
+if [ ! -f /etc/vpnc/vpnc-script ] && [ -f /usr/share/vpnc-scripts/vpnc-script ]; then
+    echo "🔗 Creating symlink for vpnc-script..."
+    ln -sf /usr/share/vpnc-scripts/vpnc-script /etc/vpnc/vpnc-script
+fi
+
 # Add public DNS fallback so we can always resolve akses.bps.go.id for auto-reconnect
 echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 echo "nameserver 1.1.1.1" >> /etc/resolv.conf
@@ -60,6 +67,8 @@ fi
 # Helper function to handle graceful shutdown
 cleanup() {
     echo "🛑 Caught termination signal! Shutting down..."
+    pkill -x openconnect 2>/dev/null
+    pkill -x openfortivpn 2>/dev/null
     kill $(jobs -p) 2>/dev/null
     exit 0
 }
@@ -92,15 +101,13 @@ monitor_cookie_changes() {
     LAST_COOKIE=""
     while true; do
         sleep 10
-        if [ -n "$DATABASE_URL" ] && [ -n "$VPN_PID" ]; then
+        if [ -n "$DATABASE_URL" ]; then
             CURRENT_DB_COOKIE=$(psql "$DATABASE_URL" -t -A -c "SELECT value FROM system_settings WHERE key='vpn_cookie'" 2>/dev/null)
             if [ -n "$CURRENT_DB_COOKIE" ] && [ "$CURRENT_DB_COOKIE" != "$LAST_COOKIE" ]; then
                 if [ -n "$LAST_COOKIE" ]; then
                     echo "🔄 DB Cookie changed! Triggering organic VPN reconnect..."
-                    # Check if VPN_PID is actually running before killing
-                    if [ -n "$VPN_PID" ] && kill -0 "$VPN_PID" 2>/dev/null; then
-                        kill "$VPN_PID" 2>/dev/null
-                    fi
+                    pkill -x openconnect 2>/dev/null
+                    pkill -x openfortivpn 2>/dev/null
                 fi
                 LAST_COOKIE="$CURRENT_DB_COOKIE"
             fi
@@ -209,8 +216,23 @@ while true; do
                     -d "{\"sso_username\":\"$VPN_USER\", \"sso_password\":\"$VPN_PASS\"}")
                 
                 if [ "$RESP" = "200" ]; then
-                    echo "   ✅ RPA auto-fetch triggered successfully."
-                    break
+                    echo "   ✅ RPA auto-fetch triggered in background. Polling DB for fresh cookie..."
+                    for poll in $(seq 1 12); do
+                        sleep 5
+                        DB_COOKIE=$(psql "$DATABASE_URL" -t -A -c "SELECT value FROM system_settings WHERE key='vpn_cookie'" 2>/dev/null)
+                        if [ -n "$DB_COOKIE" ]; then
+                            COOKIE="$DB_COOKIE"
+                            echo "🔑 Fresh cookie loaded from database after auto-fetch polling (Attempt $poll/12, Length: ${#COOKIE})"
+                            break 2
+                        fi
+                        echo "      ⏳ Waiting for RPA background fetch to complete ($poll/12)..."
+                    done
+                    
+                    # If we exhausted the polling loop and COOKIE is still empty, break attempt loop to allow password fallback
+                    if [ -z "$COOKIE" ]; then
+                        echo "   ❌ Timeout waiting for RPA background fetch to save cookie."
+                        break
+                    fi
                 fi
                 echo "   ⚠️ RPA not ready yet ($attempt/6, code: $RESP), retrying in 10s..."
                 sleep 10
@@ -234,67 +256,56 @@ while true; do
         # 📱 Android Spoofing for 'Lightning Fast' performance
         ANDROID_UA="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36 FortiClient/7.2.4"
         
-        # We try OpenConnect first as it supports DTLS
+        # Run smart routing in the background to apply as soon as interface comes up
+        apply_smart_routing &
+        
+        # We try OpenConnect first. We force standard HTTPS/TLS with --no-dtls to avoid DTLS dead-peer detection drops and cookie invalidations.
         openconnect --protocol=fortinet \
             "${VPN_HOST}:${VPN_PORT:-443}" \
             --cookie="SVPNCOOKIE=$VAL" \
             --useragent="$ANDROID_UA" \
             --os=android \
+            --no-dtls \
             --reconnect-timeout 60 \
             --passwd-on-stdin \
-            --servercert "pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA=" \
-            --background \
-            --pid-file=/tmp/vpn.pid <<EOF
+            --servercert "pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA=" <<EOF
 $VAL
 EOF
         
-        # Wait for the background process to start
-        sleep 2
-        if [ -f /tmp/vpn.pid ]; then
-            VPN_PID=$(cat /tmp/vpn.pid)
-            apply_smart_routing
-            # 🛡️ Robust background wait: wait $PID only works for direct children.
-            # Since openconnect daemonizes, we must use a kill -0 loop.
-            echo "🛡️ Monitoring VPN PID $VPN_PID..."
-            while kill -0 "$VPN_PID" 2>/dev/null; do
-                sleep 5
-            done
-        else
-            echo "⚠️ OpenConnect failed to start (PID file missing). Falling back to openfortivpn..."
+        EXIT_STATUS=$?
+        
+        if [ $EXIT_STATUS -ne 0 ]; then
+            echo "⚠️ OpenConnect failed to start or run (Status: $EXIT_STATUS). Falling back to openfortivpn..."
+            apply_smart_routing &
             openfortivpn "${VPN_HOST}:${VPN_PORT:-443}" \
                 --cookie="$VAL" \
                 ${VPN_TRUSTED_CERT:+--trusted-cert "$VPN_TRUSTED_CERT"} \
                 --set-dns=1 \
-                --pppd-use-peerdns=1 &
-            VPN_PID=$!
-            apply_smart_routing
-            wait $VPN_PID
+                --pppd-use-peerdns=1
+            EXIT_STATUS=$?
         fi
     else
         echo "👤 Using Username/Password Mode (OpenConnect)..."
         # 📱 Android Spoofing for Password Mode
         ANDROID_UA="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36 FortiClient/7.2.4"
         
+        apply_smart_routing &
+        
         openconnect --protocol=fortinet \
             "${VPN_HOST}:${VPN_PORT:-443}" \
             -u "$VPN_USER" \
             --useragent="$ANDROID_UA" \
             --os=android \
+            --no-dtls \
             --passwd-on-stdin \
-            --servercert "pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA=" \
-            --background \
-            --pid-file=/tmp/vpn.pid <<EOF
+            --servercert "pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA=" <<EOF
 $VPN_PASS
 EOF
             
-        sleep 5 
-        if [ -f /tmp/vpn.pid ] && kill -0 $(cat /tmp/vpn.pid) 2>/dev/null; then
-            VPN_PID=$(cat /tmp/vpn.pid)
-            apply_smart_routing
-            wait $VPN_PID
-        else
-            echo "⚠️ OpenConnect failed to stay alive. Falling back to openfortivpn..."
-            # ... (rest of fallback)
+        EXIT_STATUS=$?
+        
+        if [ $EXIT_STATUS -ne 0 ]; then
+            echo "⚠️ OpenConnect failed. Falling back to openfortivpn..."
             cat <<EOF > /etc/openfortivpn/config
 host = ${VPN_HOST}
 port = ${VPN_PORT:-443}
@@ -304,22 +315,19 @@ ${VPN_TRUSTED_CERT:+trusted-cert = $VPN_TRUSTED_CERT}
 set-dns = 1
 pppd-use-peerdns = 1
 EOF
-            openfortivpn -c /etc/openfortivpn/config &
-            VPN_PID=$!
-            apply_smart_routing
-            wait $VPN_PID
+            apply_smart_routing &
+            openfortivpn -c /etc/openfortivpn/config
+            EXIT_STATUS=$?
         fi
-        echo "⚠️ VPN connection closed."
-        VPN_PID=""
     fi
 
-    EXIT_CODE=$?
+    EXIT_CODE=$EXIT_STATUS
     echo "⚠️ VPN Disconnected (Code: $EXIT_CODE). Cleaning up before reconnect..."
     
     # --- Self-Healing: If connection failed and we used a cookie, it might be stale ---
     if [ "$EXIT_CODE" -ne 0 ] && [ -n "$COOKIE" ] && [ -n "$DATABASE_URL" ]; then
         echo "🧐 VPN failed while using a cookie. Checking if it should be cleared..."
-        # If openfortivpn exits with error, we assume the cookie might be dead.
+        # If openfortivpn/openconnect exits with error, we assume the cookie might be dead.
         # We clear it from DB so the next loop can try Password Mode or wait for Auto-Fetch.
         psql "$DATABASE_URL" -c "DELETE FROM system_settings WHERE key='vpn_cookie'" > /dev/null 2>&1
         echo "🗑️  Stale cookie cleared from database to allow fallback/refresh."

@@ -47,7 +47,7 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
             target_domain = target_url.split("://")[1].split("/")[0]
             if target_domain not in page.url and "sso.bps.go.id" not in page.url:
                 print(f"🚀 [Auth] Navigating to target {target_domain}...")
-                await page.goto(target_url, wait_until="domcontentloaded", timeout=120000)
+                await page.goto(target_url, wait_until="commit", timeout=120000)
                 
                 # Apply 5-Second Stabilization Rule specifically for VPN Portal (akses.bps.go.id)
                 if "akses.bps.go.id" in target_url:
@@ -79,17 +79,24 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
                 # We don't return False here, we let the next block handle Keycloak
 
         # 4. Transition to Keycloak (SSO)
-        print(f"🚀 [Auth] Handling Keycloak SSO... Current URL: {page.url}")
+        print(f"🚀 [Auth] Waiting for Keycloak SSO redirection... Current URL: {page.url}", flush=True)
         try:
-            # Wait for the SSO page input to be ready
-            await page.wait_for_selector("#username", timeout=60000)
-            print(f"   ✅ [Auth] SSO Page reached: {page.url}")
+            # First wait for the URL to change to Keycloak domain using resilient lambda
+            await page.wait_for_url(lambda url: "sso.bps.go.id" in url, timeout=45000)
+            print(f"   ✅ [Auth] Keycloak SSO URL reached: {page.url}", flush=True)
         except Exception as e:
-            print(f"   ❌ [Auth] Timeout waiting for #username. Stuck at URL: {page.url}")
-            if "sso.bps.go.id" not in page.url:
-                return False, f"Gagal dialihkan ke SSO: {str(e)}"
-            else:
-                return False, f"Berada di SSO tapi #username tidak ditemukan. URL: {page.url}"
+            print(f"   ❌ [Auth] Timeout waiting for SSO redirect. Stuck at URL: {page.url}", flush=True)
+            return False, f"Gagal dialihkan ke SSO: {str(e)}"
+
+        try:
+            # Wait 1s for the frame navigation to settle
+            await asyncio.sleep(1)
+            # Now wait for the username input field to be ready in DOM
+            await page.wait_for_selector("#username", timeout=3000)
+            print(f"   ✅ [Auth] SSO username field is ready.", flush=True)
+        except Exception as e:
+            print(f"   ❌ [Auth] #username field not found. URL: {page.url}", flush=True)
+            return False, f"Berada di SSO tapi #username tidak ditemukan. URL: {page.url}"
         
         # 5. Fill Credentials using direct JS injection (Bypass UI stalling)
         print(f"🚀 [Auth] Injecting credentials via JS...")

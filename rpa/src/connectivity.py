@@ -123,17 +123,17 @@ async def ensure_connected():
         session.commit()
         print("   ✅ Cookie baru tersimpan di DB. Menunggu VPN tunnel reconnect...")
 
-        # 4. Poll hingga terhubung (maks 60s)
+        # 4. Poll hingga terhubung (maks 90s)
         # VPN watcher: polling setiap 10s → konek: ~15-20s → total maks ~30-40s
-        for attempt in range(12):  # 12 × 5s = 60s
+        for attempt in range(18):  # 18 × 5s = 90s
             await asyncio.sleep(5)
             r, info = await check_fasih_reachable()
             if r:
                 print(f"   ✨ VPN reconnected setelah {(attempt+1)*5}s! ({info})")
                 return True
-            print(f"   ⏳ Menunggu reconnect... [{attempt+1}/12] — {info}")
+            print(f"   ⏳ Menunggu reconnect... [{attempt+1}/18] — {info}")
 
-        print("   ❌ Cookie diperbarui tapi FASIH masih unreachable setelah 60s.")
+        print("   ❌ Cookie diperbarui tapi FASIH masih unreachable setelah 90s.")
         raise FasihConnectionError(f"VPN self-healing failed: BPS Network unreachable ({info})")
 
     except FasihConnectionError:

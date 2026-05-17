@@ -66,8 +66,23 @@ async def _queue_worker():
 
             session.close()
 
-            # Process the job
-            await _run_single_job(job, req)
+            # Process the job with a robust try-except to prevent worker crash
+            try:
+                await _run_single_job(job, req)
+            except Exception as e:
+                print(f"❌ Worker critical error processing job {job.id}: {e}")
+                # Ensure the job is marked as failed in DB
+                try:
+                    db_session = get_session()
+                    db_job = db_session.query(SyncLog).get(job.id)
+                    if db_job and db_job.status in ["queued", "running"]:
+                        db_job.status = "failed"
+                        db_job.notes = f"Critical worker error: {str(e)}"
+                        db_job.finished_at = datetime.now(timezone.utc)
+                        db_session.commit()
+                    db_session.close()
+                except Exception as db_err:
+                    print(f"⚠️ Failed to update job status on worker crash: {db_err}")
 
             # Small delay between jobs
             await asyncio.sleep(2)

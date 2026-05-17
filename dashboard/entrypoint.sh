@@ -10,7 +10,7 @@ echo "🚀 Starting Dashboard Container Entrypoint..."
 # 2. Run Database Migrations / Sync Schema
 echo "🩺 Running Universal Self-Healing Migration Check..."
 # Blok PL/pgSQL yang lebih luas untuk menangani berbagai potensi konflik skema
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
+PGOPTIONS="-c statement_timeout=5000" psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
 DO \$\$ 
 DECLARE
     r RECORD;

@@ -1,5 +1,5 @@
 # FasihNexus Architecture Snapshot
-Generated at: Sun May 17 06:41:59 AM WIB 2026
+Generated at: Sun May 17 08:19:45 AM WIB 2026
 Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 
 ## 📂 High-Level Structure
@@ -31,6 +31,9 @@ Scope: Infrastructure, Entrypoints, and Critical Business Logic.
 | |____scratch_test_s3_cookies.py
 | |____monitor_bps_network.py
 | |____test_s3_headers.py
+| |____scratch_debug.py
+| |____scratch_fast.py
+| |____scratch_sso.py
 |____dashboard
 | |____server
 | |____package.json
@@ -119,6 +122,8 @@ services:
     networks:
       - fasih_internal
       - coolify
+    ports:
+      - "3000:3000"
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=coolify"
@@ -159,6 +164,9 @@ services:
       - 8.8.8.8
     networks:
       - fasih_internal
+    ports:
+      - "8000:8000"
+      - "8001:8001"
     labels:
       - "coolify.managed=false"
     environment:
@@ -204,14 +212,14 @@ services:
       - TARGET_URL=${TARGET_URL:-https://fasih-sm.bps.go.id}
       - VPN_USER=${VPN_USER}
       - VPN_PASS=[REDACTED]
+      - PYTHONUNBUFFERED=1
     depends_on:
       vpn:
         condition: service_started
     command: sh -c "echo '10.1.110.13 fasih-sm.bps.go.id' >> /etc/hosts && python -m uvicorn src.app:app --host 0.0.0.0 --port 8000"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; \
-        urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5); \
-        urllib.request.urlopen('https://fasih-sm.bps.go.id', timeout=10)\""]
+        urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)\""]
       interval: 45s
       timeout: 20s
       retries: 5
@@ -227,6 +235,8 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - ENCRYPTION_KEY=[REDACTED]
+      - IS_VPN_AUTH=true
+      - PYTHONUNBUFFERED=1
     depends_on:
       vpn:
         condition: service_started
@@ -254,6 +264,7 @@ services:
       - S3_BUCKET=${S3_BUCKET:-survey-images}
       - S3_ENDPOINT=http://s3:8333
       - PYTHONPATH=/app:/app/src
+      - PYTHONUNBUFFERED=1
     depends_on:
       vpn:
         condition: service_started
@@ -2180,63 +2191,68 @@ async def lifespan(fastapi_app):
     """On startup: clean up stale 'running' jobs and resume 'queued' ones."""
     try:
         init_db()
-        session = get_session()
-        # Only mark 'running' as failed. 'queued' jobs should be preserved and resumed.
-        stale = (
-            session.query(SyncLog)
-            .filter(SyncLog.status == "running")
-            .all()
-        )
-        if stale:
-            for job in stale:
-                job.status = "failed"
-                job.finished_at = datetime.now(timezone.utc)
-                job.notes = "Killed by container restart while running"
-            session.commit()
-            print(f"🧹 Startup cleanup: marked {len(stale)} stale RUNNING job(s) as failed.")
         
-        # Check if we should re-trigger the worker
-        queued_count = session.query(SyncLog).filter(SyncLog.status == "queued").count()
-        session.close()
-
-        if queued_count > 0:
-            from worker.queue import _queue_worker
-            import asyncio
-            print(f"🔄 Startup: Found {queued_count} queued jobs. Auto-triggering worker...")
-            asyncio.create_task(_queue_worker())
-
-        # Start Routine Sync Scheduler
-        from worker.scheduler import routine_sync_loop
-        import asyncio
-        print("🕒 Startup: Starting Routine Sync Scheduler...")
-        asyncio.create_task(routine_sync_loop())
-
-        # 4. Headless VPN Bootstrap: Fetch cookie using environment credentials
-        vpn_user = os.getenv("VPN_USER")
-        vpn_pass = os.getenv("VPN_PASS")
-        if vpn_user and vpn_pass:
-            from auth import fetch_vpn_cookie, sync_cookie_to_db, get_current_cookie, FETCH_LOCK
-            async def bootstrap_vpn():
-                # Delay slightly to let the infrastructure stabilize (DB, VPN container, etc)
-                await asyncio.sleep(10)
-                
-                async with FETCH_LOCK:
-                    # CHECK DB FIRST: Don't fetch if we already have a cookie
-                    # This prevents redundant Playwright sessions on every RPA restart
-                    existing = await get_current_cookie()
-                    if existing:
-                        print("ℹ️ [Startup] VPN Cookie already exists in DB. Skipping auto-bootstrap.")
-                        return
-
-                    print(f"🌐 [Startup] No cookie found. Auto-bootstrapping VPN for {vpn_user}...")
-                    cookie = await fetch_vpn_cookie(vpn_user, vpn_pass)
-                    if cookie:
-                        await sync_cookie_to_db(cookie)
-                        print("✅ [Startup] VPN Auto-bootstrap successful.")
-                    else:
-                        print("❌ [Startup] VPN Auto-bootstrap failed.")
+        is_vpn_auth = os.getenv("IS_VPN_AUTH", "false").lower() == "true"
+        if not is_vpn_auth:
+            session = get_session()
+            # Only mark 'running' as failed. 'queued' jobs should be preserved and resumed.
+            stale = (
+                session.query(SyncLog)
+                .filter(SyncLog.status == "running")
+                .all()
+            )
+            if stale:
+                for job in stale:
+                    job.status = "failed"
+                    job.finished_at = datetime.now(timezone.utc)
+                    job.notes = "Killed by container restart while running"
+                session.commit()
+                print(f"🧹 Startup cleanup: marked {len(stale)} stale RUNNING job(s) as failed.")
             
-            asyncio.create_task(bootstrap_vpn())
+            # Check if we should re-trigger the worker
+            queued_count = session.query(SyncLog).filter(SyncLog.status == "queued").count()
+            session.close()
+
+            if queued_count > 0:
+                from worker.queue import _queue_worker
+                import asyncio
+                print(f"🔄 Startup: Found {queued_count} queued jobs. Auto-triggering worker...")
+                asyncio.create_task(_queue_worker())
+
+            # Start Routine Sync Scheduler
+            from worker.scheduler import routine_sync_loop
+            import asyncio
+            print("🕒 Startup: Starting Routine Sync Scheduler...")
+            asyncio.create_task(routine_sync_loop())
+
+            # 4. Headless VPN Bootstrap: Fetch cookie using environment credentials
+            vpn_user = os.getenv("VPN_USER")
+            vpn_pass = os.getenv("VPN_PASS")
+            if vpn_user and vpn_pass:
+                from auth import fetch_vpn_cookie, sync_cookie_to_db, get_current_cookie, FETCH_LOCK
+                async def bootstrap_vpn():
+                    # Delay slightly to let the infrastructure stabilize (DB, VPN container, etc)
+                    await asyncio.sleep(10)
+                    
+                    async with FETCH_LOCK:
+                        # CHECK DB FIRST: Don't fetch if we already have a cookie
+                        # This prevents redundant Playwright sessions on every RPA restart
+                        existing = await get_current_cookie()
+                        if existing:
+                            print("ℹ️ [Startup] VPN Cookie already exists in DB. Skipping auto-bootstrap.")
+                            return
+
+                        print(f"🌐 [Startup] No cookie found. Auto-bootstrapping VPN for {vpn_user}...")
+                        cookie = await fetch_vpn_cookie(vpn_user, vpn_pass)
+                        if cookie:
+                            await sync_cookie_to_db(cookie)
+                            print("✅ [Startup] VPN Auto-bootstrap successful.")
+                        else:
+                            print("❌ [Startup] VPN Auto-bootstrap failed.")
+                
+                asyncio.create_task(bootstrap_vpn())
+        else:
+            print("ℹ️ Running as VPN-AUTH helper. Skipping scheduler, cleanup, and bootstrap.")
 
     except Exception as e:
         print(f"⚠️ Startup cleanup/recovery failed: {e}")
@@ -2312,7 +2328,7 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
             target_domain = target_url.split("://")[1].split("/")[0]
             if target_domain not in page.url and "sso.bps.go.id" not in page.url:
                 print(f"🚀 [Auth] Navigating to target {target_domain}...")
-                await page.goto(target_url, wait_until="domcontentloaded", timeout=120000)
+                await page.goto(target_url, wait_until="commit", timeout=120000)
                 
                 # Apply 5-Second Stabilization Rule specifically for VPN Portal (akses.bps.go.id)
                 if "akses.bps.go.id" in target_url:
@@ -2344,17 +2360,24 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
                 # We don't return False here, we let the next block handle Keycloak
 
         # 4. Transition to Keycloak (SSO)
-        print(f"🚀 [Auth] Handling Keycloak SSO... Current URL: {page.url}")
+        print(f"🚀 [Auth] Waiting for Keycloak SSO redirection... Current URL: {page.url}", flush=True)
         try:
-            # Wait for the SSO page input to be ready
-            await page.wait_for_selector("#username", timeout=60000)
-            print(f"   ✅ [Auth] SSO Page reached: {page.url}")
+            # First wait for the URL to change to Keycloak domain using resilient lambda
+            await page.wait_for_url(lambda url: "sso.bps.go.id" in url, timeout=45000)
+            print(f"   ✅ [Auth] Keycloak SSO URL reached: {page.url}", flush=True)
         except Exception as e:
-            print(f"   ❌ [Auth] Timeout waiting for #username. Stuck at URL: {page.url}")
-            if "sso.bps.go.id" not in page.url:
-                return False, f"Gagal dialihkan ke SSO: {str(e)}"
-            else:
-                return False, f"Berada di SSO tapi #username tidak ditemukan. URL: {page.url}"
+            print(f"   ❌ [Auth] Timeout waiting for SSO redirect. Stuck at URL: {page.url}", flush=True)
+            return False, f"Gagal dialihkan ke SSO: {str(e)}"
+
+        try:
+            # Wait 1s for the frame navigation to settle
+            await asyncio.sleep(1)
+            # Now wait for the username input field to be ready in DOM
+            await page.wait_for_selector("#username", timeout=3000)
+            print(f"   ✅ [Auth] SSO username field is ready.", flush=True)
+        except Exception as e:
+            print(f"   ❌ [Auth] #username field not found. URL: {page.url}", flush=True)
+            return False, f"Berada di SSO tapi #username tidak ditemukan. URL: {page.url}"
         
         # 5. Fill Credentials using direct JS injection (Bypass UI stalling)
         print(f"🚀 [Auth] Injecting credentials via JS...")
@@ -2583,6 +2606,49 @@ class FasihApiClient:
             pass
 
         return self
+
+    async def _request(self, method: str, path: str, **kwargs) -> Optional[dict]:
+        """Perform a request using the persistent ClientSession, with Response Guardian redirect checks."""
+        url = f"{TARGET_URL}/{path.lstrip('/')}"
+        
+        # Merge dynamic headers
+        req_headers = self._get_headers()
+        if "headers" in kwargs:
+            req_headers.update(kwargs.pop("headers"))
+            
+        try:
+            async with self.session.request(method, url, headers=req_headers, **kwargs) as resp:
+                # 1. Response Guardian: Detect SSO Login redirects (Scenario 2)
+                if "oauth_login" in str(resp.url) or "sso.bps.go.id" in str(resp.url):
+                    print("   🚨 [API] Response Guardian: Detected redirection to SSO login. Session expired!", flush=True)
+                    raise FasihAuthError("Session expired: redirected to SSO login")
+                
+                # 2. Check for explicit authentication statuses
+                if resp.status in (401, 403):
+                    print(f"   🚨 [API] Authentication failed (HTTP {resp.status})", flush=True)
+                    raise FasihAuthError(f"Authentication failed with HTTP {resp.status}")
+                
+                if resp.status != 200:
+                    text = await resp.text()
+                    print(f"   ⚠️ [API] Request to {path} failed (HTTP {resp.status}): {text[:200]}", flush=True)
+                    return None
+                
+                # Try to parse json
+                try:
+                    return await resp.json()
+                except Exception as json_err:
+                    text = await resp.text()
+                    # If it's HTML, check if it's the SSO login page (in case redirect wasn't fully detected by URL)
+                    if "<html" in text.lower() and ("login" in text.lower() or "sso" in text.lower()):
+                        print("   🚨 [API] Response Guardian: Detected HTML login page structure. Session expired!", flush=True)
+                        raise FasihAuthError("Session expired: returned HTML login page instead of JSON")
+                    print(f"   ⚠️ [API] Failed to parse JSON response from {path}: {json_err}", flush=True)
+                    return None
+        except FasihAuthError:
+            raise
+        except Exception as e:
+            print(f"   ⚠️ [API] Connection error during request to {path}: {e}", flush=True)
+            raise
 
     def _get_headers(self) -> Dict[str, str]:
         """Dynamically build headers with latest XSRF-TOKEN from cookie jar."""
@@ -3985,17 +4051,17 @@ async def ensure_connected():
         session.commit()
         print("   ✅ Cookie baru tersimpan di DB. Menunggu VPN tunnel reconnect...")
 
-        # 4. Poll hingga terhubung (maks 60s)
+        # 4. Poll hingga terhubung (maks 90s)
         # VPN watcher: polling setiap 10s → konek: ~15-20s → total maks ~30-40s
-        for attempt in range(12):  # 12 × 5s = 60s
+        for attempt in range(18):  # 18 × 5s = 90s
             await asyncio.sleep(5)
             r, info = await check_fasih_reachable()
             if r:
                 print(f"   ✨ VPN reconnected setelah {(attempt+1)*5}s! ({info})")
                 return True
-            print(f"   ⏳ Menunggu reconnect... [{attempt+1}/12] — {info}")
+            print(f"   ⏳ Menunggu reconnect... [{attempt+1}/18] — {info}")
 
-        print("   ❌ Cookie diperbarui tapi FASIH masih unreachable setelah 60s.")
+        print("   ❌ Cookie diperbarui tapi FASIH masih unreachable setelah 90s.")
         raise FasihConnectionError(f"VPN self-healing failed: BPS Network unreachable ({info})")
 
     except FasihConnectionError:
@@ -4614,23 +4680,34 @@ async def routine_sync_loop():
             print("🔍 Scheduler: Checking for surveys to sync...", flush=True)
             session = get_session()
 
-            # --- STALE JOB CLEANUP ---
-            # If a job is 'running' for more than 45 minutes, it's likely stuck/zombie.
+            # --- LIVE STALE JOB CLEANUP (ZOMBIE GUARD & TIMEOUT FALLBACK) ---
+            from state import sync_state
             from datetime import timedelta
             cutoff = datetime.now(timezone.utc) - timedelta(minutes=45)
             
-            stale_jobs = session.query(SyncLog).filter(
-                SyncLog.status == "running", 
-                SyncLog.started_at < cutoff
-            ).all()
-            
-            if stale_jobs:
-                print(f"🧹 Scheduler: Found {len(stale_jobs)} stale job(s). Cleaning up...", flush=True)
-                for job in stale_jobs:
+            db_running_jobs = session.query(SyncLog).filter(SyncLog.status == "running").all()
+            for job in db_running_jobs:
+                is_zombie = False
+                reason = ""
+                
+                # Check 1: In-memory live validation (Primary)
+                if not sync_state.is_running:
+                    is_zombie = True
+                    reason = "FastAPI event loop reports no active running sync job."
+                elif sync_state.current_job_id != job.id:
+                    is_zombie = True
+                    reason = f"Active job ID mismatch (RAM current_job_id: {sync_state.current_job_id}, DB job ID: {job.id})."
+                # Check 2: Stale time-based fallback (Secondary)
+                elif job.started_at < cutoff:
+                    is_zombie = True
+                    reason = f"Job exceeded the global 45-minute hard limit (started at {job.started_at})."
+                
+                if is_zombie:
+                    print(f"🧹 Zombie Guard: Found zombie/stale job ID {job.id}. Reason: {reason} Cleaning up...", flush=True)
                     job.status = "failed"
-                    job.notes = f"Marked as failed by auto-cleanup (stuck since {job.started_at})"
+                    job.notes = f"Cleaned up by Zombie Guard. Reason: {reason}"
                     job.finished_at = datetime.now(timezone.utc)
-                session.commit()
+                    session.commit()
             
             # Fetch all active surveys with a valid interval
             active_surveys = (
@@ -4807,8 +4884,23 @@ async def _queue_worker():
 
             session.close()
 
-            # Process the job
-            await _run_single_job(job, req)
+            # Process the job with a robust try-except to prevent worker crash
+            try:
+                await _run_single_job(job, req)
+            except Exception as e:
+                print(f"❌ Worker critical error processing job {job.id}: {e}")
+                # Ensure the job is marked as failed in DB
+                try:
+                    db_session = get_session()
+                    db_job = db_session.query(SyncLog).get(job.id)
+                    if db_job and db_job.status in ["queued", "running"]:
+                        db_job.status = "failed"
+                        db_job.notes = f"Critical worker error: {str(e)}"
+                        db_job.finished_at = datetime.now(timezone.utc)
+                        db_session.commit()
+                    db_session.close()
+                except Exception as db_err:
+                    print(f"⚠️ Failed to update job status on worker crash: {db_err}")
 
             # Small delay between jobs
             await asyncio.sleep(2)
@@ -5200,6 +5292,13 @@ sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
 # Base config
 mkdir -p /etc/openfortivpn
 
+# Ensure vpnc-script symlink exists so openconnect can set up routing correctly
+mkdir -p /etc/vpnc
+if [ ! -f /etc/vpnc/vpnc-script ] && [ -f /usr/share/vpnc-scripts/vpnc-script ]; then
+    echo "🔗 Creating symlink for vpnc-script..."
+    ln -sf /usr/share/vpnc-scripts/vpnc-script /etc/vpnc/vpnc-script
+fi
+
 # Add public DNS fallback so we can always resolve akses.bps.go.id for auto-reconnect
 echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 echo "nameserver 1.1.1.1" >> /etc/resolv.conf
@@ -5253,6 +5352,8 @@ fi
 # Helper function to handle graceful shutdown
 cleanup() {
     echo "🛑 Caught termination signal! Shutting down..."
+    pkill -x openconnect 2>/dev/null
+    pkill -x openfortivpn 2>/dev/null
     kill $(jobs -p) 2>/dev/null
     exit 0
 }
@@ -5285,15 +5386,13 @@ monitor_cookie_changes() {
     LAST_COOKIE=""
     while true; do
         sleep 10
-        if [ -n "$DATABASE_URL" ] && [ -n "$VPN_PID" ]; then
+        if [ -n "$DATABASE_URL" ]; then
             CURRENT_DB_COOKIE=$(psql "$DATABASE_URL" -t -A -c "SELECT value FROM system_settings WHERE key='vpn_cookie'" 2>/dev/null)
             if [ -n "$CURRENT_DB_COOKIE" ] && [ "$CURRENT_DB_COOKIE" != "$LAST_COOKIE" ]; then
                 if [ -n "$LAST_COOKIE" ]; then
                     echo "🔄 DB Cookie changed! Triggering organic VPN reconnect..."
-                    # Check if VPN_PID is actually running before killing
-                    if [ -n "$VPN_PID" ] && kill -0 "$VPN_PID" 2>/dev/null; then
-                        kill "$VPN_PID" 2>/dev/null
-                    fi
+                    pkill -x openconnect 2>/dev/null
+                    pkill -x openfortivpn 2>/dev/null
                 fi
                 LAST_COOKIE="$CURRENT_DB_COOKIE"
             fi
@@ -5402,8 +5501,23 @@ while true; do
                     -d "{\"sso_username\":\"$VPN_USER\", \"sso_password\":\"$VPN_PASS\"}")
                 
                 if [ "$RESP" = "200" ]; then
-                    echo "   ✅ RPA auto-fetch triggered successfully."
-                    break
+                    echo "   ✅ RPA auto-fetch triggered in background. Polling DB for fresh cookie..."
+                    for poll in $(seq 1 12); do
+                        sleep 5
+                        DB_COOKIE=$(psql "$DATABASE_URL" -t -A -c "SELECT value FROM system_settings WHERE key='vpn_cookie'" 2>/dev/null)
+                        if [ -n "$DB_COOKIE" ]; then
+                            COOKIE="$DB_COOKIE"
+                            echo "🔑 Fresh cookie loaded from database after auto-fetch polling (Attempt $poll/12, Length: ${#COOKIE})"
+                            break 2
+                        fi
+                        echo "      ⏳ Waiting for RPA background fetch to complete ($poll/12)..."
+                    done
+                    
+                    # If we exhausted the polling loop and COOKIE is still empty, break attempt loop to allow password fallback
+                    if [ -z "$COOKIE" ]; then
+                        echo "   ❌ Timeout waiting for RPA background fetch to save cookie."
+                        break
+                    fi
                 fi
                 echo "   ⚠️ RPA not ready yet ($attempt/6, code: $RESP), retrying in 10s..."
                 sleep 10
@@ -5427,67 +5541,56 @@ while true; do
         # 📱 Android Spoofing for 'Lightning Fast' performance
         ANDROID_UA="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36 FortiClient/7.2.4"
         
-        # We try OpenConnect first as it supports DTLS
+        # Run smart routing in the background to apply as soon as interface comes up
+        apply_smart_routing &
+        
+        # We try OpenConnect first. We force standard HTTPS/TLS with --no-dtls to avoid DTLS dead-peer detection drops and cookie invalidations.
         openconnect --protocol=fortinet \
             "${VPN_HOST}:${VPN_PORT:-443}" \
             --cookie="SVPNCOOKIE=$VAL" \
             --useragent="$ANDROID_UA" \
             --os=android \
+            --no-dtls \
             --reconnect-timeout 60 \
             --passwd-on-stdin \
-            --servercert "pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA=" \
-            --background \
-            --pid-file=/tmp/vpn.pid <<EOF
+            --servercert "pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA=" <<EOF
 $VAL
 EOF
         
-        # Wait for the background process to start
-        sleep 2
-        if [ -f /tmp/vpn.pid ]; then
-            VPN_PID=$(cat /tmp/vpn.pid)
-            apply_smart_routing
-            # 🛡️ Robust background wait: wait $PID only works for direct children.
-            # Since openconnect daemonizes, we must use a kill -0 loop.
-            echo "🛡️ Monitoring VPN PID $VPN_PID..."
-            while kill -0 "$VPN_PID" 2>/dev/null; do
-                sleep 5
-            done
-        else
-            echo "⚠️ OpenConnect failed to start (PID file missing). Falling back to openfortivpn..."
+        EXIT_STATUS=$?
+        
+        if [ $EXIT_STATUS -ne 0 ]; then
+            echo "⚠️ OpenConnect failed to start or run (Status: $EXIT_STATUS). Falling back to openfortivpn..."
+            apply_smart_routing &
             openfortivpn "${VPN_HOST}:${VPN_PORT:-443}" \
                 --cookie="$VAL" \
                 ${VPN_TRUSTED_CERT:+--trusted-cert "$VPN_TRUSTED_CERT"} \
                 --set-dns=1 \
-                --pppd-use-peerdns=1 &
-            VPN_PID=$!
-            apply_smart_routing
-            wait $VPN_PID
+                --pppd-use-peerdns=1
+            EXIT_STATUS=$?
         fi
     else
         echo "👤 Using Username/Password Mode (OpenConnect)..."
         # 📱 Android Spoofing for Password Mode
         ANDROID_UA="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36 FortiClient/7.2.4"
         
+        apply_smart_routing &
+        
         openconnect --protocol=fortinet \
             "${VPN_HOST}:${VPN_PORT:-443}" \
             -u "$VPN_USER" \
             --useragent="$ANDROID_UA" \
             --os=android \
+            --no-dtls \
             --passwd-on-stdin \
-            --servercert "pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA=" \
-            --background \
-            --pid-file=/tmp/vpn.pid <<EOF
+            --servercert "pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA=" <<EOF
 $VPN_PASS
 EOF
             
-        sleep 5 
-        if [ -f /tmp/vpn.pid ] && kill -0 $(cat /tmp/vpn.pid) 2>/dev/null; then
-            VPN_PID=$(cat /tmp/vpn.pid)
-            apply_smart_routing
-            wait $VPN_PID
-        else
-            echo "⚠️ OpenConnect failed to stay alive. Falling back to openfortivpn..."
-            # ... (rest of fallback)
+        EXIT_STATUS=$?
+        
+        if [ $EXIT_STATUS -ne 0 ]; then
+            echo "⚠️ OpenConnect failed. Falling back to openfortivpn..."
             cat <<EOF > /etc/openfortivpn/config
 host = ${VPN_HOST}
 port = ${VPN_PORT:-443}
@@ -5497,22 +5600,19 @@ ${VPN_TRUSTED_CERT:+trusted-cert = $VPN_TRUSTED_CERT}
 set-dns = 1
 pppd-use-peerdns = 1
 EOF
-            openfortivpn -c /etc/openfortivpn/config &
-            VPN_PID=$!
-            apply_smart_routing
-            wait $VPN_PID
+            apply_smart_routing &
+            openfortivpn -c /etc/openfortivpn/config
+            EXIT_STATUS=$?
         fi
-        echo "⚠️ VPN connection closed."
-        VPN_PID=""
     fi
 
-    EXIT_CODE=$?
+    EXIT_CODE=$EXIT_STATUS
     echo "⚠️ VPN Disconnected (Code: $EXIT_CODE). Cleaning up before reconnect..."
     
     # --- Self-Healing: If connection failed and we used a cookie, it might be stale ---
     if [ "$EXIT_CODE" -ne 0 ] && [ -n "$COOKIE" ] && [ -n "$DATABASE_URL" ]; then
         echo "🧐 VPN failed while using a cookie. Checking if it should be cleared..."
-        # If openfortivpn exits with error, we assume the cookie might be dead.
+        # If openfortivpn/openconnect exits with error, we assume the cookie might be dead.
         # We clear it from DB so the next loop can try Password Mode or wait for Auto-Fetch.
         psql "$DATABASE_URL" -c "DELETE FROM system_settings WHERE key='vpn_cookie'" > /dev/null 2>&1
         echo "🗑️  Stale cookie cleared from database to allow fallback/refresh."
@@ -5546,7 +5646,7 @@ echo "🚀 Starting Dashboard Container Entrypoint..."
 # 2. Run Database Migrations / Sync Schema
 echo "🩺 Running Universal Self-Healing Migration Check..."
 # Blok PL/pgSQL yang lebih luas untuk menangani berbagai potensi konflik skema
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
+PGOPTIONS="-c statement_timeout=5000" psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
 DO \$\$ 
 DECLARE
     r RECORD;
@@ -5629,9 +5729,9 @@ exec bun run server/index.ts
 ## 📜 Recent Activity
 Last 5 Git Commits:
 ```
+7076255 feat: complete resilience hardening for archiver and restore missing api_client _request helper
+5e64b58 fix: resolve archiver infinite loop and detached session bugs in image vault mirroring
+7a57304 fix: implement automated storage integrity audit and healing in archiver
 297b3ac fix: implement permanent MTU locking for VPN resilience (Scenario 1 & Scenario 3)
 89b4522 feat: complete resilience hardening for Scenario 2 (Silent Auth) and Scenario 3 (Atomic Shutdown)
-f373415 chore: update dump_project.sh with critical RPA logic files and refresh snapshot
-8dbdbca feat: infrastructure hardening & resiliency (Response Guardian, Atomic Shield, Signal Watchdog)
-536e16e chore: upgrade entrypoint to universal self-healing migration
 ```

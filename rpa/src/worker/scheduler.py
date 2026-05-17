@@ -27,23 +27,34 @@ async def routine_sync_loop():
             print("🔍 Scheduler: Checking for surveys to sync...", flush=True)
             session = get_session()
 
-            # --- STALE JOB CLEANUP ---
-            # If a job is 'running' for more than 45 minutes, it's likely stuck/zombie.
+            # --- LIVE STALE JOB CLEANUP (ZOMBIE GUARD & TIMEOUT FALLBACK) ---
+            from state import sync_state
             from datetime import timedelta
             cutoff = datetime.now(timezone.utc) - timedelta(minutes=45)
             
-            stale_jobs = session.query(SyncLog).filter(
-                SyncLog.status == "running", 
-                SyncLog.started_at < cutoff
-            ).all()
-            
-            if stale_jobs:
-                print(f"🧹 Scheduler: Found {len(stale_jobs)} stale job(s). Cleaning up...", flush=True)
-                for job in stale_jobs:
+            db_running_jobs = session.query(SyncLog).filter(SyncLog.status == "running").all()
+            for job in db_running_jobs:
+                is_zombie = False
+                reason = ""
+                
+                # Check 1: In-memory live validation (Primary)
+                if not sync_state.is_running:
+                    is_zombie = True
+                    reason = "FastAPI event loop reports no active running sync job."
+                elif sync_state.current_job_id != job.id:
+                    is_zombie = True
+                    reason = f"Active job ID mismatch (RAM current_job_id: {sync_state.current_job_id}, DB job ID: {job.id})."
+                # Check 2: Stale time-based fallback (Secondary)
+                elif job.started_at < cutoff:
+                    is_zombie = True
+                    reason = f"Job exceeded the global 45-minute hard limit (started at {job.started_at})."
+                
+                if is_zombie:
+                    print(f"🧹 Zombie Guard: Found zombie/stale job ID {job.id}. Reason: {reason} Cleaning up...", flush=True)
                     job.status = "failed"
-                    job.notes = f"Marked as failed by auto-cleanup (stuck since {job.started_at})"
+                    job.notes = f"Cleaned up by Zombie Guard. Reason: {reason}"
                     job.finished_at = datetime.now(timezone.utc)
-                session.commit()
+                    session.commit()
             
             # Fetch all active surveys with a valid interval
             active_surveys = (
