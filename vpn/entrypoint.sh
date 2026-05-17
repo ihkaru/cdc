@@ -267,13 +267,15 @@ while true; do
             # RPA shares the same network namespace, so we use 127.0.0.1
             # We use a retry loop because RPA might still be starting its web server.
             for attempt in $(seq 1 6); do
-                RESP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:8000/vpn/auto-fetch" \
+                TMP_RESP=$(mktemp)
+                RESP=$(curl -s -w "%{http_code}" -o "$TMP_RESP" -X POST "http://127.0.0.1:8000/vpn/auto-fetch" \
                     -H "X-Trace-ID: $SHELL_TRACE_ID" \
                     -H "Content-Type: application/json" \
                     -d "{\"sso_username\":\"$VPN_USER\", \"sso_password\":\"$VPN_PASS\"}")
                 
                 if [ "$RESP" = "200" ]; then
                     log "   ✅ RPA auto-fetch triggered in background. Polling DB for fresh cookie..." "info"
+                    rm -f "$TMP_RESP"
                     for poll in $(seq 1 12); do
                         sleep 5
                         DB_COOKIE=$(psql "$DATABASE_URL" -t -A -c "SELECT value FROM system_settings WHERE key='vpn_cookie'" 2>/dev/null)
@@ -290,8 +292,11 @@ while true; do
                         log "   ❌ Timeout waiting for RPA background fetch to save cookie." "warn"
                         break
                     fi
+                else
+                    RESP_BODY=$(cat "$TMP_RESP" 2>/dev/null | cut -c 1-200)
+                    rm -f "$TMP_RESP"
+                    log "   ⚠️ RPA auto-fetch returned failure ($attempt/6, code: $RESP). Respon: $RESP_BODY" "warn"
                 fi
-                log "   ⚠️ RPA not ready yet ($attempt/6, code: $RESP), retrying in 10s..." "warn"
                 sleep 10
             done
         fi
@@ -384,14 +389,20 @@ EOF
     EXIT_CODE=$EXIT_STATUS
     log "⚠️ VPN Disconnected (Code: $EXIT_CODE). Cleaning up before reconnect..." "warn"
     
-    # --- Self-Healing: If connection failed and we used a cookie, it might be stale ---
+    # --- Self-Healing: If connection failed and we used a cookie, check if it should be cleared ---
+    # We implement Golden Rule 12 (Fragile Cookie Lifecycle):
+    # Only delete the cookie if the failure code is 2 (Auth/Cookie Rejected/Expired).
+    # Other failures (like exit code 255/network drop) should NOT clear the cookie.
     if [ "$EXIT_CODE" -ne 0 ] && [ -n "$COOKIE" ] && [ -n "$DATABASE_URL" ]; then
-        log "🧐 VPN failed while using a cookie. Checking if it should be cleared..." "info"
-        # If openfortivpn/openconnect exits with error, we assume the cookie might be dead.
-        # We clear it from DB so the next loop can try Password Mode or wait for Auto-Fetch.
-        psql "$DATABASE_URL" -c "DELETE FROM system_settings WHERE key='vpn_cookie'" > /dev/null 2>&1
-        log "🗑️  Stale cookie cleared from database to allow fallback/refresh." "info"
-        unset VPN_COOKIE
+        log "🧐 VPN failed while using a cookie (Exit code: $EXIT_CODE). Checking if it should be cleared..." "info"
+        if [ "$EXIT_CODE" -eq 2 ]; then
+            log "🔍 [DIAGNOSTICS] Exit code 2 (Auth Failed) detected: SAML Cookie is definitely INVALID/EXPIRED!" "warn"
+            psql "$DATABASE_URL" -c "DELETE FROM system_settings WHERE key='vpn_cookie'" > /dev/null 2>&1
+            log "🗑️ Stale cookie cleared from database to force a fresh login." "info"
+            unset VPN_COOKIE
+        else
+            log "🔍 [DIAGNOSTICS] Network/Server drop detected (Exit code: $EXIT_CODE). Preserving cookie to prevent fragile reconnect deadlocks (Golden Rule 12)." "info"
+        fi
     fi
     
     # --- Cleanup stale ppp0 interface to prevent 'Interface ppp0: Exist' on reconnect ---
