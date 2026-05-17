@@ -23,6 +23,7 @@ import re
 import sys
 import time
 import json
+import signal
 from datetime import datetime, timezone
 
 from playwright.async_api import async_playwright
@@ -247,21 +248,43 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
 
                 # Fetch secara concurrent — concurrency=100 optimal untuk VPN BPS
                 # (lebih tinggi berisiko 429, lebih rendah terlalu lambat)
-                results = await fetch_assignments_concurrent(cookies, urls_to_fetch, concurrency=settings.fetch_concurrency)
-                timings["fetch"] = int((time.perf_counter() - phase_start) * 1000)
+                try:
+                    results = await fetch_assignments_concurrent(cookies, urls_to_fetch, concurrency=settings.fetch_concurrency)
+                    timings["fetch"] = int((time.perf_counter() - phase_start) * 1000)
 
-                # Upsert
-                print("\n   💾 Menyimpan ke database (Bulk)...")
-                phase_start = time.perf_counter()
+                    # Upsert
+                    print("\n   💾 Menyimpan ke database (Bulk)...")
+                    phase_start = time.perf_counter()
 
-                upserter = BatchUpserterBulk(session, batch_size=2000)
-                for i, data in enumerate(results):
-                    data["_survey_config_id"] = getattr(settings, "id", "default")
-                    upserter.add(data)
+                    upserter = BatchUpserterBulk(session, batch_size=2000)
+                    for i, data in enumerate(results):
+                        data["_survey_config_id"] = getattr(settings, "id", "default")
+                        upserter.add(data)
 
-                stats = upserter.finish()
-                stats.total_skipped += skipped_delta
-                stats.total_failed += len(to_fetch) - len(results)
+                    stats = upserter.finish()
+                    stats.total_skipped += skipped_delta
+                    stats.total_failed += len(to_fetch) - len(results)
+                except FasihAuthError as ae:
+                    print(f"\n🚨 [run_sync_cycle] Fatal Authentication Error during fetch: {ae}")
+                    print("   🗑️ Menghapus cached cookies untuk memaksa login baru pada cycle berikutnya...")
+                    try:
+                        db_session = get_session()
+                        set_system_setting(db_session, cache_key, None)
+                        db_session.close()
+                        print("   🗑️ Cached cookies berhasil dihapus.")
+                    except Exception as db_err:
+                        print(f"   ⚠️ Gagal menghapus cached cookies: {db_err}")
+                    
+                    if BatchUpserterBulk.active_instance:
+                        print("   💾 Menjalankan emergency flush untuk data yang tersisa di buffer...")
+                        try:
+                            BatchUpserterBulk.active_instance.emergency_flush()
+                            print("   ✅ Emergency flush berhasil diselesaikan.")
+                        except Exception as flush_err:
+                            print(f"   ⚠️ Emergency flush gagal: {flush_err}")
+                    
+                    # Raise agar scheduler/caller mendeteksi kegagalan otentikasi
+                    raise
             
             # (Note: BatchUpserterBulk handles commits internally or during finish)
         else:
@@ -335,7 +358,25 @@ def run_scheduler(settings: Settings):
         loop.close()
 
 
+def handle_sigterm(signum, frame):
+    print(f"\n🚨 [SIGTERM] Menerima sinyal {signum}. Melakukan graceful shutdown...")
+    from db.repository import BatchUpserterBulk
+    if BatchUpserterBulk.active_instance:
+        print("💾 [SIGTERM] Ditemukan active buffer di BatchUpserterBulk. Melakukan emergency flush...")
+        try:
+            BatchUpserterBulk.active_instance.emergency_flush()
+            print("   ✅ Emergency flush selesai. Semua data di buffer aman tersimpan di DB.")
+        except Exception as e:
+            print(f"   ❌ Emergency flush gagal: {e}")
+    else:
+        print("   ℹ️ Tidak ada buffer aktif yang perlu di-flush.")
+    sys.exit(143)  # Standard Docker SIGTERM exit code (128 + 15)
+
+
 def main():
+    # Registrasi handler SIGTERM untuk ketahanan kontainer di Coolify/Docker
+    signal.signal(signal.SIGTERM, handle_sigterm)
+
     parser = argparse.ArgumentParser(description="FasihNexus Sync Engine — Sinkronisasi data otomatis")
     parser.add_argument("--once", action="store_true", help="Jalankan 1 cycle saja")
     parser.add_argument("--test-login", action="store_true", help="Test login saja")

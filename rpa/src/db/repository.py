@@ -381,6 +381,7 @@ class BatchUpserterBulk:
     Sends ONE SQL statement per batch instead of N ORM calls.
     Benchmark: ~50-200x faster than per-row ORM for large datasets.
     """
+    active_instance = None  # Class-level reference for signal handling
 
     def __init__(self, session: Session, batch_size: int = 2000, sync_log_id: int = None):
         self.session = session
@@ -388,6 +389,7 @@ class BatchUpserterBulk:
         self.sync_log_id = sync_log_id
         self._buffer: list[dict] = []
         self.stats = SyncStats()
+        BatchUpserterBulk.active_instance = self
 
     def add(self, row: dict):
         # Transform row data for column naming to match DB

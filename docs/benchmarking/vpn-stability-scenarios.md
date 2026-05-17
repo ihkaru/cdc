@@ -8,7 +8,7 @@ FasihNexus beroperasi di atas arsitektur jaringan yang kompleks (**Hybrid Networ
 
 ---
 
-## 🛠️ 5 Skenario Kegagalan & Bootstrap Kritis
+## 🛠️ 6 Skenario Kegagalan & Bootstrap Kritis
 
 ### Skenario 1: Cold Bootstrap (Database Kosong / Pertama Kali Build)
 Skenario ini terjadi saat pertama kali sistem dideploy di Coolify (atau dijalankan setelah volume database di-wipe secara bersih).
@@ -222,3 +222,22 @@ Untuk memastikan pengujian lokal di laptop Anda sebanding dengan performa di Coo
 1.  **Gunakan `--no-dtls` Secara Konsisten**: Jangan pernah mengaktifkan DTLS pada VPN OpenConnect di jaringan BPS, karena jitter kecil pada jaringan internal mereka akan memicu pemutusan hubungan paket instan yang merusak siklus hidup cookie.
 2.  **Hindari Modifikasi Skema Konkuren**: Pastikan skrip migrasi database (`drizzle-kit push`) selalu dijalankan dengan parameter batas waktu tingkat sesi (`PGOPTIONS="-c statement_timeout=5000"`) di file inisialisasi kontainer untuk menghindari *deadlock* startup saat kontainer lain melakukan query pembacaan aktif.
 3.  **Audit Logs Berkala**: Manfaatkan skrip `./check-stability.sh` sebagai audit otomatis pasca-deployment di Coolify untuk mendeteksi alokasi port dan respon API secara cepat sebelum melepaskan versi baru ke server produksi.
+
+---
+
+## 🚀 Alat Pengujian Otomatis: `benchmark.sh`
+
+Untuk menyederhanakan dan mengotomatiskan pengujian 6 skenario di atas, telah disediakan sebuah skrip interaktif interaktif di root proyek bernama `benchmark.sh`.
+
+### Fitur Utama `benchmark.sh`:
+1.  **Automated RTO Measurement**: Mengukur waktu pemulihan secara riil menggunakan stopwatch terintegrasi (untuk Skenario 2 dan 4).
+2.  **State Verification**: Melakukan pemeriksaan awal kelayakan lingkungan Docker sebelum menjalankan tes.
+3.  **Graceful Mid-Sync Simulation**: Memicu sinkronisasi dan memutus VPN di titik tersibuk untuk mengukur keandalan *Graceful Early-Abort* dan *SIGTERM Emergency Flush* (Skenario 6).
+4.  **Visual Scorecard**: Menampilkan rangkuman indikator kesuksesan pengujian (Scorecard) yang informatif dan berwarna.
+
+### Cara Penggunaan:
+Jalankan perintah berikut di terminal root proyek Anda:
+```bash
+./benchmark.sh
+```
+Pilih opsi skenario (1-6) yang ingin Anda simulasikan dan amati hasil pengujian beserta pemenuhan KPI stabilitasnya secara real-time!

@@ -98,18 +98,24 @@ mtu_watchdog &
 
 # Background Watcher: Monitors DB for cookie changes and triggers restart
 monitor_cookie_changes() {
-    LAST_COOKIE=""
+    # Clean up any stale active cookie file on boot
+    rm -f /tmp/active_vpn_cookie
+    
     while true; do
         sleep 10
         if [ -n "$DATABASE_URL" ]; then
             CURRENT_DB_COOKIE=$(psql "$DATABASE_URL" -t -A -c "SELECT value FROM system_settings WHERE key='vpn_cookie'" 2>/dev/null)
-            if [ -n "$CURRENT_DB_COOKIE" ] && [ "$CURRENT_DB_COOKIE" != "$LAST_COOKIE" ]; then
-                if [ -n "$LAST_COOKIE" ]; then
-                    echo "🔄 DB Cookie changed! Triggering organic VPN reconnect..."
-                    pkill -x openconnect 2>/dev/null
-                    pkill -x openfortivpn 2>/dev/null
-                fi
-                LAST_COOKIE="$CURRENT_DB_COOKIE"
+            ACTIVE_COOKIE=""
+            if [ -f "/tmp/active_vpn_cookie" ]; then
+                ACTIVE_COOKIE=$(cat /tmp/active_vpn_cookie 2>/dev/null)
+            fi
+            
+            if [ -n "$CURRENT_DB_COOKIE" ] && [ -n "$ACTIVE_COOKIE" ] && [ "$CURRENT_DB_COOKIE" != "$ACTIVE_COOKIE" ]; then
+                echo "🔄 DB Cookie changed! Active cookie: ${ACTIVE_COOKIE:0:15}..., DB cookie: ${CURRENT_DB_COOKIE:0:15}..."
+                echo "🔄 DB Cookie changed! Triggering organic VPN reconnect..."
+                rm -f /tmp/active_vpn_cookie
+                pkill -x openconnect 2>/dev/null
+                pkill -x openfortivpn 2>/dev/null
             fi
         fi
     done
@@ -249,6 +255,9 @@ while true; do
     if [ -n "$COOKIE" ]; then
         VAL=$(echo "$COOKIE" | grep -o 'SVPNCOOKIE=[^;]*' | sed 's/^SVPNCOOKIE=//')
         if [ -z "$VAL" ]; then VAL="$COOKIE"; fi
+
+        # Write active cookie to file to communicate with monitor background process
+        echo "$COOKIE" > /tmp/active_vpn_cookie
 
         echo "🔗 Connecting with cookie (OpenConnect Mode)..."
         echo "🚀 Using DTLS + Android Spoofing for 'Lightning Fast' performance"

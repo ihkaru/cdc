@@ -141,6 +141,9 @@ async def _fetch_one(
                     else:
                         return None
 
+            except FasihAuthError as e:
+                print(f"   🚨 {assignment_id[:8]}... FasihAuthError: {e}")
+                raise
             except Exception as e:
                 print(f"   ❌ {assignment_id[:8]}... Exception: {e}")
                 if attempt < retries:
@@ -205,23 +208,33 @@ async def fetch_assignments_concurrent(
     ) as session:
         tasks = []
         for aid in id_map:
-            tasks.append(_fetch_one(session, aid, semaphore))
+            tasks.append(asyncio.create_task(_fetch_one(session, aid, semaphore)))
 
-        for coro in asyncio.as_completed(tasks):
-            data = await coro
-            completed += 1
+        try:
+            for coro in asyncio.as_completed(tasks):
+                try:
+                    data = await coro
+                    completed += 1
 
-            # Memory optimization: if on_progress (callback) is provided, 
-            # we don't need to store all results in memory here.
-            # The caller handles the storage (e.g. BatchUpserterBulk).
-            if not on_progress and data:
-                results.append(data)
+                    # Memory optimization: if on_progress (callback) is provided, 
+                    # we don't need to store all results in memory here.
+                    # The caller handles the storage (e.g. BatchUpserterBulk).
+                    if not on_progress and data:
+                        results.append(data)
 
-            if on_progress:
-                on_progress(completed, total, data)
-            elif completed % 100 == 0 or completed == total:
-                # Fallback logging if no callback
-                print(f"   📊 Progress: {completed}/{total}")
+                    if on_progress:
+                        on_progress(completed, total, data)
+                    elif completed % 100 == 0 or completed == total:
+                        # Fallback logging if no callback
+                        print(f"   📊 Progress: {completed}/{total}")
+                except FasihAuthError as ae:
+                    print(f"   🚨 [Early-Abort] Ditemukan FasihAuthError (session expired)! Menghentikan semua sisa request...")
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    raise
+        except FasihAuthError:
+            raise
 
     print(f"   ✅ Done: {completed}/{total} processed")
     return results
