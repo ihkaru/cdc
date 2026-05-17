@@ -4,8 +4,11 @@ import time
 import json
 import ssl
 import aiohttp
+import logging
 from fastapi import APIRouter, HTTPException
 from typing import Optional
+
+logger = logging.getLogger("rpa.lookup")
 
 from schemas import LookupRequest, KabupatenLookupRequest, ProbeRequest
 from auth import auto_login, launch_stealth_browser, new_stealth_context
@@ -33,7 +36,7 @@ async def lookup_metadata(req: LookupRequest):
             # Check if cache is fresh (e.g., < 6 hours)
             age = datetime.now(timezone.utc) - cache.updated_at.replace(tzinfo=timezone.utc)
             if age < timedelta(hours=6):
-                print(f"   ✨ [Lookup] Serving from USER CACHE for {req.sso_username} (Age: {age.total_seconds()/60:.1f}m)")
+                logger.info("Serving from USER CACHE for %s (Age: %.1fm)", req.sso_username, age.total_seconds()/60)
                 data = json.loads(cache.value)
                 data["debug_timings"] = {"cache_hit": "USER_CACHE", "total_ms": 0}
                 return data
@@ -78,7 +81,7 @@ async def lookup_metadata(req: LookupRequest):
                                 timeout=15
                             ) as surveys_resp:
                                 if surveys_resp.status == 200:
-                                    print("   ⚡ [Lookup] FAST HTTP CACHE SUCCESS.")
+                                    logger.info("FAST HTTP CACHE SUCCESS.")
                                     surveys_data = await surveys_resp.json()
                                     prov_data = await api_resp.json()
                                     
@@ -105,16 +108,16 @@ async def lookup_metadata(req: LookupRequest):
                                         with get_session() as db_write:
                                             from db.repository import set_system_setting
                                             set_system_setting(db_write, CACHE_KEY_GLOBAL, json.dumps(result))
-                                            print(f"   ✅ [Lookup] USER CACHE UPDATED for {req.sso_username} (Fast Path).")
+                                            logger.info("USER CACHE UPDATED for %s (Fast Path).", req.sso_username)
                                     except Exception as cache_err:
-                                        print(f"   ⚠️ [Lookup] Failed to update user cache: {cache_err}")
+                                        logger.warning("Failed to update user cache: %s", cache_err)
                                     
                                     result["debug_timings"] = timings
                                     return result
                         
-                        print(f"   ⚠️ [Lookup] Cache check failed (HTTP {api_resp.status}). Falling back to browser...")
+                        logger.warning("Cache check failed (HTTP %s). Falling back to browser...", api_resp.status)
             except Exception as e:
-                print(f"   ❌ [Lookup] Fast Cache check error: {e}")
+                logger.error("Fast Cache check error: %s", e)
 
     timings["cache_hit"] = False
     timings["cache_check_ms"] = int((time.perf_counter() - t_cache) * 1000)
@@ -132,8 +135,8 @@ async def lookup_metadata(req: LookupRequest):
                 raise HTTPException(status_code=401, detail=f"Login gagal: {err_msg}")
             
             # --- FORCE XSRF MATURATION ---
-            print("   🎣 [Lookup] Forcing XSRF maturation...")
-            await page.goto(f"{TARGET_URL}/survey/list.html", wait_until="networkidle", timeout=20000)
+            logger.info("Forcing XSRF maturation...")
+            await page.goto(f"{TARGET_URL}/survey/list.html", wait_until="networkidle", timeout=60000)
             
             # Wait for XSRF cookie to appear
             for _ in range(5):
@@ -152,7 +155,7 @@ async def lookup_metadata(req: LookupRequest):
                 if vpn_cookie:
                     from auth import sync_cookie_to_db
                     await sync_cookie_to_db(vpn_cookie)
-                    print(f"   🛡️ [Lookup] SVPNCOOKIE synchronized to DB for VPN container.")
+                    logger.info("SVPNCOOKIE synchronized to DB for VPN container.")
 
             # Fetch Data via Page Request (to leverage existing browser session)
             xsrf = next((c['value'] for c in cookies if c['name'] == 'XSRF-TOKEN'), None)
@@ -167,9 +170,9 @@ async def lookup_metadata(req: LookupRequest):
             surveys_resp = await page.request.post(
                 f"{TARGET_URL}/survey/api/v1/surveys/datatable?surveyType=Pencacahan",
                 data=json.dumps({"pageNumber": 0, "pageSize": 100, "sortBy": "CREATED_AT", "sortDirection": "DESC", "keywordSearch": ""}),
-                headers=headers, timeout=15000
+                headers=headers, timeout=60000
             )
-            prov_resp = await page.request.get(f"{TARGET_URL}/region/api/v1/region/level1?groupId=82af087a-d063-48b9-8633-71c84c4e7422", timeout=15000)
+            prov_resp = await page.request.get(f"{TARGET_URL}/region/api/v1/region/level1?groupId=82af087a-d063-48b9-8633-71c84c4e7422", timeout=60000)
             
             surveys_data = await surveys_resp.json()
             prov_data = await prov_resp.json()
@@ -197,9 +200,9 @@ async def lookup_metadata(req: LookupRequest):
                 with get_session() as db_write:
                     from db.repository import set_system_setting
                     set_system_setting(db_write, CACHE_KEY_GLOBAL, json.dumps(result))
-                    print(f"   ✅ [Lookup] USER CACHE UPDATED for {req.sso_username} (Browser Path).")
+                    logger.info("USER CACHE UPDATED for %s (Browser Path).", req.sso_username)
             except Exception as cache_err:
-                print(f"   ⚠️ [Lookup] Failed to update user cache: {cache_err}")
+                logger.warning("Failed to update user cache: %s", cache_err)
 
             result["debug_timings"] = timings
             return result
@@ -229,7 +232,7 @@ async def lookup_kabupaten(req: KabupatenLookupRequest):
                     page = await context.new_page()
                     
                     # Hit API directly with Referer and groupId
-                    print(f"   🚀 [Lookup] Trying Fast API hit for kabupaten (Prov: {req.prov_full_code})...")
+                    logger.info("Trying Fast API hit for kabupaten (Prov: %s)...", req.prov_full_code)
                     GROUP_ID = "82af087a-d063-48b9-8633-71c84c4e7422"
                     resp = await page.request.get(
                         f"{TARGET_URL}/region/api/v1/region/level2?groupId={GROUP_ID}&level1FullCode={req.prov_full_code}", 
@@ -240,17 +243,17 @@ async def lookup_kabupaten(req: KabupatenLookupRequest):
                     if resp.status == 200:
                         data = await resp.json()
                         kab = [{"id": r.get("id"), "name": r.get("name", ""), "fullCode": r.get("fullCode", "")} for r in data.get("data", [])]
-                        print(f"   ✅ [Lookup] Fast API hit success. Found {len(kab)} kabupaten.")
+                        logger.info("Fast API hit success. Found %d kabupaten.", len(kab))
                         await browser.close()
                         return {"kabupaten": kab}
                     else:
-                        print(f"   ⚠️ [Lookup] Fast API hit failed (HTTP {resp.status}).")
+                        logger.warning("Fast API hit failed (HTTP %s).", resp.status)
                     await browser.close()
             except Exception as e:
-                print(f"   ❌ [Lookup] Fast API exception: {str(e)}")
+                logger.error("Fast API exception: %s", str(e))
 
     # PHASE 2: Fallback to Full Login (Resilient Path)
-    print(f"   🔄 [Lookup] Falling back to full login for kabupaten lookup...")
+    logger.info("Falling back to full login for kabupaten lookup...")
     from playwright.async_api import async_playwright
     async with async_playwright() as p:
         browser = await launch_stealth_browser(p)
@@ -287,6 +290,8 @@ async def lookup_kabupaten(req: KabupatenLookupRequest):
             return {"kabupaten": kab}
         finally:
             await browser.close()
+
+
 @router.post("/vpn/auto-fetch")
 async def vpn_auto_fetch():
     """Endpoint for VPN container to trigger a cookie refresh using ENV credentials."""
@@ -301,13 +306,13 @@ async def vpn_auto_fetch():
     
     # Run in background to avoid blocking the VPN container's HTTP request
     async def run_fetch():
-        print(f"🔄 [API] VPN container requested auto-fetch for {vpn_user}...")
+        logger.info("VPN container requested auto-fetch for %s...", vpn_user)
         cookie = await fetch_vpn_cookie(vpn_user, vpn_pass)
         if cookie:
             await sync_cookie_to_db(cookie)
-            print("✅ [API] VPN Auto-fetch success.")
+            logger.info("VPN Auto-fetch success.")
         else:
-            print("❌ [API] VPN Auto-fetch failed.")
+            logger.error("VPN Auto-fetch failed.")
             
     asyncio.create_task(run_fetch())
     return {"success": True, "message": "Auto-fetch triggered in background"}

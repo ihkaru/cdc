@@ -57,8 +57,12 @@ for service in "${SERVICES[@]}"; do
             VPN_PASS=$(grep VPN_PASS .env | cut -d '=' -f2)
             
             if [ -n "$VPN_USER" ] && [ -n "$VPN_PASS" ]; then
+                # Generate trace ID for shell self-healing context
+                SHELL_TRACE_ID="stability-heal-$$-$(date +%s)"
+                echo -e "${YELLOW}   ⚡ Propagating Trace: $SHELL_TRACE_ID${NC}"
                 # Trigger RPA Auto-Fetch (vpn-auth runs on port 8000)
                 RESP=$(curl -s -X POST http://127.0.0.1:8000/vpn/auto-fetch \
+                    -H "X-Trace-ID: $SHELL_TRACE_ID" \
                     -H "Content-Type: application/json" \
                     -d "{\"sso_username\":\"$VPN_USER\", \"sso_password\":\"$VPN_PASS\"}")
                 

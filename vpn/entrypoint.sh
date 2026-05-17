@@ -235,12 +235,14 @@ while true; do
         if [ -n "$DB_COOKIE" ]; then
             COOKIE="$DB_COOKIE"
             log "🔑 Fresh cookie loaded from database (Length: ${#COOKIE})" "info"
-        else
-            log "⏳ No cookie found in database. Triggering RPA auto-fetch via internet..." "info"
+            # Generate trace ID for shell auto-fetch context
+            SHELL_TRACE_ID="vpn-fetch-$$-$(date +%s)"
+            log "⏳ No cookie found in database. Triggering RPA auto-fetch (Trace: $SHELL_TRACE_ID)..." "info"
             # RPA shares the same network namespace, so we use 127.0.0.1
             # We use a retry loop because RPA might still be starting its web server.
             for attempt in $(seq 1 6); do
                 RESP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:8000/vpn/auto-fetch" \
+                    -H "X-Trace-ID: $SHELL_TRACE_ID" \
                     -H "Content-Type: application/json" \
                     -d "{\"sso_username\":\"$VPN_USER\", \"sso_password\":\"$VPN_PASS\"}")
                 
