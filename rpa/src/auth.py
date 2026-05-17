@@ -135,9 +135,24 @@ async def auto_login(page, username, password):
     try:
         print(f"🚀 [Auth] Starting automated login for {username}...")
         
+        # 📸 Start Tracing on the page context if it hasn't been started
+        context = page.context
+        os.makedirs("/app/traces", exist_ok=True)
+        try:
+            await context.tracing.start(screenshots=True, snapshots=True, sources=True)
+        except Exception:
+            pass # Already tracing or not supported
+        
         # 1. Start from Target App (SSO will trigger automatically)
         success, err_msg = await perform_sso_login(page, username, password)
         if not success:
+            # 📸 Capture failure screenshot and trace
+            try:
+                await page.screenshot(path="/app/traces/sso_error.png")
+                await context.tracing.stop(path="/app/traces/sso_trace.zip")
+                print("📸 [Auth] Login failed. Error screenshot and trace saved to /app/traces/")
+            except Exception as se:
+                print(f"⚠️ [Auth] Could not save failure trace/screenshot: {se}")
             return False, {}, err_msg
             
         # 2. Wait for landing on the target app
@@ -146,12 +161,20 @@ async def auto_login(page, username, password):
             # Wait for elements that signify a successful login in FASIH-SM
             await page.wait_for_selector(".main-sidebar, .user-panel, a[href*='logout'], .navbar", timeout=60000)
             print("   ✅ [Auth] Dashboard detected!")
-        except Exception:
+        except Exception as e:
+            # 📸 Capture failure screenshot and trace on landing timeout
+            try:
+                await page.screenshot(path="/app/traces/sso_error.png")
+                await context.tracing.stop(path="/app/traces/sso_trace.zip")
+                print("📸 [Auth] Timeout waiting for Dashboard. Error screenshot and trace saved.")
+            except Exception as se:
+                print(f"⚠️ [Auth] Could not save timeout trace/screenshot: {se}")
+            
             # If not detected, check if we are at least on the domain
             if "fasih-sm.bps.go.id" in page.url:
                 print(f"   ℹ️ [Auth] On target domain but sidebar missing. Proceeding.")
             else:
-                return False, {}, "Dashboard tidak terjangkau setelah SSO"
+                return False, {}, f"Dashboard tidak terjangkau setelah SSO: {str(e)}"
         
         # 3. Capture cookies
         cookies_list = await page.context.cookies()
@@ -161,12 +184,28 @@ async def auto_login(page, username, password):
         has_session = any(name in cookies_dict for name in ['XSRF-TOKEN', 'laravel_session'])
         if has_session:
             print(f"✅ [Auth] Session captured ({len(cookies_dict)} cookies).")
+            # Clean up tracing on success without saving to save space
+            try:
+                await context.tracing.stop()
+            except:
+                pass
             return True, cookies_dict, None
         else:
+            # 📸 Capture screenshot on missing session cookies
+            try:
+                await page.screenshot(path="/app/traces/sso_error.png")
+                await context.tracing.stop(path="/app/traces/sso_trace.zip")
+            except:
+                pass
             return False, {}, "Missing session cookies"
             
     except Exception as e:
         print(f"❌ [Auth] auto_login failed: {e}")
+        try:
+            await page.screenshot(path="/app/traces/sso_error.png")
+            await page.context.tracing.stop(path="/app/traces/sso_trace.zip")
+        except:
+            pass
         return False, {}, str(e)
 
 async def fetch_vpn_cookie(username, password):
@@ -174,15 +213,25 @@ async def fetch_vpn_cookie(username, password):
     Automate flow for VPN container. Returns the raw SVPNCOOKIE value.
     """
     browser = None
+    context = None
     try:
         async with async_playwright() as p:
             browser = await launch_stealth_browser(p)
             context = await new_stealth_context(browser)
+            
+            # 📸 Enable Playwright Tracing
+            os.makedirs("/app/traces", exist_ok=True)
+            await context.tracing.start(screenshots=True, snapshots=True, sources=True)
+            
             page = await context.new_page()
             
             success, err_msg = await perform_sso_login(page, username, password, target_url="https://akses.bps.go.id/remote/login")
             if not success:
                 print(f"❌ [Auth] Failed to login to VPN portal: {err_msg}")
+                # 📸 Capture failure screenshot and trace
+                await page.screenshot(path="/app/traces/sso_error.png")
+                await context.tracing.stop(path="/app/traces/sso_trace.zip")
+                print("📸 [Auth] Error screenshot and trace saved to /app/traces/")
                 await browser.close()
                 return None
             
@@ -194,14 +243,28 @@ async def fetch_vpn_cookie(username, password):
                 vpn_cookie = next((c['value'] for c in cookies if c['name'] == 'SVPNCOOKIE'), None)
                 if vpn_cookie:
                     print(f"✅ [Auth] SVPNCOOKIE found.")
+                    # Clean up tracing on success without saving to save space
+                    try:
+                        await context.tracing.stop()
+                    except:
+                        pass
                     await browser.close()
                     return vpn_cookie
                 await asyncio.sleep(2)
             
+            # 📸 Capture screenshot on timeout
+            await page.screenshot(path="/app/traces/sso_error.png")
+            await context.tracing.stop(path="/app/traces/sso_trace.zip")
+            print("📸 [Auth] Timeout. Error screenshot and trace saved to /app/traces/")
             await browser.close()
             return None
     except Exception as e:
         print(f"❌ [Auth] Error in fetch_vpn_cookie: {e}")
+        if context:
+            try:
+                await context.tracing.stop(path="/app/traces/sso_trace.zip")
+            except:
+                pass
         if browser: await browser.close()
         return None
 

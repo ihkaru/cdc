@@ -25,6 +25,9 @@ log() {
 sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true
 sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
 
+# 🌐 Enable IP Forwarding to act as NAT gateway for other containers
+sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+
 # Base config
 mkdir -p /etc/openfortivpn
 
@@ -204,7 +207,13 @@ apply_smart_routing() {
             iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 460
             iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$VPN_IF" -j TCPMSS --set-mss 460
             
-            log "✅ BPS Routing & MSS Clamping updated." "info"
+            # 🌐 IP Masquerading (NAT): Allow other containers to route through VPN
+            log "🌐 Enabling NAT IP Masquerading on $VPN_IF..." "info"
+            iptables -t nat -A POSTROUTING -o "$VPN_IF" -j MASQUERADE || true
+            iptables -A FORWARD -i eth0 -o "$VPN_IF" -j ACCEPT || true
+            iptables -A FORWARD -i "$VPN_IF" -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT || true
+            
+            log "✅ BPS Routing, MSS Clamping & NAT Masquerading updated." "info"
         else
             log "⚠️  Could not resolve $TARGET_DOMAIN (DNS Timeout)." "warn"
         fi
@@ -302,10 +311,17 @@ while true; do
         fi
     fi
 
-    # ONLY fallback to env var if DB is not available (Legacy mode)
-    if [ -z "$DATABASE_URL" ] && [ -n "${VPN_COOKIE}" ]; then
+    # Fallback to env var if we still don't have a cookie (either because DB is not available or DB had no cookie)
+    if [ -z "$COOKIE" ] && [ -n "${VPN_COOKIE}" ]; then
         COOKIE="${VPN_COOKIE}"
-        log "🔑 Cookie loaded from env var (Legacy Fallback)" "info"
+        log "🔑 Cookie loaded from env var (Fallback)" "info"
+    fi
+
+    # Determine servercert pin dynamically for OpenConnect
+    if [ -n "$VPN_TRUSTED_CERT" ]; then
+        OPENC_CERT="sha256:$VPN_TRUSTED_CERT"
+    else
+        OPENC_CERT="pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA="
     fi
 
     if [ -n "$COOKIE" ]; then
@@ -333,7 +349,7 @@ while true; do
             --no-dtls \
             --reconnect-timeout 60 \
             --passwd-on-stdin \
-            --servercert "pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA=" <<EOF
+            --servercert "$OPENC_CERT" <<EOF
 $VAL
 EOF
         
@@ -363,7 +379,7 @@ EOF
             --os=android \
             --no-dtls \
             --passwd-on-stdin \
-            --servercert "pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA=" <<EOF
+            --servercert "$OPENC_CERT" <<EOF
 $VPN_PASS
 EOF
             

@@ -119,3 +119,8 @@ app.add_middleware(
 
 app.include_router(sync_router)
 app.include_router(lookup_router)
+
+# 📸 Static Files: Expose Playwright traces & screenshots for diagnostics
+from fastapi.staticfiles import StaticFiles
+os.makedirs("/app/traces", exist_ok=True)
+app.mount("/traces", StaticFiles(directory="/app/traces"), name="traces")
