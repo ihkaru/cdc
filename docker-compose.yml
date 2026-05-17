@@ -7,7 +7,7 @@ services:
       - fasih_internal
       - coolify
     ports:
-      - "3000:3000"
+      - "${DASHBOARD_PORT:-3000}:3000"
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=coolify"
@@ -49,8 +49,8 @@ services:
     networks:
       - fasih_internal
     ports:
-      - "8000:8000"
-      - "8001:8001"
+      - "${RPA_PORT:-8000}:8000"
+      - "${VPN_AUTH_PORT:-8001}:8001"
     labels:
       - "coolify.managed=false"
     environment:
