@@ -210,6 +210,31 @@ apply_smart_routing() {
         fi
         return 0
     fi
+    
+    log "🔍 [DIAGNOSTICS] Smart Routing Timeout: VPN interface did not appear." "warn"
+    
+    # 1. Check if openconnect or openfortivpn processes are alive
+    OC_PID=$(pgrep -x openconnect)
+    OF_PID=$(pgrep -x openfortivpn)
+    if [ -n "$OC_PID" ]; then
+        log "🔍 [DIAGNOSTICS] openconnect process is ALIVE (PID: $OC_PID)" "warn"
+    elif [ -n "$OF_PID" ]; then
+        log "🔍 [DIAGNOSTICS] openfortivpn process is ALIVE (PID: $OF_PID)" "warn"
+    else
+        log "🔍 [DIAGNOSTICS] both openconnect and openfortivpn processes are DEAD!" "error"
+    fi
+    
+    # 2. Check /dev/net/tun availability
+    if [ -c "/dev/net/tun" ]; then
+        log "🔍 [DIAGNOSTICS] /dev/net/tun is present and has correct character device permissions." "info"
+    else
+        log "🔍 [DIAGNOSTICS] /dev/net/tun is MISSING or inaccessible! (Check privileged mode/devices in docker-compose)" "error"
+    fi
+    
+    # 3. Check existing network interfaces
+    IF_LIST=$(ip -o link show | awk -F': ' '{print $2}' | tr '\n' ' ')
+    log "🔍 [DIAGNOSTICS] Existing interfaces: $IF_LIST" "info"
+    
     log "❌ No VPN interface appeared. Skipping Smart Routing." "error"
 }
 
