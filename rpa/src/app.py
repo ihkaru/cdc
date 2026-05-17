@@ -8,18 +8,19 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-import os
+# Initialize logging as the very first step
+from utils.logger import setup_logging
+setup_logging()
+
+import logging
+logger = logging.getLogger("rpa.app")
 
 from datetime import datetime, timezone
-import sys
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-
 # Database and Route imports
-
 from db.connection import init_db, get_session
 from db.models import SyncLog
 
@@ -47,7 +48,7 @@ async def lifespan(fastapi_app):
                     job.finished_at = datetime.now(timezone.utc)
                     job.notes = "Killed by container restart while running"
                 session.commit()
-                print(f"🧹 Startup cleanup: marked {len(stale)} stale RUNNING job(s) as failed.")
+                logger.info(f"🧹 Startup cleanup: marked {len(stale)} stale RUNNING job(s) as failed.")
             
             # Check if we should re-trigger the worker
             queued_count = session.query(SyncLog).filter(SyncLog.status == "queued").count()
@@ -56,13 +57,13 @@ async def lifespan(fastapi_app):
             if queued_count > 0:
                 from worker.queue import _queue_worker
                 import asyncio
-                print(f"🔄 Startup: Found {queued_count} queued jobs. Auto-triggering worker...")
+                logger.info(f"🔄 Startup: Found {queued_count} queued jobs. Auto-triggering worker...")
                 asyncio.create_task(_queue_worker())
 
             # Start Routine Sync Scheduler
             from worker.scheduler import routine_sync_loop
             import asyncio
-            print("🕒 Startup: Starting Routine Sync Scheduler...")
+            logger.info("🕒 Startup: Starting Routine Sync Scheduler...")
             asyncio.create_task(routine_sync_loop())
 
             # 4. Headless VPN Bootstrap: Fetch cookie using environment credentials
@@ -79,32 +80,35 @@ async def lifespan(fastapi_app):
                         # This prevents redundant Playwright sessions on every RPA restart
                         existing = await get_current_cookie()
                         if existing:
-                            print("ℹ️ [Startup] VPN Cookie already exists in DB. Skipping auto-bootstrap.")
+                            logger.info("ℹ️ [Startup] VPN Cookie already exists in DB. Skipping auto-bootstrap.")
                             return
 
-                        print(f"🌐 [Startup] No cookie found. Auto-bootstrapping VPN for {vpn_user}...")
+                        logger.info(f"🌐 [Startup] No cookie found. Auto-bootstrapping VPN for {vpn_user}...")
                         cookie = await fetch_vpn_cookie(vpn_user, vpn_pass)
                         if cookie:
                             await sync_cookie_to_db(cookie)
-                            print("✅ [Startup] VPN Auto-bootstrap successful.")
+                            logger.info("✅ [Startup] VPN Auto-bootstrap successful.")
                         else:
-                            print("❌ [Startup] VPN Auto-bootstrap failed.")
+                            logger.error("❌ [Startup] VPN Auto-bootstrap failed.")
                 
                 asyncio.create_task(bootstrap_vpn())
         else:
-            print("ℹ️ Running as VPN-AUTH helper. Skipping scheduler, cleanup, and bootstrap.")
+            logger.info("ℹ️ Running as VPN-AUTH helper. Skipping scheduler, cleanup, and bootstrap.")
 
     except Exception as e:
-        print(f"⚠️ Startup cleanup/recovery failed: {e}")
+        logger.error(f"⚠️ Startup cleanup/recovery failed: {e}", exc_info=True)
     
     yield  # Server runs here
     
     # On shutdown
     from state import sync_state
     sync_state.is_shutting_down = True
-    print("🛑 Shutdown: Signal received. Setting is_shutting_down = True for all workers.")
+    logger.info("🛑 Shutdown: Signal received. Setting is_shutting_down = True for all workers.")
 
 app = FastAPI(title="FASIH-SM RPA Sync API", version="1.0.0", lifespan=lifespan)
+
+from middleware.tracing import TracingMiddleware
+app.add_middleware(TracingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

@@ -2,6 +2,8 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { staticPlugin } from "@elysiajs/static";
 import { surveysRoutes } from "./routes/surveys";
+import { tracingMiddleware } from "./middleware/tracing";
+import { logger } from "./utils/logger";
 import { assignmentsRoutes } from "./routes/assignments";
 import { logsRoutes } from "./routes/logs";
 import { syncRoutes } from "./routes/sync";
@@ -61,6 +63,7 @@ const authRoutes = new Elysia({ prefix: "/api/auth" })
     });
 
 const app = new Elysia()
+    .use(tracingMiddleware)
     .use(cors({
         credentials: true,
         origin: process.env.PUBLIC_BASE_URL || "http://127.0.0.1:3000",
@@ -73,7 +76,7 @@ const app = new Elysia()
         return await getAuthContext(request);
     })
     // Global Security Gate & Headers
-    .onBeforeHandle(({ path, user, set, request }: any) => {
+    .onBeforeHandle(({ path, user, set, request, log }: any) => {
         // 1. Security Headers
         set.headers["X-Frame-Options"] = "DENY";
         set.headers["X-Content-Type-Options"] = "nosniff";
@@ -87,13 +90,13 @@ const app = new Elysia()
         const isProtectedApi = path.startsWith("/api/") || path.startsWith("/storage/");
 
         if (isProtectedApi && !isPublicAuth && !isPublicStatus && !user) {
-            console.warn(`[Security] 401 Unauthorized ${request.method} ${path} (User: ${user ? 'found' : 'null'})`);
+            log.warn(`[Security] 401 Unauthorized ${request.method} ${path} (User: ${user ? 'found' : 'null'})`);
             set.status = 401;
             return { error: "Unauthorized" };
         }
         
         if (isProtectedApi) {
-            console.log(`[Security] 200 Authorized ${request.method} ${path} for user ${user?.email || 'unknown'}`);
+            log.info(`[Security] 200 Authorized ${request.method} ${path} for user ${user?.email || 'unknown'}`);
         }
     })
     // Protected Routes
@@ -128,4 +131,4 @@ const app = new Elysia()
     })
     .listen(process.env.PORT || 3000);
 
-console.log(`🚀 Dashboard running at http://127.0.0.1:${app.server?.port}`);
+logger.info(`🚀 Dashboard running at http://127.0.0.1:${app.server?.port}`);

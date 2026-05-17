@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from datetime import datetime, timezone
 import json
+import logging
 
 from db.connection import get_session, init_db, reset_engine
 from db.models import SyncLog, SystemSettings
@@ -9,7 +10,9 @@ from state import sync_state
 from schemas import SyncRequest, SyncResponse, StatusResponse, VpnCookieRequest
 from auth import fetch_vpn_cookie
 from worker.queue import _get_queued_jobs, _get_queue_position, _queue_worker
+from utils.logger import trace_var
 
+logger = logging.getLogger("rpa.routes.sync")
 router = APIRouter()
 
 @router.get("/health")
@@ -82,11 +85,14 @@ async def trigger_sync(req: SyncRequest, background_tasks: BackgroundTasks):
         )
 
     # Create queued job — store request data in notes as JSON
+    req_dict = req.dict()
+    req_dict["trace_id"] = trace_var.get()
+    
     sync_log = SyncLog(
         survey_config_id=req.survey_config_id,
         started_at=datetime.now(timezone.utc),
         status="queued",
-        notes=json.dumps(req.dict()),
+        notes=json.dumps(req_dict),
     )
     session.add(sync_log)
     session.commit()
@@ -173,7 +179,7 @@ async def auto_fetch_vpn(req: VpnCookieRequest):
         return {"status": "already_fetching", "message": "Proses auto-fetch VPN sedang berjalan..."}
 
     if not req.sso_username or not req.sso_password:
-        print("   ❌ Gagal: Username atau Password SSO kosong!")
+        logger.error("❌ SSO Username or Password is empty!")
         raise HTTPException(status_code=400, detail="SSO Username and Password are required")
 
     async with FETCH_LOCK:
@@ -184,7 +190,7 @@ async def auto_fetch_vpn(req: VpnCookieRequest):
 
         try:
             user_display = f"{req.sso_username[:3]}***" if req.sso_username else "None"
-            print(f"🔄 Memulai auto-fetch VPN cookie untuk user {user_display}...")
+            logger.info(f"🔄 Starting auto-fetch VPN cookie for user {user_display}...")
             cookie = await fetch_vpn_cookie(req.sso_username, req.sso_password)
             
             if cookie:
@@ -227,7 +233,7 @@ async def refresh_assignment(assignment_id: str):
             if assignment:
                 assignment.data_json = new_data
                 session.commit()
-                print(f"   ✅ Successfully refreshed assignment {assignment_id} in DB")
+                logger.info(f"✅ Successfully refreshed assignment {assignment_id} in DB")
                 return {"status": "success", "message": f"Assignment {assignment_id} refreshed"}
             else:
                 raise HTTPException(status_code=404, detail="Assignment not found in local DB")

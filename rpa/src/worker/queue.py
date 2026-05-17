@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 
 from db.connection import get_session, init_db, reset_engine
@@ -8,6 +9,9 @@ from db.models import SyncLog
 from state import sync_state
 from schemas import SyncRequest
 from worker.job_runner import _run_single_job
+from utils.logger import trace_var
+
+logger = logging.getLogger("rpa.worker.queue")
 
 def _get_queued_jobs(session) -> list:
     """Get all queued jobs ordered by creation time."""
@@ -57,6 +61,7 @@ async def _queue_worker():
                 req_data = json.loads(job.notes or "{}")
                 req = SyncRequest(**req_data)
             except Exception as e:
+                logger.error(f"Failed to reconstruct job request for job {job.id}: {e}", exc_info=True)
                 job.status = "failed"
                 job.notes = f"Invalid job data: {e}"
                 job.finished_at = datetime.now(timezone.utc)
@@ -66,11 +71,17 @@ async def _queue_worker():
 
             session.close()
 
+            # Bind the request's Trace ID so all logged actions down the line (Playwright, API, repo) are correlated
+            job_trace_id = req_data.get("trace_id", f"job-{job.id}")
+            token = trace_var.set(job_trace_id)
+
             # Process the job with a robust try-except to prevent worker crash
             try:
+                logger.info(f"🚀 Starting background execution of job {job.id} for survey '{req.survey_name}'...")
                 await _run_single_job(job, req)
+                logger.info(f"✅ Finished background execution of job {job.id}.")
             except Exception as e:
-                print(f"❌ Worker critical error processing job {job.id}: {e}")
+                logger.error(f"❌ Worker critical error processing job {job.id}: {e}", exc_info=True)
                 # Ensure the job is marked as failed in DB
                 try:
                     db_session = get_session()
@@ -82,7 +93,10 @@ async def _queue_worker():
                         db_session.commit()
                     db_session.close()
                 except Exception as db_err:
-                    print(f"⚠️ Failed to update job status on worker crash: {db_err}")
+                    logger.error(f"⚠️ Failed to update job status on worker crash: {db_err}", exc_info=True)
+            finally:
+                # Reset trace_id to ensure clean context transition
+                trace_var.reset(token)
 
             # Small delay between jobs
             await asyncio.sleep(2)

@@ -24,8 +24,8 @@ const lastLookup = new Map<string, number>();
 
 export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
     .use(requireAuth)
-    // Trigger sync for a survey
-    .post("/:id/sync", async ({ params, set }) => {
+    .post("/:id/sync", async (ctx: any) => {
+        const { params, set, traceId, traceparent, log } = ctx;
         const [survey] = await db
             .select()
             .from(surveyConfigs)
@@ -38,7 +38,13 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 
         // Guard: Check if RPA is already busy
         try {
-            const statusResp = await fetch(`${RPA_URL}/status`, { signal: AbortSignal.timeout(5000) });
+            const statusResp = await fetch(`${RPA_URL}/status`, {
+                headers: {
+                    "X-Trace-ID": traceId,
+                    "traceparent": traceparent
+                },
+                signal: AbortSignal.timeout(5000)
+            });
             if (statusResp.ok) {
                 const status = await statusResp.json() as any;
                 if (status.is_running && status.active_job?.survey_config_id === survey.id) {
@@ -47,15 +53,21 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
                 }
             }
         } catch (e) {
-            console.warn("RPA status check failed, proceeding anyway...", e);
+            log.warn("RPA status check failed, proceeding anyway...", { error: String(e) });
         }
 
         // Decrypt password and send to RPA
         const password = decryptPassword(survey.ssoPasswordEncrypted);
 
+        log.info("Triggering sync in RPA engine", { survey_id: survey.id, survey_name: survey.surveyName });
+
         const response = await fetch(`${RPA_URL}/sync`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+                "Content-Type": "application/json",
+                "X-Trace-ID": traceId,
+                "traceparent": traceparent
+            },
             body: JSON.stringify({
                 survey_config_id: survey.id,
                 survey_name: survey.surveyName,
@@ -71,6 +83,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
             set.status = response.status === 401 ? 401 : 400;
+            log.error(`RPA sync trigger failed with status ${response.status}`, { error: err });
             return { error: (err as any).detail || `RPA responded with ${response.status}` };
         }
 

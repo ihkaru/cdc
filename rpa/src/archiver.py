@@ -27,12 +27,8 @@ import time
 # Domain pattern for BPS images (can be fasih-sm.bps.go.id or bucket1.cloud.bps.go.id)
 BPS_DOMAIN_PATTERN = r"(bps\.go\.id|cloud\.bps\.go\.id)"
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+from utils.logger import setup_logging
+setup_logging()
 logger = logging.getLogger("CDC-Archiver")
 
 async def download_image(url: str, rpa=None) -> bytes | None:
@@ -534,9 +530,7 @@ async def archiver_worker():
                         task_db.rollback()
                         raise
                     except Exception as e:
-                        logger.error(f"   ❌ Mirroring task error for {assignment_id}: {e}")
-                        import traceback
-                        traceback.print_exc()
+                        logger.error(f"   ❌ Mirroring task error for {assignment_id}: {e}", exc_info=True)
                         task_db.rollback()
                     finally:
                         task_db.close()
