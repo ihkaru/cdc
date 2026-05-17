@@ -155,6 +155,54 @@ docker compose logs -f rpa
 
 ---
 
+### Skenario 6: VPN Terputus di Tengah Sinkronisasi yang Sedang Berjalan (Disconnection Mid-Sync)
+Skenario ini mensimulasikan situasi kritis di mana terowongan VPN terputus secara mendadak saat mesin sinkronisasi kontainer `rpa` sedang aktif mengunduh ribuan data assignment secara paralel (concurrently) menggunakan aiohttp.
+
+#### A. Perilaku Internal Kontainer & Penanganan Kesalahan (*Error Handling*)
+1. Ketika VPN mati mendadak saat proses HTTP GET massal berjalan:
+   - Permintaan HTTP yang sedang aktif atau antrean baru akan memicu pengecualian (*exceptions*) di aiohttp seperti `ClientConnectorError`, `ServerDisconnectedError`, atau `OSError: [Errno 101] Network is unreachable`.
+   - Kode penanganan kesalahan di `rpa/src/pages/detail_page.py` (`_fetch_one`) akan menangkap pengecualian ini secara individual.
+2. **Mekanisme Ulang & Batas Toleransi (*Retry & Timeout*)**:
+   - Setiap tugas fetch akan melakukan percobaan ulang (*retry*) hingga 3 kali (`MAX_RETRIES`), dengan jeda eksponensial (`RETRY_DELAY * attempt`).
+   - Karena VPN mati total, seluruh percobaan ulang ini juga akan berakhir dengan kegagalan setelah beberapa detik.
+   - Pengecualian ini ditangani secara aman, sehingga **tidak memicu crash pada proses utama kontainer `rpa`**.
+3. **Konsistensi Data & Batch Commit**:
+   - Data yang **sudah sukses terunduh** sebelum VPN terputus akan dikumpulkan ke dalam list hasil.
+   - RPA akan melanjutkan ke Fase Penyimpanan, di mana `BatchUpserterBulk` akan melakukan operasi `UPSERT` massal ke database PostgreSQL untuk data yang berhasil saja.
+   - Hal ini menjamin bahwa **data yang berhasil diunduh tidak hilang**, dan status database tetap konsisten tanpa ada data setengah jadi (*no data corruption*).
+   - Seluruh data yang gagal diunduh akan dicatat sebagai kegagalan dalam log sinkronisasi (`stats.total_failed`).
+4. **Mekanisme Resume Otomatis (Delta Sync)**:
+   - Pada siklus sinkronisasi berikutnya (misalnya 5 menit kemudian):
+     - Terowongan VPN dipastikan sudah dipulihkan secara mandiri oleh skrip `vpn` (Skenario 2).
+     - Mesin sinkronisasi RPA memulai siklus baru dan melakukan pemeriksaan delta (`get_existing_modifications_by_ids_batched`).
+     - Karena data yang gagal pada siklus sebelumnya belum pernah masuk ke database, tanggal modifikasinya berbeda atau ID-nya tidak ditemukan di DB.
+     - Sistem secara otomatis akan **memasukkan data yang gagal kemarin ke antrean unduh baru**.
+     - Proses sinkronisasi **melanjutkan tepat di titik terakhir ia terputus secara transparan, tanpa duplikasi data!**
+
+#### B. Cara Menguji & Benchmarking di Lokal
+Simulasikan pemutusan VPN saat unduhan massal sedang aktif berjalan:
+```bash
+# 1. Jalankan proses sinkronisasi manual dalam mode stress-test (pastikan ada banyak data yang di-fetch)
+docker exec -it fasih-nexus-rpa python src/main.py --once
+
+# 2. Begitu melihat log unduhan massal berjalan (misal: "Progress: 100/1500"),
+#    segera bunuh proses openconnect di kontainer VPN dari terminal lain:
+docker exec -it fasih-nexus-vpn pkill -9 openconnect
+
+# 3. Amati log RPA: ia harus mencetak log kegagalan tugas individu secara graceful ("Exception: Network is unreachable")
+#    dan tetap menjalankan proses Bulk Upsert di akhir untuk data yang sempat terambil, kemudian selesai dengan sukses.
+
+# 4. Tunggu VPN pulih kembali secara otomatis, lalu jalankan sync sekali lagi:
+docker exec -it fasih-nexus-rpa python src/main.py --once
+#    Verifikasi bahwa sistem hanya mengunduh sisa data yang gagal kemarin (Delta Sync Resume).
+```
+*   **Target KPI**:
+    *   Kontainer `rpa` **tidak boleh crash** saat koneksi VPN mati di tengah-tengah unduhan massal.
+    *   Setidaknya data yang berhasil terunduh sebelum pemutusan harus tersimpan secara aman di database.
+    *   Siklus berikutnya harus berhasil menyelesaikan sisa tugas yang tertunda secara utuh.
+
+---
+
 ## 📈 Metrik Standar Pengukuran Kestabilan (Benchmarking KPIs)
 
 Untuk memastikan pengujian lokal di laptop Anda sebanding dengan performa di Coolify produksi, gunakan tabel parameter target berikut sebagai acuan sukses pengujian stabilitas:
