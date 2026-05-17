@@ -235,6 +235,7 @@ while true; do
         if [ -n "$DB_COOKIE" ]; then
             COOKIE="$DB_COOKIE"
             log "🔑 Fresh cookie loaded from database (Length: ${#COOKIE})" "info"
+        else
             # Generate trace ID for shell auto-fetch context
             SHELL_TRACE_ID="vpn-fetch-$$-$(date +%s)"
             log "⏳ No cookie found in database. Triggering RPA auto-fetch (Trace: $SHELL_TRACE_ID)..." "info"
