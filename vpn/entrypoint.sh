@@ -132,7 +132,9 @@ monitor_cookie_changes() {
             fi
             
             if [ -n "$CURRENT_DB_COOKIE" ] && [ -n "$ACTIVE_COOKIE" ] && [ "$CURRENT_DB_COOKIE" != "$ACTIVE_COOKIE" ]; then
-                log "🔄 DB Cookie changed! Active cookie: ${ACTIVE_COOKIE:0:15}..., DB cookie: ${CURRENT_DB_COOKIE:0:15}..." "info"
+                ACTIVE_COOKIE_PART=$(echo "$ACTIVE_COOKIE" | cut -c 1-15)
+                DB_COOKIE_PART=$(echo "$CURRENT_DB_COOKIE" | cut -c 1-15)
+                log "🔄 DB Cookie changed! Active cookie: ${ACTIVE_COOKIE_PART}..., DB cookie: ${DB_COOKIE_PART}..." "info"
                 log "🔄 DB Cookie changed! Triggering organic VPN reconnect..." "info"
                 rm -f /tmp/active_vpn_cookie
                 pkill -x openconnect 2>/dev/null

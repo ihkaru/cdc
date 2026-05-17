@@ -40,11 +40,16 @@ echo -e "${YELLOW}🤖 [3/3] RPA Metadata Lookup (SSO Login Flow)...${NC}"
 echo -e "   (Ini akan memakan waktu 15-45 detik karena robot harus login SSO)"
 
 # Membaca kredensial dari .env jika ada untuk simulasi
-SSO_USER=$(grep SSO_USER .env | cut -d '=' -f2 | xargs)
-SSO_PASS=$(grep SSO_PASS .env | cut -d '=' -f2 | xargs)
+SSO_USER=$(grep SSO_USER .env 2>/dev/null | cut -d '=' -f2 | xargs)
+SSO_PASS=$(grep SSO_PASS .env 2>/dev/null | cut -d '=' -f2 | xargs)
 
 if [ -z "$SSO_USER" ]; then
-    echo -e "${RED}   Gagal: SSO_USER tidak ditemukan di .env. Lewati tes lookup.${NC}"
+    SSO_USER=$(grep VPN_USER .env 2>/dev/null | cut -d '=' -f2 | xargs)
+    SSO_PASS=$(grep VPN_PASS .env 2>/dev/null | cut -d '=' -f2 | xargs)
+fi
+
+if [ -z "$SSO_USER" ]; then
+    echo -e "${RED}   Gagal: SSO_USER atau VPN_USER tidak ditemukan di .env. Lewati tes lookup.${NC}"
 else
     START_LOOKUP=$(date +%s)
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://127.0.0.1:8000/lookup/metadata \

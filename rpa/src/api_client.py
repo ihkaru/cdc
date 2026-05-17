@@ -319,6 +319,16 @@ class FasihApiClient:
         return prov_uuid, region_uuid_for_filter, region_full_code, group_id
 
     @with_retry()
+    async def get_sub_regions(self, level: int, group_id: str, parent_full_code: str) -> List[Dict]:
+        """Menarik daftar sub-wilayah (Kecamatan/Desa) untuk level 3 atau 4."""
+        parent_level = level - 1
+        url = f"region/api/v1/region/level{level}?groupId={group_id}&level{parent_level}FullCode={parent_full_code}"
+        data = await self._request("GET", url)
+        if data and isinstance(data, dict):
+            return data.get("data", [])
+        return []
+
+    @with_retry()
     async def get_users_by_region(
         self, period_id: str, role_ids: List[str],
         region_code: str, role_group_id: Optional[str] = None
