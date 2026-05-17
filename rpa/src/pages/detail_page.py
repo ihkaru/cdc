@@ -111,6 +111,8 @@ async def _fetch_one(
 
     async with semaphore:
         for attempt in range(1, retries + 1):
+            if session.closed:
+                return None
             try:
                 async with session.get(
                     api_url,
@@ -125,6 +127,8 @@ async def _fetch_one(
                         body_text = await resp.text()
                         print(f"   ❌ {assignment_id[:8]}... HTTP {resp.status}: {body_text[:100]}")
                         if attempt < retries:
+                            if session.closed:
+                                return None
                             await asyncio.sleep(RETRY_DELAY * attempt)
                             continue
                         return None
@@ -136,6 +140,8 @@ async def _fetch_one(
                     print(f"   ❌ {assignment_id[:8]}... API returned success=False: {body}")
 
                     if attempt < retries:
+                        if session.closed:
+                            return None
                         await asyncio.sleep(RETRY_DELAY * attempt)
                         continue
                     else:
@@ -145,6 +151,8 @@ async def _fetch_one(
                 print(f"   🚨 {assignment_id[:8]}... FasihAuthError: {e}")
                 raise
             except Exception as e:
+                if session.closed:
+                    return None
                 print(f"   ❌ {assignment_id[:8]}... Exception: {e}")
                 if attempt < retries:
                     await asyncio.sleep(RETRY_DELAY * attempt)

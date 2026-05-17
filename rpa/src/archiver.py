@@ -398,12 +398,21 @@ async def audit_and_heal_storage():
     except Exception as e:
         logger.error(f"❌ [Archiver Audit] Audit failed: {e}")
 
+def touch_heartbeat():
+    try:
+        with open("/tmp/archiver_heartbeat", "w") as f:
+            f.write(str(time.time()))
+    except Exception as e:
+        logger.debug(f"Failed to write heartbeat: {e}")
+
 async def archiver_worker():
     """Main worker loop to process pending images."""
     logger.info("🚀 CDC Image Archiver Worker Started")
+    touch_heartbeat()
     
     # Run the storage audit on startup to fix any wiped/reset SeaweedFS state
     await audit_and_heal_storage()
+    touch_heartbeat()
     
     while True:
         try:
@@ -411,11 +420,7 @@ async def archiver_worker():
             reachable, reason = await check_fasih_reachable()
             if not reachable:
                 logger.warning(f"⏳ [Archiver] BPS VPN Network unreachable ({reason}). Pausing for 60s...")
-                try:
-                    with open("/tmp/archiver_heartbeat", "w") as f:
-                        f.write(str(time.time()))
-                except:
-                    pass
+                touch_heartbeat()
                 await asyncio.sleep(60)
                 continue
 
@@ -458,6 +463,7 @@ async def archiver_worker():
 
             if not pending:
                 db.close()
+                touch_heartbeat()  # Keep-alive even when idle
                 await asyncio.sleep(20)  # Idle
                 continue
 
@@ -487,11 +493,7 @@ async def archiver_worker():
             
             if not cookies_dict:
                 logger.warning("⏳ [Archiver] No valid 'sso_cookies' in system_settings. Stale or empty session cookies. Pausing for 5 minutes waiting for RPA Sync to auto-reauthenticate...")
-                try:
-                    with open("/tmp/archiver_heartbeat", "w") as f:
-                        f.write(str(time.time()))
-                except:
-                    pass
+                touch_heartbeat()
                 await asyncio.sleep(300)
                 continue
 
@@ -539,18 +541,13 @@ async def archiver_worker():
             await asyncio.gather(*(limited_mirror(a_id) for a_id in pending_ids))
 
             # Update heartbeat file
-            with open("/tmp/archiver_heartbeat", "w") as f:
-                f.write(str(time.time()))
+            touch_heartbeat()
 
             logger.info(f"Batch complete. Continuing loop...")
             
         except FasihAuthError as ae:
             logger.warning(f"🔑 [Archiver] SSO session/cookie authentication failed: {ae}. Pausing for 5 minutes to let RPA scheduler perform SSO re-authentication...")
-            try:
-                with open("/tmp/archiver_heartbeat", "w") as f:
-                    f.write(str(time.time()))
-            except:
-                pass
+            touch_heartbeat()
             await asyncio.sleep(300)
         except Exception as e:
             logger.error(f"Archiver loop error: {e}")
