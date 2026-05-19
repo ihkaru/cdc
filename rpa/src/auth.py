@@ -108,22 +108,30 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
             if (passField) passField.value = '{password}';
         }}""")
 
-        # Fast submit
-        await page.click("#kc-login", force=True)
-
-        # 6. Check for immediate error messages (Max 1s to prevent hanging)
+        # Fast submit and wait for navigation commit
         try:
-            await page.wait_for_selector(".alert-error, .kc-feedback-text", timeout=1000)
-            if await page.query_selector(".alert-error, .kc-feedback-text"):
+            async with page.expect_navigation(wait_until="commit", timeout=45000):
+                await page.click("#kc-login", force=True)
+        except Exception as e:
+            return False, f"Timeout saat mensubmit form login SSO: {e!s}"
+
+        # 6. Check resulting URL to determine success instantly
+        if "sso.bps.go.id" in page.url:
+            # If we are still on the SSO domain, login failed.
+            print("   ❌ [Auth] Login ditolak. URL masih di SSO BPS.", flush=True)
+            try:
+                # Now we can wait for the specific error message to load
+                await page.wait_for_selector(".alert-error, .kc-feedback-text", timeout=20000)
                 err_text = "Username atau password salah (SSO)"
                 err_el = await page.query_selector(".kc-feedback-text")
                 if err_el:
                     err_text = await err_el.inner_text()
-                print(f"   ❌ [Auth] Login failed: {err_text}")
+                print(f"   ❌ [Auth] Detail error: {err_text}")
                 return False, err_text
-        except:
-            pass
+            except:
+                return False, "Username atau password salah (SSO BPS)"
 
+        print("   ✅ [Auth] Login berhasil diterima Keycloak, beralih ke aplikasi...", flush=True)
         return True, None
 
     except Exception as e:

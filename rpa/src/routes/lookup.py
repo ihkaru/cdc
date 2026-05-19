@@ -207,8 +207,18 @@ async def lookup_metadata(req: LookupRequest):
                 f"{TARGET_URL}/region/api/v1/region/level1?groupId=82af087a-d063-48b9-8633-71c84c4e7422", timeout=60000
             )
 
-            surveys_data = await surveys_resp.json()
-            prov_data = await prov_resp.json()
+            if surveys_resp.status != 200 or prov_resp.status != 200:
+                raise HTTPException(
+                    status_code=401,
+                    detail=f"Gagal mengambil metadata. HTTP Survey: {surveys_resp.status}, Prov: {prov_resp.status}",
+                )
+
+            try:
+                surveys_data = await surveys_resp.json()
+                prov_data = await prov_resp.json()
+            except Exception as e:
+                logger.error("JSON Decode Error fetching metadata: %s", e)
+                raise HTTPException(status_code=502, detail="Respons dari FASIH bukan JSON yang valid.")
 
             items = surveys_data.get("data", {}).get("content", [])
             surveys = [{"id": s.get("id"), "name": s.get("name") or s.get("surveyName", "")} for s in items]
