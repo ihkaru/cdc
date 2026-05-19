@@ -141,7 +141,12 @@ async def _fetch_one(
                             continue
                         return None
 
-                    body = await resp.json()
+                    try:
+                        import orjson
+
+                        body = await resp.json(loads=orjson.loads)
+                    except ImportError:
+                        body = await resp.json()
                     if body and body.get("success"):
                         return body.get("data", {})
 
