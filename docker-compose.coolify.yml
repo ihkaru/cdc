@@ -7,17 +7,20 @@ services:
   dashboard:
     build: ./dashboard
     container_name: fasih-nexus-dashboard
-    networks:
-      - fasih_internal
-      - coolify
+    network_mode: "service:vpn"
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=coolify" # FORCE Traefik to use the public network IP
-      # Note: Route rules and SSL will be automatically handled by Coolify UI
-      # CRITICAL: BETTER_AUTH_URL and PUBLIC_BASE_URL MUST match your Coolify domain
+      - "traefik.docker.network=coolify"
+      - "traefik.http.routers.fasih-nexus-router.rule=Host(`${PUBLIC_BASE_URL_HOST:-fasih-nexus.dvlpid.my.id}`)"
+      - "traefik.http.routers.fasih-nexus-router.entrypoints=https"
+      - "traefik.http.routers.fasih-nexus-router.tls=true"
+      - "traefik.http.routers.fasih-nexus-router.certresolver=letsencrypt"
+      - "traefik.http.routers.fasih-nexus-router.service=fasih-nexus-svc"
+      - "traefik.http.services.fasih-nexus-svc.loadbalancer.server.port=3000"
+    environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://fasih:${POSTGRES_PASSWORD}@fasih-db:5432/fasih_dashboard}
-      - RPA_URL=http://vpn:8000        # Talking to RPA via VPN container
-      - VPN_AUTH_URL=http://vpn:8001   # Talking to VPN-Auth via VPN container
+      - RPA_URL=http://127.0.0.1:8000        # Talking to RPA via local stack loopback
+      - VPN_AUTH_URL=http://127.0.0.1:8001   # Talking to VPN-Auth via local stack loopback
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
       - BETTER_AUTH_URL=${BETTER_AUTH_URL}
@@ -27,8 +30,8 @@ services:
       - S3_BUCKET=${S3_BUCKET:-survey-images}
       - S3_ENDPOINT=http://s3:8333
     depends_on:
-      fasih-db:
-        condition: service_healthy
+      vpn:
+        condition: service_started
     restart: unless-stopped
 
   # --- VPN Gateway (The black box) ---
@@ -40,7 +43,8 @@ services:
       - /dev/net/tun
       - /dev/ppp
     networks:
-      - fasih_internal # Isolated from Coolify/Traefik
+      - fasih_internal
+      - coolify
     dns:
       - 127.0.0.11
       - 172.16.2.2

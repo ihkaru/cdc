@@ -200,12 +200,12 @@ async def run_full_sync(
 
     try:
 
-        def on_progress(fetched_count: int, total: int, data_json: dict | None):
+        async def on_progress(fetched_count: int, total: int, data_json: dict | None):
             sync_state.progress.assignments_fetched = fetched_count
             sync_state.progress.phase_label = f"⬇️ Detail: {fetched_count}/{total} fetched..."
             if data_json and not sync_state.is_shutting_down:
                 data_json["_survey_config_id"] = survey_config_id
-                upserter.add(data_json)
+                await upserter.add_async(data_json)
 
         await fetch_assignments_concurrent(
             cookie_dict, to_fetch_links, concurrency=DETAIL_CONCURRENCY, on_progress=on_progress

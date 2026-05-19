@@ -1,0 +1,29 @@
+[
+	{
+		"concurrency": 10,
+		"total_items": 20,
+		"success_count": 11,
+		"fail_count": 9,
+		"duration_sec": 7.057533101000445,
+		"success_rate": 55.00000000000001,
+		"requests_per_sec": 1.5586182654163803
+	},
+	{
+		"concurrency": 30,
+		"total_items": 20,
+		"success_count": 11,
+		"fail_count": 9,
+		"duration_sec": 7.4680482350013335,
+		"success_rate": 55.00000000000001,
+		"requests_per_sec": 1.4729417451329618
+	},
+	{
+		"concurrency": 50,
+		"total_items": 20,
+		"success_count": 11,
+		"fail_count": 9,
+		"duration_sec": 9.188719413999934,
+		"success_rate": 55.00000000000001,
+		"requests_per_sec": 1.1971200234104873
+	}
+]

@@ -2,6 +2,7 @@
 Repository — operasi CRUD dan upsert untuk Assignment
 """
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -426,6 +427,60 @@ class BatchUpserterBulk:
         self._buffer.append(db_row)
         if len(self._buffer) >= self.batch_size:
             self.flush()
+
+    async def add_async(self, row: dict):
+        """Asynchronously add a row and trigger async flush if batch size is met."""
+        self.stats.total_fetched += 1
+        date_modified_raw = (
+            row.get("date_modified")
+            or row.get("dateModifiedRemote")
+            or row.get("assignment", {}).get("dateModifiedRemote")
+            or ""
+        )
+        date_modified = normalize_bps_date(date_modified_raw)
+
+        db_row = {
+            "id": row.get("_id") or row.get("id") or row.get("assignment", {}).get("id"),
+            "survey_config_id": row.get("_survey_config_id", ""),
+            "code_identity": row.get("code_identity") or row.get("assignment", {}).get("codeIdentity") or "",
+            "survey_period_id": row.get("survey_period_id") or row.get("assignment", {}).get("surveyPeriodId") or "",
+            "assignment_status_alias": row.get("assignment_status_alias")
+            or row.get("assignment", {}).get("assignmentStatusAlias")
+            or "",
+            "current_user_username": row.get("current_user_username")
+            or row.get("assignment", {}).get("currentUserUsername")
+            or "",
+            "data_json": json.dumps(row, ensure_ascii=False),
+            "flat_data": extract_flat_data(row),
+            "date_modified_remote": date_modified,
+            "date_synced": datetime.now(timezone.utc),
+            "synced_to_api": False,
+            "sync_log_id": self.sync_log_id,
+            "local_image_mirrored": False,
+            "local_image_paths": {},
+        }
+
+        # PostgreSQL requires explicit UUID objects for bulk insert
+        try:
+            db_row["id"] = uuid.UUID(str(db_row["id"]))
+            if db_row.get("survey_config_id"):
+                db_row["survey_config_id"] = uuid.UUID(str(db_row["survey_config_id"]))
+            if db_row.get("survey_period_id"):
+                db_row["survey_period_id"] = uuid.UUID(str(db_row["survey_period_id"]))
+        except (ValueError, TypeError) as e:
+            print(f"   ⚠️ Skipping record with invalid UUID: {db_row['id']} ({e})")
+            self.stats.total_failed += 1
+            return
+
+        self._buffer.append(db_row)
+        if len(self._buffer) >= self.batch_size:
+            await self.flush_async()
+
+    async def flush_async(self, is_emergency: bool = False):
+        """Execute flush asynchronously in a background thread to prevent event loop blocking."""
+        if not self._buffer:
+            return
+        await asyncio.to_thread(self.flush, is_emergency)
 
     def flush(self, is_emergency: bool = False):
         """Execute a single INSERT ... ON CONFLICT DO UPDATE for the entire batch."""

@@ -107,6 +107,7 @@ async def _fetch_one(
     session,
     assignment_id: str,
     semaphore: asyncio.Semaphore,
+    headers: dict = None,
     retries: int = MAX_RETRIES,
 ) -> dict | None:
     """Fetch a single assignment detail via aiohttp with retry and semaphore."""
@@ -121,7 +122,7 @@ async def _fetch_one(
             try:
                 async with session.get(
                     api_url,
-                    headers={"Accept": "application/json"},
+                    headers=headers or {"Accept": "application/json"},
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     # [Scenario 2 Fix] Explicitly detect BPS SSO Redirects
@@ -131,6 +132,8 @@ async def _fetch_one(
                     if resp.status != 200:
                         body_text = await resp.text()
                         print(f"   ❌ {assignment_id[:8]}... HTTP {resp.status}: {body_text[:100]}")
+                        if resp.status in (401, 403, 404):
+                            return None
                         if attempt < retries:
                             if session.closed:
                                 return None
@@ -209,18 +212,36 @@ async def fetch_assignments_concurrent(
     completed = 0
     total = len(id_map)
 
-    # Use a cookie jar with the extracted cookies
-    jar = aiohttp.CookieJar(unsafe=True)
-    connector = aiohttp.TCPConnector(ssl=ssl_ctx, limit=concurrency + 20)
+    # Re-use enterprise-grade FasihApiClient to boot session with yarl-cookie domains
+    from api_client import FasihApiClient
 
-    async with aiohttp.ClientSession(
-        cookies=cookie_dict,
-        cookie_jar=jar,
+    api_client = FasihApiClient(cookie_dict)
+    api_client.ssl_ctx = ssl_ctx
+
+    # We dynamically configure the underlying session with concurrency connector limits
+    connector = aiohttp.TCPConnector(
+        ssl=ssl_ctx,
+        limit=concurrency + 10,
+        limit_per_host=concurrency,
+        keepalive_timeout=60,
+        force_close=False,
+    )
+
+    # Instantiate custom session inside client with custom connector
+    api_client._session = aiohttp.ClientSession(
+        cookie_jar=api_client.jar,
+        headers=api_client._get_headers(),
         connector=connector,
-    ) as session:
+        timeout=aiohttp.ClientTimeout(total=45, connect=15),
+    )
+
+    async with api_client as client:
+        session = client.session
+        headers = client._get_headers()
+
         tasks = []
         for aid in id_map:
-            tasks.append(asyncio.create_task(_fetch_one(session, aid, semaphore)))
+            tasks.append(asyncio.create_task(_fetch_one(session, aid, semaphore, headers=headers)))
 
         try:
             for coro in asyncio.as_completed(tasks):
@@ -235,7 +256,10 @@ async def fetch_assignments_concurrent(
                         results.append(data)
 
                     if on_progress:
-                        on_progress(completed, total, data)
+                        if asyncio.iscoroutinefunction(on_progress):
+                            await on_progress(completed, total, data)
+                        else:
+                            on_progress(completed, total, data)
                     elif completed % 100 == 0 or completed == total:
                         # Fallback logging if no callback
                         print(f"   📊 Progress: {completed}/{total}")
