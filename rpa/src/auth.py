@@ -256,9 +256,12 @@ async def fetch_vpn_cookie(username, password):
             if not success:
                 print(f"❌ [Auth] Failed to login to VPN portal: {err_msg}")
                 # 📸 Capture failure screenshot and trace
-                await page.screenshot(path="/app/traces/sso_error.png", timeout=5000)
-                await context.tracing.stop(path="/app/traces/sso_trace.zip")
-                print("📸 [Auth] Error screenshot and trace saved to /app/traces/")
+                try:
+                    await page.screenshot(path="/app/traces/sso_error.png", timeout=5000)
+                    await context.tracing.stop(path="/app/traces/sso_trace.zip")
+                    print("📸 [Auth] Error screenshot and trace saved to /app/traces/")
+                except Exception as se:
+                    print(f"⚠️ [Auth] Could not save failure screenshot: {se}")
                 await browser.close()
                 return None
 
@@ -280,9 +283,12 @@ async def fetch_vpn_cookie(username, password):
                 await asyncio.sleep(2)
 
             # 📸 Capture screenshot on timeout
-            await page.screenshot(path="/app/traces/sso_error.png", timeout=5000)
-            await context.tracing.stop(path="/app/traces/sso_trace.zip")
-            print("📸 [Auth] Timeout. Error screenshot and trace saved to /app/traces/")
+            try:
+                await page.screenshot(path="/app/traces/sso_error.png", timeout=5000)
+                await context.tracing.stop(path="/app/traces/sso_trace.zip")
+                print("📸 [Auth] Timeout. Error screenshot and trace saved to /app/traces/")
+            except Exception as se:
+                print(f"⚠️ [Auth] Could not save timeout screenshot: {se}")
             await browser.close()
             return None
     except Exception as e:

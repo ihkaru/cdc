@@ -13,4 +13,13 @@ pre-commit:
     ruff-check:
       glob: "*.py"
       run: rpa/venv/bin/ruff check --fix --force-exclude {staged_files} && rpa/venv/bin/ruff format --force-exclude {staged_files}
-      stage_fixed: true # Tells lefthook to add auto-fixed files back to the git stage
+      stage_fixed: true
+
+    type-check-python:
+      glob: "*.py"
+      run: rpa/venv/bin/basedpyright {staged_files}
+
+pre-push:
+  commands:
+    comprehensive-health-check:
+      run: ./check-health.sh

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+from typing import Any
 
 import aiohttp
 from fastapi import APIRouter, HTTPException
@@ -23,7 +24,7 @@ router = APIRouter()
 async def lookup_metadata(req: LookupRequest):
     """Metadata lookup using Storage State + Force XSRF Maturation."""
     start_total = time.perf_counter()
-    timings = {}
+    timings: dict[str, Any] = {}
 
     # PHASE 0: User-Specific Metadata Cache (ULTRA FAST)
     from db.models import SystemSettings
@@ -157,6 +158,7 @@ async def lookup_metadata(req: LookupRequest):
             await page.goto(f"{TARGET_URL}/survey/list.html", wait_until="networkidle", timeout=60000)
 
             # Wait for XSRF cookie to appear
+            cookies = []  # type: ignore[var-annotated]
             for _ in range(5):
                 cookies = await context.cookies()
                 if any(c["name"] == "XSRF-TOKEN" for c in cookies):
@@ -239,7 +241,7 @@ async def lookup_metadata(req: LookupRequest):
 
             timings["sso_login_ms"] = int((time.perf_counter() - t_browser) * 1000)
             timings["total_ms"] = int((time.perf_counter() - start_total) * 1000)
-            result = {"surveys": surveys, "provinces": provinces}
+            result: dict[str, Any] = {"surveys": surveys, "provinces": provinces}
             try:
                 with get_session() as db_write:
                     from db.repository import set_system_setting
