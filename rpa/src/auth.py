@@ -115,21 +115,30 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
         except Exception as e:
             return False, f"Timeout saat mensubmit form login SSO: {e!s}"
 
-        # 6. Check resulting URL to determine success instantly
+        # 6. Check resulting URL to determine success.
+        # wait_until="commit" fires on the FIRST http response (including 302 redirects),
+        # so page.url may still be sso.bps.go.id even on a successful login for portals
+        # like akses.bps.go.id that have a multi-step redirect chain.
+        # We wait up to 5s for the redirect chain to resolve before concluding failure.
         if "sso.bps.go.id" in page.url:
-            # If we are still on the SSO domain, login failed.
-            print("   ❌ [Auth] Login ditolak. URL masih di SSO BPS.", flush=True)
             try:
-                # Now we can wait for the specific error message to load
-                await page.wait_for_selector(".alert-error, .kc-feedback-text", timeout=20000)
-                err_text = "Username atau password salah (SSO)"
-                err_el = await page.query_selector(".kc-feedback-text")
-                if err_el:
-                    err_text = await err_el.inner_text()
-                print(f"   ❌ [Auth] Detail error: {err_text}")
-                return False, err_text
-            except:
-                return False, "Username atau password salah (SSO BPS)"
+                await page.wait_for_url(lambda url: "sso.bps.go.id" not in url, timeout=5000, wait_until="commit")
+                # URL changed — login succeeded
+                print("   ✅ [Auth] Login berhasil diterima Keycloak, beralih ke aplikasi...", flush=True)
+                return True, None
+            except Exception:
+                # Still on sso.bps.go.id after 5s → genuine login failure
+                print("   ❌ [Auth] Login ditolak. URL masih di SSO BPS setelah 5s.", flush=True)
+                try:
+                    await page.wait_for_selector(".alert-error, .kc-feedback-text", timeout=10000)
+                    err_text = "Username atau password salah (SSO)"
+                    err_el = await page.query_selector(".kc-feedback-text")
+                    if err_el:
+                        err_text = await err_el.inner_text()
+                    print(f"   ❌ [Auth] Detail error: {err_text}")
+                    return False, err_text
+                except Exception:
+                    return False, "Username atau password salah (SSO BPS)"
 
         print("   ✅ [Auth] Login berhasil diterima Keycloak, beralih ke aplikasi...", flush=True)
         return True, None
