@@ -119,18 +119,18 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
         # wait_until="commit" fires on the FIRST http response (including 302 redirects),
         # so page.url may still be sso.bps.go.id even on a successful login for portals
         # like akses.bps.go.id that have a multi-step redirect chain.
-        # We wait up to 5s for the redirect chain to resolve before concluding failure.
+        # Screenshot evidence shows FortiGate SAML redirect takes >5s — raise to 30s.
         if "sso.bps.go.id" in page.url:
             try:
-                await page.wait_for_url(lambda url: "sso.bps.go.id" not in url, timeout=5000, wait_until="commit")
+                await page.wait_for_url(lambda url: "sso.bps.go.id" not in url, timeout=30000, wait_until="commit")
                 # URL changed — login succeeded
                 print("   ✅ [Auth] Login berhasil diterima Keycloak, beralih ke aplikasi...", flush=True)
                 return True, None
             except Exception:
-                # Still on sso.bps.go.id after 5s → genuine login failure
-                print("   ❌ [Auth] Login ditolak. URL masih di SSO BPS setelah 5s.", flush=True)
+                # Still on sso.bps.go.id after 30s → genuine login failure
+                print("   ❌ [Auth] Login ditolak. URL masih di SSO BPS setelah 30s.", flush=True)
                 try:
-                    await page.wait_for_selector(".alert-error, .kc-feedback-text", timeout=10000)
+                    await page.wait_for_selector(".alert-error, .kc-feedback-text", timeout=5000)
                     err_text = "Username atau password salah (SSO)"
                     err_el = await page.query_selector(".kc-feedback-text")
                     if err_el:
