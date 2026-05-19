@@ -3,6 +3,7 @@
 	"python.analysis.venvPath": "${workspaceFolder}/rpa",
 	"python.analysis.venv": "venv",
 	"python.analysis.extraPaths": [
+		"${workspaceFolder}/rpa",
 		"${workspaceFolder}/rpa/src",
 		"${workspaceFolder}/rpa/venv/lib/python3.14/site-packages"
 	],

@@ -1,7 +1,7 @@
 {
 	"venvPath": "rpa",
 	"venv": "venv",
-	"extraPaths": ["rpa/src", "rpa/venv/lib/python3.14/site-packages"],
+	"extraPaths": ["rpa", "rpa/src", "rpa/venv/lib/python3.14/site-packages"],
 	"typeCheckingMode": "basic",
 	"reportUnusedImport": "warning",
 	"reportMissingImports": "error",
