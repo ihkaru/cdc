@@ -84,18 +84,16 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
         # 4. Transition to Keycloak (SSO)
         print(f"🚀 [Auth] Waiting for Keycloak SSO redirection... Current URL: {page.url}", flush=True)
         try:
-            # First wait for the URL to change to Keycloak domain using resilient lambda
-            await page.wait_for_url(lambda url: "sso.bps.go.id" in url, timeout=45000)
+            # wait_until="commit" ensures we don't wait 20s+ for fonts to load on Keycloak
+            await page.wait_for_url(lambda url: "sso.bps.go.id" in url, timeout=45000, wait_until="commit")
             print(f"   ✅ [Auth] Keycloak SSO URL reached: {page.url}", flush=True)
         except Exception as e:
             print(f"   ❌ [Auth] Timeout waiting for SSO redirect. Stuck at URL: {page.url}", flush=True)
             return False, f"Gagal dialihkan ke SSO: {e!s}"
 
         try:
-            # Wait 1s for the frame navigation to settle
-            await asyncio.sleep(1)
-            # Now wait for the username input field to be ready in DOM
-            await page.wait_for_selector("#username", timeout=3000)
+            # Wait for the username input field to be ready in DOM
+            await page.wait_for_selector("#username", timeout=30000)
             print("   ✅ [Auth] SSO username field is ready.", flush=True)
         except Exception:
             print(f"   ❌ [Auth] #username field not found. URL: {page.url}", flush=True)
@@ -113,9 +111,9 @@ async def perform_sso_login(page, username, password, target_url="https://fasih-
         # Fast submit
         await page.click("#kc-login", force=True)
 
-        # 6. Check for immediate error messages
+        # 6. Check for immediate error messages (Max 1s to prevent hanging)
         try:
-            await page.wait_for_selector(".alert-error, .kc-feedback-text, .main-sidebar, .user-panel", timeout=10000)
+            await page.wait_for_selector(".alert-error, .kc-feedback-text", timeout=1000)
             if await page.query_selector(".alert-error, .kc-feedback-text"):
                 err_text = "Username atau password salah (SSO)"
                 err_el = await page.query_selector(".kc-feedback-text")
