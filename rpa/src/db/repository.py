@@ -537,7 +537,17 @@ class BatchUpserterBulk:
             self.session.rollback()
             for row_data in self._buffer:
                 try:
-                    upsert_assignment(self.session, row_data, stats=self.stats, sync_log_id=self.sync_log_id)
+                    # Construct Assignment model directly from processed db_row dict
+                    existing = self.session.get(Assignment, row_data["id"])
+                    if existing is None:
+                        assignment = Assignment(**row_data)
+                        self.session.add(assignment)
+                        self.stats.total_new += 1
+                    else:
+                        for k, v in row_data.items():
+                            if k != "id":
+                                setattr(existing, k, v)
+                        self.stats.total_updated += 1
                 except Exception as row_err:
                     print(f"      ❌ Fatal error on single row fallback: {row_err}")
             self.session.commit()

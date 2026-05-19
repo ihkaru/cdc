@@ -14,7 +14,7 @@ import ssl
 from api_client import FasihAuthError
 
 TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
-API_BASE = f"{TARGET_URL}/assignment-general/api/assignment/get-by-id-with-data-for-scm"
+API_BASE = f"{TARGET_URL}/app/api/assignment-general/api/assignment/get-by-assignment-id"
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
 
@@ -113,7 +113,7 @@ async def _fetch_one(
     """Fetch a single assignment detail via aiohttp with retry and semaphore."""
     import aiohttp
 
-    api_url = f"{API_BASE}?id={assignment_id}"
+    api_url = f"{API_BASE}?assignmentId={assignment_id}"
 
     async with semaphore:
         for attempt in range(1, retries + 1):
@@ -182,18 +182,18 @@ async def fetch_assignments_concurrent(
     on_progress=None,
 ) -> list[dict]:
     """
-    Fetch multiple assignment details concurrently using aiohttp.
-
-    Args:
-        cookie_dict: Dictionary of session cookies
-        urls: List of assignment detail URLs
-        concurrency: Maximum number of concurrent requests
-        on_progress: Optional callback(fetched_count, total_count, data_or_none)
-
-    Returns:
-        List of successfully fetched assignment data dicts
+    Fetch multiple assignment details concurrently using aiohttp with a true
+    Producer-Consumer Pipeline (asyncio.Queue) to overlap fetch and write,
+    supported by a dynamic multi-session round-robin pool of valid administrators.
     """
+    import json
+    from urllib.parse import unquote
+
     import aiohttp
+
+    from api_client import FasihApiClient
+    from db.connection import get_session
+    from db.models import SystemSettings
 
     # Create SSL context that doesn't verify (VPN internal network)
     ssl_ctx = ssl.create_default_context()
@@ -210,74 +210,185 @@ async def fetch_assignments_concurrent(
     if not id_map:
         return []
 
-    print(f"   🚀 Fetching {len(id_map)} assignments with concurrency={concurrency}...")
+    # 1. Dynamically load all active sessions from the database
+    all_sessions = []
+
+    def parse_session_cookies(val_str):
+        try:
+            val = json.loads(val_str)
+            if isinstance(val, dict) and "cookies" in val:
+                return {c["name"]: c["value"] for c in val["cookies"]}
+            elif isinstance(val, dict):
+                return val
+        except Exception:
+            pass
+        return None
+
+    # Insert primary session first
+    if cookie_dict and "SESSION" in cookie_dict:
+        all_sessions.append(cookie_dict)
+
+    # Load other admin sessions
+    try:
+        db_sess = get_session()
+        records = db_sess.query(SystemSettings).filter(SystemSettings.key.like("sso_state_%")).all()
+        for rec in records:
+            cookies = parse_session_cookies(rec.value)
+            if cookies and "SESSION" in cookies:
+                sess_val = cookies.get("SESSION")
+                if sess_val and not any(s.get("SESSION") == sess_val for s in all_sessions):
+                    all_sessions.append(cookies)
+        db_sess.close()
+    except Exception as db_err:
+        print(f"   ⚠️ Failed loading multi-session cookies from DB: {db_err}")
+
+    # Fallback if empty
+    if not all_sessions and cookie_dict:
+        all_sessions.append(cookie_dict)
+
+    # 2. Concurrently validate which sessions are active/valid (timeout 5s per validation)
+    async def validate_session(c_dict) -> bool:
+        probe_url = f"{TARGET_URL}/app/api/assignment-general/api/assignment/get-by-assignment-id"
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36",
+            "X-XSRF-TOKEN": unquote(c_dict.get("XSRF-TOKEN", "")),
+        }
+        try:
+            # Short-lived check connection context
+            connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+            async with aiohttp.ClientSession(cookies=c_dict, connector=connector) as test_sess:
+                async with test_sess.get(probe_url, headers=headers, timeout=5) as test_resp:
+                    # Expired session will redirect to Keycloak/SSO
+                    if "oauth_login" in str(test_resp.url) or "sso.bps.go.id" in str(test_resp.url):
+                        return False
+                    return test_resp.status in (200, 400, 403, 404)
+        except Exception:
+            return False
+
+    print(f"   👥 Found {len(all_sessions)} candidates in dynamic session pool. Validating active states...")
+    validation_tasks = [validate_session(s) for s in all_sessions]
+    validation_results = await asyncio.gather(*validation_tasks)
+
+    validated_sessions = [all_sessions[i] for i, is_valid in enumerate(validation_results) if is_valid]
+
+    # Ensure we have at least one session; if validation aggressively filtered all, fallback to primary
+    if not validated_sessions:
+        print("   ⚠️ All sessions failed validation. Falling back to primary session...")
+        validated_sessions = [cookie_dict]
+    else:
+        print(f"   ✓ Session pool loaded: {len(validated_sessions)} active administrative session(s).")
+
+    # 3. Setup client contexts for all validated sessions
+    clients_pool = []
+    for c_dict in validated_sessions:
+        api_client = FasihApiClient(c_dict)
+        api_client.ssl_ctx = ssl_ctx
+
+        # We configure the underlying session with connector limits
+        connector = aiohttp.TCPConnector(
+            ssl=ssl_ctx,
+            limit=concurrency + 10,
+            limit_per_host=concurrency,
+            keepalive_timeout=120,
+            force_close=False,
+        )
+
+        api_client._session = aiohttp.ClientSession(
+            cookie_jar=api_client.jar,
+            headers=api_client._get_headers(),
+            connector=connector,
+            timeout=aiohttp.ClientTimeout(total=45, connect=15),
+        )
+        clients_pool.append(api_client)
+
+    print(f"   🚀 Fetching {len(id_map)} assignments with concurrency={concurrency} (Overlap Pipeline)...")
 
     semaphore = asyncio.Semaphore(concurrency)
+    queue = asyncio.Queue(maxsize=concurrency * 2)
     results = []
-    completed = 0
     total = len(id_map)
 
-    # Re-use enterprise-grade FasihApiClient to boot session with yarl-cookie domains
-    from api_client import FasihApiClient
+    async def producer_task(client_session, aid, headers_dict):
+        try:
+            data = await _fetch_one(client_session, aid, semaphore, headers=headers_dict)
+            await queue.put(data)
+            return True
+        except FasihAuthError:
+            await queue.put(FasihAuthError("Session expired"))
+            raise
+        except Exception as e:
+            print(f"   ⚠️ Producer Error for {aid[:8]}: {e}")
+            await queue.put(None)
+            return False
 
-    api_client = FasihApiClient(cookie_dict)
-    api_client.ssl_ctx = ssl_ctx
+    async def consumer_task():
+        completed = 0
+        while True:
+            data = await queue.get()
+            if data is False:  # Sentinel for completion
+                queue.task_done()
+                break
 
-    # We dynamically configure the underlying session with concurrency connector limits
-    connector = aiohttp.TCPConnector(
-        ssl=ssl_ctx,
-        limit=concurrency + 10,
-        limit_per_host=concurrency,
-        keepalive_timeout=60,
-        force_close=False,
-    )
+            completed += 1
+            if isinstance(data, FasihAuthError):
+                queue.task_done()
+                break
 
-    # Instantiate custom session inside client with custom connector
-    api_client._session = aiohttp.ClientSession(
-        cookie_jar=api_client.jar,
-        headers=api_client._get_headers(),
-        connector=connector,
-        timeout=aiohttp.ClientTimeout(total=45, connect=15),
-    )
+            if not on_progress and data:
+                results.append(data)
 
-    async with api_client as client:
-        session = client.session
-        headers = client._get_headers()
+            if on_progress:
+                try:
+                    if asyncio.iscoroutinefunction(on_progress):
+                        await on_progress(completed, total, data)
+                    else:
+                        on_progress(completed, total, data)
+                except Exception as cb_err:
+                    print(f"   ⚠️ Callback Error: {cb_err}")
 
-        tasks = []
-        for aid in id_map:
-            tasks.append(asyncio.create_task(_fetch_one(session, aid, semaphore, headers=headers)))
+            if not on_progress and (completed % 100 == 0 or completed == total):
+                print(f"   📊 Progress: {completed}/{total}")
+
+            queue.task_done()
+
+    # Open all sessions inside context block
+    async def run_pipeline():
+        c_task = asyncio.create_task(consumer_task())
+
+        # Start Producers distributing across active client sessions round-robin
+        p_tasks = []
+        for idx, aid in enumerate(id_map):
+            # Select client session in a round-robin fashion
+            client_instance = clients_pool[idx % len(clients_pool)]
+            session = client_instance.session
+            headers = client_instance._get_headers()
+
+            p_tasks.append(asyncio.create_task(producer_task(session, aid, headers)))
 
         try:
-            for coro in asyncio.as_completed(tasks):
-                try:
-                    data = await coro
-                    completed += 1
-
-                    # Memory optimization: if on_progress (callback) is provided,
-                    # we don't need to store all results in memory here.
-                    # The caller handles the storage (e.g. BatchUpserterBulk).
-                    if not on_progress and data:
-                        results.append(data)
-
-                    if on_progress:
-                        if asyncio.iscoroutinefunction(on_progress):
-                            await on_progress(completed, total, data)
-                        else:
-                            on_progress(completed, total, data)
-                    elif completed % 100 == 0 or completed == total:
-                        # Fallback logging if no callback
-                        print(f"   📊 Progress: {completed}/{total}")
-                except FasihAuthError:
-                    print(
-                        "   🚨 [Early-Abort] Ditemukan FasihAuthError (session expired)! Menghentikan semua sisa request..."
-                    )
-                    for t in tasks:
-                        if not t.done():
-                            t.cancel()
-                    raise
+            await asyncio.gather(*p_tasks)
         except FasihAuthError:
-            raise
+            print("   🚨 [Early-Abort] Ditemukan FasihAuthError (session expired)! Menghentikan semua sisa request...")
+            for t in p_tasks:
+                if not t.done():
+                    t.cancel()
+        finally:
+            # Signal consumer to terminate
+            await queue.put(False)
+            await c_task
 
-    print(f"   ✅ Done: {completed}/{total} processed")
+    # Establish async with block for each client
+    async def enter_client_context(index):
+        if index >= len(clients_pool):
+            # We reached the end, execute the pipeline
+            await run_pipeline()
+            return
+
+        async with clients_pool[index] as _:
+            await enter_client_context(index + 1)
+
+    await enter_client_context(0)
+
+    print(f"   ✅ Done: {len(results) if not on_progress else 'Streamed'} processed")
     return results

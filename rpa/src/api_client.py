@@ -499,7 +499,9 @@ class FasihApiClient:
     @with_retry(retries=3, delay=2)
     async def get_assignment_detail(self, assignment_id: str) -> dict | None:
         """Fetch the latest assignment detail JSON (includes fresh S3 links)."""
-        url = f"{TARGET_URL}/assignment-general/api/assignment/get-by-id-with-data-for-scm?id={assignment_id}"
+        url = (
+            f"{TARGET_URL}/app/api/assignment-general/api/assignment/get-by-assignment-id?assignmentId={assignment_id}"
+        )
         print(f"   🔄 [API] Refreshing detail for assignment: {assignment_id}...")
 
         async with await self.create_session() as session:
