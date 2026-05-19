@@ -1,0 +1,36 @@
+# rpa/.ruff.toml
+
+# Set target python version
+target-version = "py310"
+
+# Set maximum line length
+line-length = 120
+
+[lint]
+# Select rules to enforce
+select = ["E", "F", "W", "I", "UP", "SIM", "RUF", "PIE", "BLE"]
+
+# Specific ignore rules
+ignore = [
+    "E712",   # Ignore: Avoid equality comparisons to `True` (needed for SQLAlchemy query expressions)
+    "BLE001",  # Ignore: Do not catch blind exception `Exception` (needed for network probe resilience)
+    "SIM117",  # Ignore: Use a single `with` statement (we prefer nesting for ClientSession and get)
+    "E501",    # Ignore: Line too long (we use line length limits in editor but don't want it to fail hooks)
+    "RUF003",  # Ignore: Comment contains ambiguous characters (e.g. × multiplication sign)
+    "E701",    # Ignore: Multiple statements on one line (e.g. `if x: continue` is used extensively in the codebase)
+    "E722",    # Ignore: Do not use bare `except` (used for safety-first broad error silencing)
+    "E402",    # Ignore: Module level import not at top of file (used dynamically for lazy loading routes/dependencies)
+    "RUF013",  # Ignore: PEP 484 prohibits implicit `Optional` (standard in codebase: `arg: type = None`)
+    "RUF006",  # Ignore: Store a reference to the return value of `asyncio.create_task` (background fire-and-forget tasks)
+    "W291",    # Ignore: Trailing whitespace (cosmetic)
+    "W293",    # Ignore: Blank line contains whitespace (cosmetic)
+    "SIM105",  # Ignore: Use contextlib.suppress instead of try-except-pass (try-except-pass is highly readable)
+    "RUF059",  # Ignore: Unpacked variable is never used (often used intentionally for unpacking signature match)
+    "RUF001",  # Ignore: String contains ambiguous Unicode character (used for emoji log indicators like ℹ️)
+    "RUF002",  # Ignore: Docstring contains ambiguous Unicode character (used for en-dash – in ranges)
+    "PIE810",  # Ignore: Merge startswith calls (separated startswith has high readability in flat lists)
+]
+
+# Allow unused imports in __init__.py files
+[lint.per-file-ignores]
+"__init__.py" = ["F401"]

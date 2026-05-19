@@ -1,0 +1,16 @@
+# lefthook.yml
+# Configure git hooks to run fast local linters before commits.
+# For more info: https://lefthook.dev/configuration/
+
+pre-commit:
+  parallel: true
+  commands:
+    biome-check:
+      glob: "*.{js,ts,jsx,tsx,json,jsonc,css}"
+      run: bunx @biomejs/biome check --write --no-errors-on-unmatched {staged_files}
+      stage_fixed: true # Tells lefthook to add auto-fixed files back to the git stage
+
+    ruff-check:
+      glob: "*.py"
+      run: rpa/venv/bin/ruff check --fix --force-exclude {staged_files} && rpa/venv/bin/ruff format --force-exclude {staged_files}
+      stage_fixed: true # Tells lefthook to add auto-fixed files back to the git stage

@@ -1,0 +1,14 @@
+{
+	"name": "cdc",
+	"module": "index.ts",
+	"type": "module",
+	"private": true,
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.15",
+		"@types/bun": "latest",
+		"lefthook": "^2.1.8"
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	}
+}

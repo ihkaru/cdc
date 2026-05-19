@@ -37,3 +37,7 @@ rpa/src/prove_success.py
 rpa/src/tmp_*.py
 rpa/src/tmp_test_*.py
 rpa/src/tmp_browser_refresh.py
+
+# Agent & Playwright Traces
+.antigravity/
+rpa/traces/

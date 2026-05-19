@@ -1,0 +1,72 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"ignoreUnknown": false,
+		"includes": [
+			"**",
+			"!!node_modules",
+			"!!dist",
+			"!!.quasar",
+			"!!tmp",
+			"!!venv",
+			"!!rpa/traces",
+			"!api_exploration.log",
+			"!full_payload_dump.log",
+			"!failed_ids.txt",
+			"!successfully_mirrored_ids.txt",
+			"!dashboard/client/quasar.config.js.temporary.compiled.*.mjs",
+			"!dashboard/client/index.html"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"lineWidth": 100
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"suspicious": {
+				"noExplicitAny": "off",
+				"noShadowRestrictedNames": "warn",
+				"noImplicitAnyLet": "off",
+				"noAssignInExpressions": "off",
+				"noGlobalIsNan": "off",
+				"useIterableCallbackReturn": "off"
+			},
+			"style": {
+				"noNonNullAssertion": "off",
+				"useNodejsImportProtocol": "off"
+			},
+			"correctness": {
+				"noUnusedVariables": "off",
+				"noUnusedImports": "off",
+				"noUnusedFunctionParameters": "off"
+			},
+			"complexity": {
+				"useOptionalChain": "off",
+				"noBannedTypes": "off"
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double",
+			"trailingCommas": "all"
+		}
+	},
+	"assist": {
+		"enabled": true,
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	}
+}
