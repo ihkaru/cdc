@@ -113,37 +113,37 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useAuthStore } from 'src/stores/auth'
-import { useRouter, useRoute } from 'vue-router'
-import { useQuasar } from 'quasar'
+import { useQuasar } from "quasar";
+import { useAuthStore } from "src/stores/auth";
+import { ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
-const auth = useAuthStore()
-const router = useRouter()
-const route = useRoute()
-const $q = useQuasar()
+const auth = useAuthStore();
+const router = useRouter();
+const route = useRoute();
+const $q = useQuasar();
 
-const email = ref('')
-const password = ref('')
-const loading = ref(false)
-const showPass = ref(false)
-const errorMsg = ref('')
-const authenticated = ref(false)
+const email = ref("");
+const password = ref("");
+const loading = ref(false);
+const showPass = ref(false);
+const errorMsg = ref("");
+const authenticated = ref(false);
 
 async function onSubmit() {
-  errorMsg.value = ''
-  loading.value = true
-  try {
-    await auth.login(email.value, password.value)
-    authenticated.value = true
-    $q.notify({ type: 'positive', message: 'Welcome back!', position: 'top' })
-    const redirectPath = (route.query.redirect as string) || '/'
-    await router.push(redirectPath)
-  } catch (err: any) {
-    errorMsg.value = err.message || 'Kredensial tidak valid. Periksa kembali email dan password.'
-  } finally {
-    loading.value = false
-  }
+	errorMsg.value = "";
+	loading.value = true;
+	try {
+		await auth.login(email.value, password.value);
+		authenticated.value = true;
+		$q.notify({ type: "positive", message: "Welcome back!", position: "top" });
+		const redirectPath = (route.query.redirect as string) || "/";
+		await router.push(redirectPath);
+	} catch (err: any) {
+		errorMsg.value = err.message || "Kredensial tidak valid. Periksa kembali email dan password.";
+	} finally {
+		loading.value = false;
+	}
 }
 </script>
 

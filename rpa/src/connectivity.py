@@ -1,22 +1,24 @@
-import os
-import aiohttp
 import asyncio
 import logging
-from typing import Optional
+import os
 from datetime import datetime, timezone
 
+import aiohttp
+
+from auth import fetch_vpn_cookie
+from crypto import decrypt_password
 from db.connection import get_session, init_db, reset_engine
 from db.models import SurveyConfig, SystemSettings
-from crypto import decrypt_password
-from auth import fetch_vpn_cookie
 
 logger = logging.getLogger("rpa.connectivity")
 
+
 class FasihConnectionError(Exception):
     """Raised when VPN or BPS network is fundamentally unreachable."""
-    pass
+
 
 TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
+
 
 async def check_fasih_reachable() -> tuple[bool, str]:
     """
@@ -27,6 +29,7 @@ async def check_fasih_reachable() -> tuple[bool, str]:
     Returns: (is_reachable, reason)
     """
     import ssl
+
     ssl_ctx = ssl.create_default_context()
     ssl_ctx.check_hostname = False
     ssl_ctx.verify_mode = ssl.CERT_NONE
@@ -35,13 +38,9 @@ async def check_fasih_reachable() -> tuple[bool, str]:
     try:
         connector = aiohttp.TCPConnector(ssl=ssl_ctx)
         async with aiohttp.ClientSession(
-            connector=connector,
-            timeout=aiohttp.ClientTimeout(total=8, connect=5)
+            connector=connector, timeout=aiohttp.ClientTimeout(total=8, connect=5)
         ) as session:
-            async with session.get(
-                f"{TARGET_URL}/oauth_login.html",
-                allow_redirects=True
-            ) as resp:
+            async with session.get(f"{TARGET_URL}/oauth_login.html", allow_redirects=True) as resp:
                 if resp.status in [200, 302, 401, 403]:
                     logger.debug("FASIH-SM HTTP probe succeeded")
                     return True, "Reachable"
@@ -89,8 +88,9 @@ async def is_session_stale() -> bool:
                 return False
     except Exception as e:
         # If we can't even connect, it's not 'stale', it's 'disconnected'
-        logger.error(f"Error checking session staleness: {type(e).__name__} ({str(e)})")
+        logger.error(f"Error checking session staleness: {type(e).__name__} ({e!s})")
         return False
+
 
 async def ensure_connected():
     """
@@ -102,7 +102,7 @@ async def ensure_connected():
     """
     logger.info("Executing connectivity check...")
     reachable, reason = await check_fasih_reachable()
-    
+
     if reachable:
         logger.info(f"FASIH-SM is reachable: {reason}")
         return True
@@ -146,9 +146,9 @@ async def ensure_connected():
             await asyncio.sleep(5)
             r, info = await check_fasih_reachable()
             if r:
-                logger.info(f"VPN self-healing success! Reconnected after {(attempt+1)*5}s: {info}")
+                logger.info(f"VPN self-healing success! Reconnected after {(attempt + 1) * 5}s: {info}")
                 return True
-            logger.warning(f"Still waiting for VPN reconnect [{attempt+1}/18] — {info}")
+            logger.warning(f"Still waiting for VPN reconnect [{attempt + 1}/18] — {info}")
 
         logger.error(f"Cookie updated but FASIH remains unreachable after 90s (last reason: {info})")
         raise FasihConnectionError(f"VPN self-healing failed: BPS Network unreachable ({info})")
@@ -157,6 +157,6 @@ async def ensure_connected():
         raise
     except Exception as e:
         logger.exception("Unexpected error occurred during VPN self-healing execution")
-        raise FasihConnectionError(f"VPN self-healing exception: {str(e)}")
+        raise FasihConnectionError(f"VPN self-healing exception: {e!s}")
     finally:
         session.close()

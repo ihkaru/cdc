@@ -9,23 +9,29 @@ Strategi:
 - Option text region mengandung kode: "[61] [61] KALIMANTAN BARAT".
 - Province+kabupaten di-set sekali di awal; iterasi hanya ganti pengawas.
 """
+
 import asyncio
 import re
-from typing import AsyncGenerator
-from playwright.async_api import Page, Response
+from collections.abc import AsyncGenerator
 
+from playwright.async_api import Page, Response
 
 # ========== JS CLICK HELPERS ==========
 
+
 async def _js_click(page: Page, css_selector: str):
     """Klik elemen via JavaScript — bypass viewport."""
-    await page.evaluate("""(sel) => {
+    await page.evaluate(
+        """(sel) => {
         const el = document.querySelector(sel);
         if (el) el.click();
-    }""", css_selector)
+    }""",
+        css_selector,
+    )
 
 
 # ========== SIDEBAR ==========
+
 
 async def open_filter_sidebar(page: Page):
     """Buka sidebar filter jika belum terbuka."""
@@ -52,6 +58,7 @@ async def open_filter_sidebar(page: Page):
 
 # ========== REGION DROPDOWN (by CSS name attribute) ==========
 
+
 async def select_region_dropdown(page: Page, css_selector: str, option_text: str):
     """
     Pilih option di dropdown region.
@@ -64,18 +71,22 @@ async def select_region_dropdown(page: Page, css_selector: str, option_text: str
 
     # Tunggu dropdown muncul
     for _ in range(10):
-        has_items = await page.evaluate("""(sel) => {
+        has_items = await page.evaluate(
+            """(sel) => {
             const el = document.querySelector(sel);
             if (!el) return false;
             const items = el.querySelectorAll('.dropdown-menu .ngx-select__item');
             return items.length > 0;
-        }""", css_selector)
+        }""",
+            css_selector,
+        )
         if has_items:
             break
         await asyncio.sleep(0.5)
 
     # Klik item yang cocok (semua kata/token harus ada, case-insensitive)
-    clicked = await page.evaluate("""(args) => {
+    clicked = await page.evaluate(
+        """(args) => {
         const [sel, text] = args;
         const el = document.querySelector(sel);
         if (!el) return false;
@@ -93,7 +104,9 @@ async def select_region_dropdown(page: Page, css_selector: str, option_text: str
             }
         }
         return false;
-    }""", [css_selector, option_text])
+    }""",
+        [css_selector, option_text],
+    )
 
     if not clicked:
         print(f"   ⚠️ Option '{option_text}' tidak ditemukan di {css_selector}")
@@ -106,15 +119,19 @@ async def select_region_dropdown(page: Page, css_selector: str, option_text: str
 # Index 0 = Pengawas, Index 1 = Pencacah
 # Items menampilkan USERNAME, bukan fullname
 
+
 async def _clear_optiontextfield_dropdown(page: Page, index: int):
     """Clear selection di dropdown by clicking the X button."""
-    await page.evaluate("""(idx) => {
+    await page.evaluate(
+        """(idx) => {
         const selects = document.querySelectorAll('ngx-select[optiontextfield="-"]');
         if (selects[idx]) {
             const clearBtn = selects[idx].querySelector('.ngx-select__clear');
             if (clearBtn) clearBtn.click();
         }
-    }""", index)
+    }""",
+        index,
+    )
     await asyncio.sleep(0.5)
 
 
@@ -124,29 +141,36 @@ async def _select_optiontextfield_dropdown(page: Page, index: int, option_text: 
     Searches by partial match, case-insensitive.
     """
     # Klik toggle
-    await page.evaluate("""(idx) => {
+    await page.evaluate(
+        """(idx) => {
         const selects = document.querySelectorAll('ngx-select[optiontextfield="-"]');
         if (selects[idx]) {
             const toggle = selects[idx].querySelector('.ngx-select__toggle');
             if (toggle) toggle.click();
         }
-    }""", index)
+    }""",
+        index,
+    )
     await asyncio.sleep(0.8)
 
     # Tunggu items muncul
     for _ in range(10):
-        has_items = await page.evaluate("""(idx) => {
+        has_items = await page.evaluate(
+            """(idx) => {
             const selects = document.querySelectorAll('ngx-select[optiontextfield="-"]');
             if (!selects[idx]) return false;
             const items = selects[idx].querySelectorAll('.dropdown-menu .ngx-select__item');
             return items.length > 0;
-        }""", index)
+        }""",
+            index,
+        )
         if has_items:
             break
         await asyncio.sleep(0.5)
 
     # Klik item yang cocok
-    clicked = await page.evaluate("""(args) => {
+    clicked = await page.evaluate(
+        """(args) => {
         const [idx, text] = args;
         const selects = document.querySelectorAll('ngx-select[optiontextfield="-"]');
         if (!selects[idx]) return false;
@@ -164,7 +188,9 @@ async def _select_optiontextfield_dropdown(page: Page, index: int, option_text: 
             }
         }
         return false;
-    }""", [index, option_text])
+    }""",
+        [index, option_text],
+    )
 
     if not clicked:
         # Tutup dropdown
@@ -196,6 +222,7 @@ async def clear_pencacah(page: Page):
 
 # ========== API INTERCEPTION — GET PENGAWAS/PENCACAH LIST ==========
 
+
 async def get_user_lists_via_api(
     page: Page,
     provinsi: str,
@@ -211,15 +238,15 @@ async def get_user_lists_via_api(
     captured_responses: list[list[dict]] = []
 
     async def on_response(response: Response):
-        if 'survey-period-role-users' in response.url and response.status == 200:
+        if "survey-period-role-users" in response.url and response.status == 200:
             try:
                 body = await response.json()
-                if body.get('success'):
-                    captured_responses.append(body.get('data', []))
+                if body.get("success"):
+                    captured_responses.append(body.get("data", []))
             except:
                 pass
 
-    page.on('response', on_response)
+    page.on("response", on_response)
 
     try:
         await open_filter_sidebar(page)
@@ -233,7 +260,7 @@ async def get_user_lists_via_api(
             await asyncio.sleep(4)  # Tunggu API pengawas/pencacah
 
     finally:
-        page.remove_listener('response', on_response)
+        page.remove_listener("response", on_response)
 
     # Parse: pisahkan pengawas vs pencacah
     pengawas_list = []
@@ -242,13 +269,13 @@ async def get_user_lists_via_api(
     for response_data in captured_responses:
         for user in response_data:
             entry = {
-                'fullname': user.get('fullname', ''),
-                'username': user.get('username', ''),
-                'userId': user.get('userId', ''),
-                'isPencacah': user.get('isPencacah', False),
-                'description': user.get('description', ''),
+                "fullname": user.get("fullname", ""),
+                "username": user.get("username", ""),
+                "userId": user.get("userId", ""),
+                "isPencacah": user.get("isPencacah", False),
+                "description": user.get("description", ""),
             }
-            if user.get('isPencacah', False):
+            if user.get("isPencacah", False):
                 pencacah_list.append(entry)
             else:
                 pengawas_list.append(entry)
@@ -258,6 +285,7 @@ async def get_user_lists_via_api(
 
 
 # ========== CLICK BUTTONS ==========
+
 
 async def click_filter_data(page: Page):
     """Klik tombol 'Filter Data' via JS."""
@@ -297,11 +325,12 @@ async def click_reset(page: Page):
 
 # ========== TOTAL ENTRIES ==========
 
+
 async def get_total_entries(page: Page) -> int:
     """Baca jumlah total entries dari 'Showing X to Y of Z entries'."""
     try:
         info_text = await page.locator("div#assignmentDatatable_info").inner_text()
-        match = re.search(r'of\s+([\d,]+)\s+entries', info_text)
+        match = re.search(r"of\s+([\d,]+)\s+entries", info_text)
         if match:
             return int(match.group(1).replace(",", ""))
     except:
@@ -310,6 +339,7 @@ async def get_total_entries(page: Page) -> int:
 
 
 # ========== MAIN ITERATION LOOP ==========
+
 
 async def iterate_filters(
     page: Page,
@@ -338,9 +368,9 @@ async def iterate_filters(
 
     # FASE B: Iterasi per pengawas
     for idx, pengawas in enumerate(pengawas_list):
-        pg_username = pengawas['username']
-        pg_fullname = pengawas['fullname']
-        print(f"\n🔄 [{idx+1}/{len(pengawas_list)}] Pengawas: {pg_fullname} (@{pg_username})")
+        pg_username = pengawas["username"]
+        pg_fullname = pengawas["fullname"]
+        print(f"\n🔄 [{idx + 1}/{len(pengawas_list)}] Pengawas: {pg_fullname} (@{pg_username})")
 
         # Buka sidebar, clear pengawas lama, select pengawas baru
         await open_filter_sidebar(page)
@@ -360,9 +390,9 @@ async def iterate_filters(
                     # Select pencacah
                     await open_filter_sidebar(page)
                     await clear_pencacah(page)
-                    await select_pencacah(page, pc['username'])
+                    await select_pencacah(page, pc["username"])
                     await click_filter_data(page)
-                    yield (pg_username, pc['username'])
+                    yield (pg_username, pc["username"])
 
         else:
             # rotation="pengawas" — cek apakah perlu sub-loop
@@ -372,19 +402,19 @@ async def iterate_filters(
             if total <= 1000:
                 yield (pg_username, None)
             else:
-                print(f"   ⚠️ Lebih dari 1000 entries! Sub-loop per pencacah...")
+                print("   ⚠️ Lebih dari 1000 entries! Sub-loop per pencacah...")
                 pencacah_list = await _get_pencacah_for_pengawas(page, pengawas)
 
                 if not pencacah_list:
-                    print(f"   ⚠️ Tidak ada pencacah! Yield apa adanya")
+                    print("   ⚠️ Tidak ada pencacah! Yield apa adanya")
                     yield (pg_username, None)
                 else:
                     for pc in pencacah_list:
                         await open_filter_sidebar(page)
                         await clear_pencacah(page)
-                        await select_pencacah(page, pc['username'])
+                        await select_pencacah(page, pc["username"])
                         await click_filter_data(page)
-                        yield (pg_username, pc['username'])
+                        yield (pg_username, pc["username"])
 
 
 async def _get_pencacah_for_pengawas(page: Page, pengawas: dict) -> list[dict]:
@@ -395,28 +425,30 @@ async def _get_pencacah_for_pengawas(page: Page, pengawas: dict) -> list[dict]:
     captured: list[dict] = []
 
     async def on_response(response: Response):
-        if 'survey-period-role-users' in response.url and response.status == 200:
+        if "survey-period-role-users" in response.url and response.status == 200:
             try:
                 body = await response.json()
-                if body.get('success'):
-                    for user in body.get('data', []):
-                        if user.get('isPencacah', False):
-                            captured.append({
-                                'fullname': user.get('fullname', ''),
-                                'username': user.get('username', ''),
-                            })
+                if body.get("success"):
+                    for user in body.get("data", []):
+                        if user.get("isPencacah", False):
+                            captured.append(
+                                {
+                                    "fullname": user.get("fullname", ""),
+                                    "username": user.get("username", ""),
+                                }
+                            )
             except:
                 pass
 
-    page.on('response', on_response)
+    page.on("response", on_response)
     try:
         # Re-select pengawas untuk trigger API pencacah
         await open_filter_sidebar(page)
         await clear_pengawas(page)
-        await select_pengawas(page, pengawas['username'])
+        await select_pengawas(page, pengawas["username"])
         await asyncio.sleep(3)
     finally:
-        page.remove_listener('response', on_response)
+        page.remove_listener("response", on_response)
 
     print(f"   📋 Pencacah untuk @{pengawas['username']}: {len(captured)} orang")
     return captured

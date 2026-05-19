@@ -50,20 +50,20 @@
 </template>
 
 <script setup lang="ts">
-import VChart from 'vue-echarts'
-import { getChartOption, formatNumber } from '../../utils/chartOptions'
-import VizMapLibre from './VizMapLibre.vue'
+import VChart from "vue-echarts";
+import { formatNumber, getChartOption } from "../../utils/chartOptions";
+import VizMapLibre from "./VizMapLibre.vue";
 
 const props = defineProps<{
-  viz: any
-  data: any
-  loading: boolean
-}>()
+	viz: any;
+	data: any;
+	loading: boolean;
+}>();
 
 defineEmits<{
-  (e: 'edit', viz: any): void
-  (e: 'delete', vizId: number): void
-}>()
+	(e: "edit", viz: any): void;
+	(e: "delete", vizId: number): void;
+}>();
 </script>
 
 <style scoped>

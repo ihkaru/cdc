@@ -1,5 +1,5 @@
-from typing import Optional
 from pydantic import BaseModel
+
 
 class SyncRequest(BaseModel):
     survey_config_id: str
@@ -14,20 +14,20 @@ class SyncRequest(BaseModel):
 class SyncResponse(BaseModel):
     status: str
     message: str
-    job_id: Optional[int] = None
-    queue_position: Optional[int] = None
+    job_id: int | None = None
+    queue_position: int | None = None
 
 
 class StatusResponse(BaseModel):
     is_running: bool
     is_vpn_fetching: bool
-    current_survey: Optional[str] = None
-    current_survey_config_id: Optional[str] = None
-    current_job_id: Optional[int] = None
-    started_at: Optional[str] = None
-    last_result: Optional[dict] = None
+    current_survey: str | None = None
+    current_survey_config_id: str | None = None
+    current_job_id: int | None = None
+    started_at: str | None = None
+    last_result: dict | None = None
     queue: list = []
-    progress: Optional[dict] = None
+    progress: dict | None = None
 
 
 class ProbeRequest(BaseModel):
@@ -46,7 +46,7 @@ class LookupRequest(BaseModel):
 class KabupatenLookupRequest(BaseModel):
     sso_username: str
     sso_password: str
-    prov_full_code: str   # e.g. "61"
+    prov_full_code: str  # e.g. "61"
 
 
 class VpnCookieRequest(BaseModel):

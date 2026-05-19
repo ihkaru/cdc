@@ -1,388 +1,395 @@
+import { and, count, desc, eq, lt, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
+import * as XLSX from "xlsx";
 import { db } from "../db";
 import { assignments, labelData } from "../db/schema";
-import { eq, desc, sql, count, and, lt } from "drizzle-orm";
-import * as XLSX from "xlsx";
 
 function extractVariables(dataJson: any): Record<string, any> {
-    if (!dataJson) return {};
-    const dataObj = typeof dataJson === 'string' ? JSON.parse(dataJson) : dataJson;
-    const vars: Record<string, any> = {};
+	if (!dataJson) return {};
+	const dataObj = typeof dataJson === "string" ? JSON.parse(dataJson) : dataJson;
+	const vars: Record<string, any> = {};
 
-    function explore(obj: any, prefix = '', depth = 0) {
-        if (!obj || typeof obj !== 'object' || depth > 5) return;
-        
-        for (const k in obj) {
-            let val = obj[k];
-            const keyName = prefix ? `${prefix}.${k}` : k;
-            
-            if (val === null || val === undefined) continue;
+	function explore(obj: any, prefix = "", depth = 0) {
+		if (!obj || typeof obj !== "object" || depth > 5) return;
 
-            // Handle stringified JSON (common in FASIH 'data' or 'pre_defined_data' fields)
-            if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
-                try {
-                    const parsed = JSON.parse(val);
-                    if (parsed && typeof parsed === 'object') {
-                        explore(parsed, keyName, depth); // Explore inside parsed string content
-                        continue;
-                    }
-                } catch (e) {}
-            }
+		for (const k in obj) {
+			const val = obj[k];
+			const keyName = prefix ? `${prefix}.${k}` : k;
 
-            if (typeof val === 'object' && !Array.isArray(val)) {
-                explore(val, keyName, depth + 1);
-            } else if (Array.isArray(val)) {
-                // FASIH Specialized: 'answers', 'predata', or 'data' arrays
-                if (k === 'answers' || k === 'predata' || k === 'data') {
-                    val.forEach((item: any) => {
-                        if (item && item.dataKey) {
-                            let ans = item.answer;
-                            // Extract URL from photo/media array if present
-                            if (Array.isArray(ans) && ans.length > 0 && ans[0]?.url) {
-                                ans = ans[0].url;
-                            }
-                            vars[item.dataKey] = ans;
-                        }
-                    });
-                }
-            } else {
-                // Scalar values
-                const isUrl = typeof val === 'string' && val.startsWith('http');
-                const isImageKey = /foto|image|img|photo/i.test(k);
-                
-                if (isUrl || isImageKey || depth < 2) {
-                    vars[keyName] = val;
-                }
-            }
-        }
-    }
+			if (val === null || val === undefined) continue;
 
-    explore(dataObj);
-    return vars;
+			// Handle stringified JSON (common in FASIH 'data' or 'pre_defined_data' fields)
+			if (typeof val === "string" && (val.startsWith("{") || val.startsWith("["))) {
+				try {
+					const parsed = JSON.parse(val);
+					if (parsed && typeof parsed === "object") {
+						explore(parsed, keyName, depth); // Explore inside parsed string content
+						continue;
+					}
+				} catch (e) {}
+			}
+
+			if (typeof val === "object" && !Array.isArray(val)) {
+				explore(val, keyName, depth + 1);
+			} else if (Array.isArray(val)) {
+				// FASIH Specialized: 'answers', 'predata', or 'data' arrays
+				if (k === "answers" || k === "predata" || k === "data") {
+					val.forEach((item: any) => {
+						if (item && item.dataKey) {
+							let ans = item.answer;
+							// Extract URL from photo/media array if present
+							if (Array.isArray(ans) && ans.length > 0 && ans[0]?.url) {
+								ans = ans[0].url;
+							}
+							vars[item.dataKey] = ans;
+						}
+					});
+				}
+			} else {
+				// Scalar values
+				const isUrl = typeof val === "string" && val.startsWith("http");
+				const isImageKey = /foto|image|img|photo/i.test(k);
+
+				if (isUrl || isImageKey || depth < 2) {
+					vars[keyName] = val;
+				}
+			}
+		}
+	}
+
+	explore(dataObj);
+	return vars;
 }
 
 import { requireAuth } from "../middleware/auth";
 
 export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
-    .use(requireAuth)
-    // Get assignments for a survey (paginated — supports both offset and cursor)
-    .get(
-        "/:id/assignments",
-        async ({ params, query: queryParams }) => {
-            const limit = Math.min(Number(queryParams.limit) || 50, 200);
-            const cursor = queryParams.cursor as string | undefined;
-            const q = queryParams.q as string | undefined;
+	.use(requireAuth)
+	// Get assignments for a survey (paginated — supports both offset and cursor)
+	.get("/:id/assignments", async ({ params, query: queryParams }) => {
+		const limit = Math.min(Number(queryParams.limit) || 50, 200);
+		const cursor = queryParams.cursor as string | undefined;
+		const q = queryParams.q as string | undefined;
 
-            // Build base WHERE clause
-            let baseWhere = eq(assignments.surveyConfigId, params.id);
-            if (q) {
-                const searchStr = `%${q}%`;
-                baseWhere = and(
-                    baseWhere,
-                    sql`(${assignments.codeIdentity} ILIKE ${searchStr} OR 
+		// Build base WHERE clause
+		let baseWhere = eq(assignments.surveyConfigId, params.id);
+		if (q) {
+			const searchStr = `%${q}%`;
+			baseWhere = and(
+				baseWhere,
+				sql`(${assignments.codeIdentity} ILIKE ${searchStr} OR 
                          ${assignments.currentUserUsername} ILIKE ${searchStr} OR 
                          ${assignments.assignmentStatusAlias} ILIKE ${searchStr} OR 
                          ${assignments.dataJson}::text ILIKE ${searchStr} OR 
                          ${assignments.flatData}::text ILIKE ${searchStr} OR 
-                         ${labelData.data}::text ILIKE ${searchStr})`
-                )!;
-            }
+                         ${labelData.data}::text ILIKE ${searchStr})`,
+			)!;
+		}
 
-            // Fetch pagination parameters
-            const page = Number(queryParams.page) || 1;
-            const offset = (page - 1) * limit;
+		// Fetch pagination parameters
+		const page = Number(queryParams.page) || 1;
+		const offset = (page - 1) * limit;
 
-            // Cursor-based pagination: use dateSynced + id as composite cursor
-            let whereClause = baseWhere;
-            if (cursor) {
-                const [cursorDate, cursorId] = cursor.split("|");
-                if (cursorDate && cursorId) {
-                    whereClause = and(
-                        baseWhere,
-                        sql`(${assignments.dateSynced}, ${assignments.id}) < (${cursorDate}::timestamptz, ${cursorId})`
-                    )!;
-                }
-            }
+		// Cursor-based pagination: use dateSynced + id as composite cursor
+		let whereClause = baseWhere;
+		if (cursor) {
+			const [cursorDate, cursorId] = cursor.split("|");
+			if (cursorDate && cursorId) {
+				whereClause = and(
+					baseWhere,
+					sql`(${assignments.dateSynced}, ${assignments.id}) < (${cursorDate}::timestamptz, ${cursorId})`,
+				)!;
+			}
+		}
 
-            const rows = await db
-                .select({
-                    id: assignments.id,
-                    surveyConfigId: assignments.surveyConfigId,
-                    codeIdentity: assignments.codeIdentity,
-                    surveyPeriodId: assignments.surveyPeriodId,
-                    assignmentStatusAlias: assignments.assignmentStatusAlias,
-                    currentUserUsername: assignments.currentUserUsername,
-                    dataJson: assignments.dataJson,
-                    flatData: assignments.flatData,
-                    dateModifiedRemote: assignments.dateModifiedRemote,
-                    dateSynced: assignments.dateSynced,
-                    syncedToApi: assignments.syncedToApi,
-                    localImageMirrored: assignments.localImageMirrored,
-                    localImagePaths: assignments.localImagePaths,
-                    labelData: labelData.data,
-                })
-                .from(assignments)
-                .leftJoin(
-                    labelData,
-                    and(
-                        eq(assignments.surveyConfigId, labelData.surveyConfigId),
-                        eq(assignments.codeIdentity, labelData.codeIdentity)
-                    )
-                )
-                .where(whereClause)
-                .orderBy(desc(assignments.dateSynced), desc(assignments.id))
-                .limit(limit + 1)
-                .offset(!cursor && offset > 0 ? offset : 0);
+		const rows = await db
+			.select({
+				id: assignments.id,
+				surveyConfigId: assignments.surveyConfigId,
+				codeIdentity: assignments.codeIdentity,
+				surveyPeriodId: assignments.surveyPeriodId,
+				assignmentStatusAlias: assignments.assignmentStatusAlias,
+				currentUserUsername: assignments.currentUserUsername,
+				dataJson: assignments.dataJson,
+				flatData: assignments.flatData,
+				dateModifiedRemote: assignments.dateModifiedRemote,
+				dateSynced: assignments.dateSynced,
+				syncedToApi: assignments.syncedToApi,
+				localImageMirrored: assignments.localImageMirrored,
+				localImagePaths: assignments.localImagePaths,
+				labelData: labelData.data,
+			})
+			.from(assignments)
+			.leftJoin(
+				labelData,
+				and(
+					eq(assignments.surveyConfigId, labelData.surveyConfigId),
+					eq(assignments.codeIdentity, labelData.codeIdentity),
+				),
+			)
+			.where(whereClause)
+			.orderBy(desc(assignments.dateSynced), desc(assignments.id))
+			.limit(limit + 1)
+			.offset(!cursor && offset > 0 ? offset : 0);
 
-            const hasMore = rows.length > limit;
-            const records = rows.slice(0, limit).map(r => {
-                const deep = extractVariables(r.dataJson);
-                return {
-                    ...r,
-                    flatData: { ...deep, ...(r.flatData as object || {}) },
-                    dataJson: undefined // Hide bulky raw json from UI
-                };
-            });
+		const hasMore = rows.length > limit;
+		const records = rows.slice(0, limit).map((r) => {
+			const deep = extractVariables(r.dataJson);
+			return {
+				...r,
+				flatData: { ...deep, ...((r.flatData as object) || {}) },
+				dataJson: undefined, // Hide bulky raw json from UI
+			};
+		});
 
-            // Build next cursor from last row
-            let nextCursor: string | null = null;
-            if (hasMore && records.length > 0) {
-                const lastRow = rows[limit - 1]!;
-                nextCursor = `${lastRow.dateSynced ? new Date(lastRow.dateSynced).toISOString() : ""}|${lastRow.id}`;
-            }
+		// Build next cursor from last row
+		let nextCursor: string | null = null;
+		if (hasMore && records.length > 0) {
+			const lastRow = rows[limit - 1]!;
+			nextCursor = `${lastRow.dateSynced ? new Date(lastRow.dateSynced).toISOString() : ""}|${lastRow.id}`;
+		}
 
-            const countQuery = db
-                .select({ count: sql`count(*)::int` })
-                .from(assignments);
+		const countQuery = db.select({ count: sql`count(*)::int` }).from(assignments);
 
-            if (q) {
-                countQuery.leftJoin(
-                    labelData,
-                    and(
-                        eq(assignments.surveyConfigId, labelData.surveyConfigId),
-                        eq(assignments.codeIdentity, labelData.codeIdentity)
-                    )
-                );
-            }
+		if (q) {
+			countQuery.leftJoin(
+				labelData,
+				and(
+					eq(assignments.surveyConfigId, labelData.surveyConfigId),
+					eq(assignments.codeIdentity, labelData.codeIdentity),
+				),
+			);
+		}
 
-            const [countResult] = await countQuery.where(baseWhere);
-            const total = Number(countResult?.count || 0);
+		const [countResult] = await countQuery.where(baseWhere);
+		const total = Number(countResult?.count || 0);
 
-            return {
-                data: records,
-                pagination: {
-                    page,
-                    limit,
-                    total: total,
-                    totalPages: Math.ceil(total / limit),
-                    hasMore,
-                    nextCursor,
-                },
-            };
-        }
-    )
+		return {
+			data: records,
+			pagination: {
+				page,
+				limit,
+				total: total,
+				totalPages: Math.ceil(total / limit),
+				hasMore,
+				nextCursor,
+			},
+		};
+	})
 
-    // Export assignments to Excel
-    .get(
-        "/:id/assignments/export",
-        async ({ params, query, request, set }) => {
-            const q = query.q as string | undefined;
+	// Export assignments to Excel
+	.get("/:id/assignments/export", async ({ params, query, request, set }) => {
+		const q = query.q as string | undefined;
 
-            // Resolve the public base URL for vault image links in the exported file.
-            // Priority: PUBLIC_BASE_URL env var → request Origin header → relative path
-            const baseUrl = process.env.PUBLIC_BASE_URL?.replace(/\/$/, '')
-                ?? (request.headers.get('origin') || '');
+		// Resolve the public base URL for vault image links in the exported file.
+		// Priority: PUBLIC_BASE_URL env var → request Origin header → relative path
+		const baseUrl =
+			process.env.PUBLIC_BASE_URL?.replace(/\/$/, "") ?? (request.headers.get("origin") || "");
 
-            // 1. Build base WHERE clause
-            let baseWhere = eq(assignments.surveyConfigId, params.id);
-            if (q) {
-                const searchStr = `%${q}%`;
-                baseWhere = and(
-                    baseWhere,
-                    sql`(${assignments.codeIdentity} ILIKE ${searchStr} OR 
+		// 1. Build base WHERE clause
+		let baseWhere = eq(assignments.surveyConfigId, params.id);
+		if (q) {
+			const searchStr = `%${q}%`;
+			baseWhere = and(
+				baseWhere,
+				sql`(${assignments.codeIdentity} ILIKE ${searchStr} OR 
                          ${assignments.currentUserUsername} ILIKE ${searchStr} OR 
                          ${assignments.assignmentStatusAlias} ILIKE ${searchStr} OR 
                          ${assignments.dataJson}::text ILIKE ${searchStr} OR 
                          ${assignments.flatData}::text ILIKE ${searchStr} OR 
-                         ${labelData.data}::text ILIKE ${searchStr})`
-                )!;
-            }
+                         ${labelData.data}::text ILIKE ${searchStr})`,
+			)!;
+		}
 
-            // 2. Fetch all assignments for this survey (no limit for export)
-            const rows = await db
-                .select({
-                    id: assignments.id,
-                    codeIdentity: assignments.codeIdentity,
-                    surveyPeriodId: assignments.surveyPeriodId,
-                    assignmentStatusAlias: assignments.assignmentStatusAlias,
-                    currentUserUsername: assignments.currentUserUsername,
-                    flatData: assignments.flatData,
-                    dataJson: assignments.dataJson,
-                    dateModifiedRemote: assignments.dateModifiedRemote,
-                    dateSynced: assignments.dateSynced,
-                    labelData: labelData.data,
-                    localImagePaths: assignments.localImagePaths,
-                })
-                .from(assignments)
-                .leftJoin(
-                    labelData,
-                    and(
-                        eq(assignments.surveyConfigId, labelData.surveyConfigId),
-                        eq(assignments.codeIdentity, labelData.codeIdentity)
-                    )
-                )
-                .where(baseWhere)
-                .orderBy(desc(assignments.dateSynced));
+		// 2. Fetch all assignments for this survey (no limit for export)
+		const rows = await db
+			.select({
+				id: assignments.id,
+				codeIdentity: assignments.codeIdentity,
+				surveyPeriodId: assignments.surveyPeriodId,
+				assignmentStatusAlias: assignments.assignmentStatusAlias,
+				currentUserUsername: assignments.currentUserUsername,
+				flatData: assignments.flatData,
+				dataJson: assignments.dataJson,
+				dateModifiedRemote: assignments.dateModifiedRemote,
+				dateSynced: assignments.dateSynced,
+				labelData: labelData.data,
+				localImagePaths: assignments.localImagePaths,
+			})
+			.from(assignments)
+			.leftJoin(
+				labelData,
+				and(
+					eq(assignments.surveyConfigId, labelData.surveyConfigId),
+					eq(assignments.codeIdentity, labelData.codeIdentity),
+				),
+			)
+			.where(baseWhere)
+			.orderBy(desc(assignments.dateSynced));
 
-            if (!rows.length) {
-                set.status = 404;
-                return { error: "No data to export" };
-            }
+		if (!rows.length) {
+			set.status = 404;
+			return { error: "No data to export" };
+		}
 
-            // 3. Dynamic Header Discovery
-            const dynamicKeys = new Set<string>();
-            const labelKeys = new Set<string>();
-            
-            rows.forEach(row => {
-                const deep = extractVariables(row.dataJson);
-                const flat = { ...deep, ...(row.flatData as object || {}) };
-                if (flat && typeof flat === 'object') {
-                    Object.keys(flat).forEach(k => dynamicKeys.add(k));
-                }
-                if (row.labelData && typeof row.labelData === 'object') {
-                    Object.keys(row.labelData).forEach(k => labelKeys.add(k));
-                }
-            });
+		// 3. Dynamic Header Discovery
+		const dynamicKeys = new Set<string>();
+		const labelKeys = new Set<string>();
 
-            const sortedDynamicKeys = Array.from(dynamicKeys).sort();
-            const sortedLabelKeys = Array.from(labelKeys).sort();
+		rows.forEach((row) => {
+			const deep = extractVariables(row.dataJson);
+			const flat = { ...deep, ...((row.flatData as object) || {}) };
+			if (flat && typeof flat === "object") {
+				Object.keys(flat).forEach((k) => dynamicKeys.add(k));
+			}
+			if (row.labelData && typeof row.labelData === "object") {
+				Object.keys(row.labelData).forEach((k) => labelKeys.add(k));
+			}
+		});
 
-            // 4. Construct Headers
-            const baseHeaders = [
-                "ID", "Code Identity", "Status", "User", "Date Modified (Remote)", "Date Synced"
-            ];
-            const headers = [...baseHeaders, ...sortedDynamicKeys, ...sortedLabelKeys.map(k => `[Label] ${k}`)];
+		const sortedDynamicKeys = Array.from(dynamicKeys).sort();
+		const sortedLabelKeys = Array.from(labelKeys).sort();
 
-            // 5. Build Data Rows
-            const wsData = [headers];
-            
-            rows.forEach(row => {
-                const deep = extractVariables(row.dataJson);
-                const flat = { ...deep, ...(row.flatData as object || {}) } as Record<string, any>;
-                const labels = (row.labelData || {}) as Record<string, any>;
-                // localImagePaths: { columnName -> "survey-images/{id}/{col}.jpg" }
-                const vaultPaths = (row.localImagePaths || {}) as Record<string, string>;
+		// 4. Construct Headers
+		const baseHeaders = [
+			"ID",
+			"Code Identity",
+			"Status",
+			"User",
+			"Date Modified (Remote)",
+			"Date Synced",
+		];
+		const headers = [
+			...baseHeaders,
+			...sortedDynamicKeys,
+			...sortedLabelKeys.map((k) => `[Label] ${k}`),
+		];
 
-                const rowValues = [
-                    row.id,
-                    row.codeIdentity,
-                    row.assignmentStatusAlias,
-                    row.currentUserUsername,
-                    row.dateModifiedRemote,
-                    row.dateSynced ? new Date(row.dateSynced).toLocaleString('id-ID') : "",
-                    ...sortedDynamicKeys.map(k => {
-                        // Replace image column value with permanent vault URL if available
-                        if (vaultPaths[k]) {
-                            return `${baseUrl}/storage/view/${vaultPaths[k]}`;
-                        }
-                        const val = flat[k];
-                        return typeof val === 'object' ? JSON.stringify(val) : (val ?? "");
-                    }),
-                    ...sortedLabelKeys.map(k => {
-                        const val = labels[k];
-                        return typeof val === 'object' ? JSON.stringify(val) : (val ?? "");
-                    })
-                ];
-                wsData.push(rowValues);
-            });
+		// 5. Build Data Rows
+		const wsData = [headers];
 
-            // 6. Generate Excel
-            const wb = XLSX.utils.book_new();
-            const ws = XLSX.utils.aoa_to_sheet(wsData);
+		rows.forEach((row) => {
+			const deep = extractVariables(row.dataJson);
+			const flat = { ...deep, ...((row.flatData as object) || {}) } as Record<string, any>;
+			const labels = (row.labelData || {}) as Record<string, any>;
+			// localImagePaths: { columnName -> "survey-images/{id}/{col}.jpg" }
+			const vaultPaths = (row.localImagePaths || {}) as Record<string, string>;
 
-            // Auto-width adjustment (basic)
-            ws["!cols"] = headers.map(h => ({ wch: Math.max(h.length, 12) }));
+			const rowValues = [
+				row.id,
+				row.codeIdentity,
+				row.assignmentStatusAlias,
+				row.currentUserUsername,
+				row.dateModifiedRemote,
+				row.dateSynced ? new Date(row.dateSynced).toLocaleString("id-ID") : "",
+				...sortedDynamicKeys.map((k) => {
+					// Replace image column value with permanent vault URL if available
+					if (vaultPaths[k]) {
+						return `${baseUrl}/storage/view/${vaultPaths[k]}`;
+					}
+					const val = flat[k];
+					return typeof val === "object" ? JSON.stringify(val) : (val ?? "");
+				}),
+				...sortedLabelKeys.map((k) => {
+					const val = labels[k];
+					return typeof val === "object" ? JSON.stringify(val) : (val ?? "");
+				}),
+			];
+			wsData.push(rowValues);
+		});
 
-            XLSX.utils.book_append_sheet(wb, ws, "Assignments");
-            const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+		// 6. Generate Excel
+		const wb = XLSX.utils.book_new();
+		const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-            const filename = `export_survey_${params.id.substring(0, 8)}_${new Date().toISOString().split('T')[0]}.xlsx`;
+		// Auto-width adjustment (basic)
+		ws["!cols"] = headers.map((h) => ({ wch: Math.max(h.length, 12) }));
 
-            return new Response(buffer, {
-                headers: {
-                    "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    "Content-Disposition": `attachment; filename="${filename}"`,
-                },
-            });
-        }
-    )
+		XLSX.utils.book_append_sheet(wb, ws, "Assignments");
+		const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
-    // Get stats for a survey
-    .get("/:id/stats", async ({ params, set }) => {
-        try {
-            const result = await db
-                .select({
-                    total: count(),
-                    open: count(
-                        sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%open%' THEN 1 END`
-                    ),
-                    submitted: count(
-                        sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%submitted%' THEN 1 END`
-                    ),
-                    rejected: count(
-                        sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%rejected%' THEN 1 END`
-                    ),
-                })
-                .from(assignments)
-                .where(eq(assignments.surveyConfigId, params.id));
+		const filename = `export_survey_${params.id.substring(0, 8)}_${new Date().toISOString().split("T")[0]}.xlsx`;
 
-            const stats = result[0] || { total: 0, open: 0, submitted: 0, rejected: 0 };
-            
-            // Ensure all values are numbers (DB might return strings for count)
-            return {
-                total: Number(stats.total || 0),
-                open: Number(stats.open || 0),
-                submitted: Number(stats.submitted || 0),
-                rejected: Number(stats.rejected || 0)
-            };
-        } catch (error) {
-            console.error(`Error fetching stats for survey ${params.id}:`, error);
-            // Fallback to empty stats instead of 500
-            return { total: 0, open: 0, submitted: 0, rejected: 0 };
-        }
-    })
+		return new Response(buffer, {
+			headers: {
+				"Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+				"Content-Disposition": `attachment; filename="${filename}"`,
+			},
+		});
+	})
 
-    // Get workload per user for a survey
-    .get("/:id/workload", async ({ params }) => {
-        try {
-            const rows = await db
-                .select({
-                    username: assignments.currentUserUsername,
-                    total: count(),
-                    open: count(sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%open%' OR ${assignments.assignmentStatusAlias} ILIKE '%draft%' THEN 1 END`),
-                    rejected: count(sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%rejected%' OR ${assignments.assignmentStatusAlias} ILIKE '%error%' THEN 1 END`),
-                })
-                .from(assignments)
-                .where(eq(assignments.surveyConfigId, params.id))
-                .groupBy(assignments.currentUserUsername);
+	// Get stats for a survey
+	.get("/:id/stats", async ({ params, set }) => {
+		try {
+			const result = await db
+				.select({
+					total: count(),
+					open: count(
+						sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%open%' THEN 1 END`,
+					),
+					submitted: count(
+						sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%submitted%' THEN 1 END`,
+					),
+					rejected: count(
+						sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%rejected%' THEN 1 END`,
+					),
+				})
+				.from(assignments)
+				.where(eq(assignments.surveyConfigId, params.id));
 
-            const result = rows.map(r => {
-                const pending = Number(r.open || 0) + Number(r.rejected || 0);
-                const totalStr = Number(r.total || 0);
-                const openStr = Number(r.open || 0);
-                return {
-                    username: r.username || 'Unassigned',
-                    pending,
-                    total: totalStr,
-                    open: openStr,
-                    rejected: Number(r.rejected || 0),
-                    completed: totalStr - openStr,
-                };
-            }).sort((a, b) => b.pending - a.pending);
+			const stats = result[0] || { total: 0, open: 0, submitted: 0, rejected: 0 };
 
-            return result;
-        } catch (error) {
-            console.error(`Error fetching workload for survey ${params.id}:`, error);
-            return [];
-        }
-    });
+			// Ensure all values are numbers (DB might return strings for count)
+			return {
+				total: Number(stats.total || 0),
+				open: Number(stats.open || 0),
+				submitted: Number(stats.submitted || 0),
+				rejected: Number(stats.rejected || 0),
+			};
+		} catch (error) {
+			console.error(`Error fetching stats for survey ${params.id}:`, error);
+			// Fallback to empty stats instead of 500
+			return { total: 0, open: 0, submitted: 0, rejected: 0 };
+		}
+	})
+
+	// Get workload per user for a survey
+	.get("/:id/workload", async ({ params }) => {
+		try {
+			const rows = await db
+				.select({
+					username: assignments.currentUserUsername,
+					total: count(),
+					open: count(
+						sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%open%' OR ${assignments.assignmentStatusAlias} ILIKE '%draft%' THEN 1 END`,
+					),
+					rejected: count(
+						sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%rejected%' OR ${assignments.assignmentStatusAlias} ILIKE '%error%' THEN 1 END`,
+					),
+				})
+				.from(assignments)
+				.where(eq(assignments.surveyConfigId, params.id))
+				.groupBy(assignments.currentUserUsername);
+
+			const result = rows
+				.map((r) => {
+					const pending = Number(r.open || 0) + Number(r.rejected || 0);
+					const totalStr = Number(r.total || 0);
+					const openStr = Number(r.open || 0);
+					return {
+						username: r.username || "Unassigned",
+						pending,
+						total: totalStr,
+						open: openStr,
+						rejected: Number(r.rejected || 0),
+						completed: totalStr - openStr,
+					};
+				})
+				.sort((a, b) => b.pending - a.pending);
+
+			return result;
+		} catch (error) {
+			console.error(`Error fetching workload for survey ${params.id}:`, error);
+			return [];
+		}
+	});

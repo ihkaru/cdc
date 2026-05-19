@@ -1,7 +1,9 @@
 import os
+
 from playwright.async_api import Page
 
 TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
+
 
 class LoginPage:
     def __init__(self, page: Page):

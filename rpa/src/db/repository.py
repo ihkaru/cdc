@@ -1,10 +1,10 @@
 """
 Repository — operasi CRUD dan upsert untuk Assignment
 """
+
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from .models import Assignment, SyncLog
 
 class SyncStats:
     """Counter statistik per-cycle"""
+
     def __init__(self):
         self.total_fetched = 0
         self.total_new = 0
@@ -37,29 +38,31 @@ def extract_flat_data(data: dict) -> dict:
     flat = {}
     for k, v in data.items():
         if not isinstance(v, (dict, list)):
-            if isinstance(v, str) and (v.startswith('{') or v.startswith('[')):
+            if isinstance(v, str) and (v.startswith("{") or v.startswith("[")):
                 continue
             flat[k] = v
-            
+
     pre_str = data.get("pre_defined_data")
-    if pre_str and isinstance(pre_str, str) and pre_str.startswith('{'):
+    if pre_str and isinstance(pre_str, str) and pre_str.startswith("{"):
         try:
             for item in json.loads(pre_str).get("predata", []):
                 if isinstance(item, dict) and "dataKey" in item:
                     flat[item["dataKey"]] = item.get("answer")
         except:
             pass
-            
+
     content = data.get("content")
     if content:
-        if isinstance(content, str) and content.startswith('{'):
-            try: content = json.loads(content)
-            except: content = {}
+        if isinstance(content, str) and content.startswith("{"):
+            try:
+                content = json.loads(content)
+            except:
+                content = {}
         if isinstance(content, dict):
             for item in content.get("data", []):
                 if isinstance(item, dict) and "dataKey" in item:
                     flat[item["dataKey"]] = item.get("answer")
-                    
+
     region = data.get("region_metadata")
     if isinstance(region, dict):
         for k, v in region.items():
@@ -79,6 +82,7 @@ def normalize_bps_date(date_str: any) -> str:
     if s.isdigit() and len(s) == 14:
         return s
     from datetime import datetime, timedelta
+
     try:
         # Format: 'Dec 9, 2025, 11:07:12 AM'
         dt = datetime.strptime(s, "%b %d, %Y, %I:%M:%S %p")
@@ -87,13 +91,14 @@ def normalize_bps_date(date_str: any) -> str:
         return dt_utc.strftime("%Y%m%d%H%M%S")
     except:
         import re
-        return re.sub(r'\D', '', s)[:14]
+
+        return re.sub(r"\D", "", s)[:14]
 
 
-def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] = None, sync_log_id: int = None) -> str:
+def upsert_assignment(session: Session, data: dict, stats: SyncStats | None = None, sync_log_id: int = None) -> str:
     """
     Upsert satu assignment ke database.
-    
+
     Returns:
         "new" | "updated" | "skipped"
     """
@@ -108,15 +113,16 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
     try:
         db_uuid = uuid.UUID(str(record_id))
     except (ValueError, TypeError):
-        if stats: stats.total_failed += 1
+        if stats:
+            stats.total_failed += 1
         return "failed"
 
     # Hubungi Date Modified dari berbagai kemungkinan
     date_modified_raw = (
-        data.get("date_modified") or 
-        data.get("dateModifiedRemote") or 
-        data.get("assignment", {}).get("dateModifiedRemote") or
-        ""
+        data.get("date_modified")
+        or data.get("dateModifiedRemote")
+        or data.get("assignment", {}).get("dateModifiedRemote")
+        or ""
     )
     date_modified = normalize_bps_date(date_modified_raw)
     data_json_str = json.dumps(data, ensure_ascii=False)
@@ -126,34 +132,28 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
 
     if existing is None:
         # INSERT baru
-        
+
         # Helper to safely parse UUID or return None
         def safe_uuid(val):
-            if not val: return None
-            try: return uuid.UUID(str(val))
-            except: return None
+            if not val:
+                return None
+            try:
+                return uuid.UUID(str(val))
+            except:
+                return None
 
         assignment = Assignment(
             id=db_uuid,
             survey_config_id=safe_uuid(data.get("_survey_config_id")),
-            code_identity=(
-                data.get("code_identity") or 
-                data.get("assignment", {}).get("codeIdentity") or 
-                ""
-            ),
+            code_identity=(data.get("code_identity") or data.get("assignment", {}).get("codeIdentity") or ""),
             survey_period_id=safe_uuid(
-                data.get("survey_period_id") or 
-                data.get("assignment", {}).get("surveyPeriodId")
+                data.get("survey_period_id") or data.get("assignment", {}).get("surveyPeriodId")
             ),
             assignment_status_alias=(
-                data.get("assignment_status_alias") or 
-                data.get("assignment", {}).get("assignmentStatusAlias") or 
-                ""
+                data.get("assignment_status_alias") or data.get("assignment", {}).get("assignmentStatusAlias") or ""
             ),
             current_user_username=(
-                data.get("current_user_username") or 
-                data.get("assignment", {}).get("currentUserUsername") or 
-                ""
+                data.get("current_user_username") or data.get("assignment", {}).get("currentUserUsername") or ""
             ),
             data_json=data_json_str,
             flat_data=flat_data,
@@ -169,24 +169,22 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
     elif existing.date_modified_remote != date_modified:
         # UPDATE — data berubah dari remote (status/tanggal berubah)
         existing.code_identity = (
-            data.get("code_identity") or 
-            data.get("assignment", {}).get("codeIdentity") or 
-            existing.code_identity
+            data.get("code_identity") or data.get("assignment", {}).get("codeIdentity") or existing.code_identity
         )
         existing.survey_period_id = (
-            data.get("survey_period_id") or 
-            data.get("assignment", {}).get("surveyPeriodId") or 
-            existing.survey_period_id
+            data.get("survey_period_id")
+            or data.get("assignment", {}).get("surveyPeriodId")
+            or existing.survey_period_id
         )
         existing.assignment_status_alias = (
-            data.get("assignment_status_alias") or 
-            data.get("assignment", {}).get("assignmentStatusAlias") or 
-            existing.assignment_status_alias
+            data.get("assignment_status_alias")
+            or data.get("assignment", {}).get("assignmentStatusAlias")
+            or existing.assignment_status_alias
         )
         existing.current_user_username = (
-            data.get("current_user_username") or 
-            data.get("assignment", {}).get("currentUserUsername") or 
-            existing.current_user_username
+            data.get("current_user_username")
+            or data.get("assignment", {}).get("currentUserUsername")
+            or existing.current_user_username
         )
         existing.sync_log_id = sync_log_id
         existing.data_json = data_json_str
@@ -210,12 +208,7 @@ def upsert_assignment(session: Session, data: dict, stats: Optional[SyncStats] =
 
 def get_unsynced(session: Session, limit: int = 1000) -> list[Assignment]:
     """Ambil assignment yang belum dikirim ke API downstream."""
-    return (
-        session.query(Assignment)
-        .filter(Assignment.synced_to_api == False)
-        .limit(limit)
-        .all()
-    )
+    return session.query(Assignment).filter(Assignment.synced_to_api == False).limit(limit).all()
 
 
 def mark_synced(session: Session, ids: list[str]):
@@ -251,11 +244,7 @@ def get_existing_modifications_by_ids(session: Session, ids: list[str]) -> dict[
     if not uuid_ids:
         return {}
 
-    results = (
-        session.query(Assignment.id, Assignment.date_modified_remote)
-        .filter(Assignment.id.in_(uuid_ids))
-        .all()
-    )
+    results = session.query(Assignment.id, Assignment.date_modified_remote).filter(Assignment.id.in_(uuid_ids)).all()
     return {str(r.id): r.date_modified_remote for r in results}
 
 
@@ -284,19 +273,14 @@ def get_existing_modifications_by_ids_batched(
                 uuid_chunk.append(uuid.UUID(str(cid)))
             except:
                 continue
-        
+
         if not uuid_chunk:
             continue
 
-        rows = (
-            session.query(Assignment.id, Assignment.date_modified_remote)
-            .filter(Assignment.id.in_(uuid_chunk))
-            .all()
-        )
+        rows = session.query(Assignment.id, Assignment.date_modified_remote).filter(Assignment.id.in_(uuid_chunk)).all()
         result.update({str(r.id): r.date_modified_remote for r in rows})
 
     return result
-
 
 
 def log_sync_run(
@@ -320,7 +304,7 @@ def log_sync_run(
         total_images=stats.total_images,
         images_mirrored=stats.images_mirrored,
         notes=notes,
-        timings=timings
+        timings=timings,
     )
     session.add(log)
     session.commit()
@@ -381,6 +365,7 @@ class BatchUpserterBulk:
     Sends ONE SQL statement per batch instead of N ORM calls.
     Benchmark: ~50-200x faster than per-row ORM for large datasets.
     """
+
     active_instance = None  # Class-level reference for signal handling
 
     def __init__(self, session: Session, batch_size: int = 2000, sync_log_id: int = None):
@@ -398,20 +383,24 @@ class BatchUpserterBulk:
 
         self.stats.total_fetched += 1
         date_modified_raw = (
-            row.get("date_modified") or 
-            row.get("dateModifiedRemote") or 
-            row.get("assignment", {}).get("dateModifiedRemote") or
-            ""
+            row.get("date_modified")
+            or row.get("dateModifiedRemote")
+            or row.get("assignment", {}).get("dateModifiedRemote")
+            or ""
         )
         date_modified = normalize_bps_date(date_modified_raw)
-        
+
         db_row = {
             "id": row.get("_id") or row.get("id") or row.get("assignment", {}).get("id"),
             "survey_config_id": row.get("_survey_config_id", ""),
             "code_identity": row.get("code_identity") or row.get("assignment", {}).get("codeIdentity") or "",
             "survey_period_id": row.get("survey_period_id") or row.get("assignment", {}).get("surveyPeriodId") or "",
-            "assignment_status_alias": row.get("assignment_status_alias") or row.get("assignment", {}).get("assignmentStatusAlias") or "",
-            "current_user_username": row.get("current_user_username") or row.get("assignment", {}).get("currentUserUsername") or "",
+            "assignment_status_alias": row.get("assignment_status_alias")
+            or row.get("assignment", {}).get("assignmentStatusAlias")
+            or "",
+            "current_user_username": row.get("current_user_username")
+            or row.get("assignment", {}).get("currentUserUsername")
+            or "",
             "data_json": json.dumps(row, ensure_ascii=False),
             "flat_data": extract_flat_data(row),
             "date_modified_remote": date_modified,
@@ -419,9 +408,9 @@ class BatchUpserterBulk:
             "synced_to_api": False,
             "sync_log_id": self.sync_log_id,
             "local_image_mirrored": False,
-            "local_image_paths": {}
+            "local_image_paths": {},
         }
-        
+
         # PostgreSQL requires explicit UUID objects for bulk insert
         try:
             db_row["id"] = uuid.UUID(str(db_row["id"]))
@@ -444,6 +433,7 @@ class BatchUpserterBulk:
             return
 
         from sqlalchemy.dialects.postgresql import insert as pg_insert
+
         prefix = "🚨 [EMERGENCY FLUSH]" if is_emergency else "💾 [BULK FLUSH]"
 
         try:
@@ -452,10 +442,18 @@ class BatchUpserterBulk:
             update_cols = {
                 col: stmt.excluded[col]
                 for col in [
-                    "code_identity", "survey_period_id", "assignment_status_alias",
-                    "current_user_username", "data_json", "flat_data",
-                    "date_modified_remote", "date_synced", "synced_to_api", "sync_log_id",
-                    "local_image_mirrored", "local_image_paths",
+                    "code_identity",
+                    "survey_period_id",
+                    "assignment_status_alias",
+                    "current_user_username",
+                    "data_json",
+                    "flat_data",
+                    "date_modified_remote",
+                    "date_synced",
+                    "synced_to_api",
+                    "sync_log_id",
+                    "local_image_mirrored",
+                    "local_image_paths",
                 ]
             }
 
@@ -466,7 +464,7 @@ class BatchUpserterBulk:
                     # Always update if it's an emergency flush to ensure latest state is captured,
                     # otherwise only update if remote date changed.
                     (Assignment.date_modified_remote != stmt.excluded.date_modified_remote) or is_emergency
-                )
+                ),
             )
 
             result = self.session.execute(upsert_stmt)
@@ -501,23 +499,23 @@ class BatchUpserterBulk:
         return self.stats
 
 
-
-def get_system_setting(session: Session, key: str) -> Optional[str]:
+def get_system_setting(session: Session, key: str) -> str | None:
     """Ambil nilai dari system_settings."""
     from .models import SystemSettings
+
     setting = session.get(SystemSettings, key)
     return setting.value if setting else None
 
 
 def set_system_setting(session: Session, key: str, value: str):
     """Simpan atau update nilai di system_settings."""
-    from .models import SystemSettings
     from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from .models import SystemSettings
 
     stmt = pg_insert(SystemSettings).values(key=key, value=value)
     upsert_stmt = stmt.on_conflict_do_update(
-        index_elements=["key"],
-        set_={"value": value, "updated_at": datetime.now(timezone.utc)}
+        index_elements=["key"], set_={"value": value, "updated_at": datetime.now(timezone.utc)}
     )
     session.execute(upsert_stmt)
     session.commit()

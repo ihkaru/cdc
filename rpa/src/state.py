@@ -1,12 +1,13 @@
-from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime
+
 
 class SyncProgress:
     """Live progress state untuk satu sync job yang sedang berjalan."""
-    phase: str = ""          # "login", "resolve", "fetch_users", "fetch_assignments", "upsert", "done"
-    phase_label: str = ""    # Human-readable label yang tampil di UI
-    users_total: int = 0     # Jumlah user (pencacah/pengawas) yang perlu diiterasi
-    users_done: int = 0      # Berapa user yang sudah selesai diiterasi
+
+    phase: str = ""  # "login", "resolve", "fetch_users", "fetch_assignments", "upsert", "done"
+    phase_label: str = ""  # Human-readable label yang tampil di UI
+    users_total: int = 0  # Jumlah user (pencacah/pengawas) yang perlu diiterasi
+    users_done: int = 0  # Berapa user yang sudah selesai diiterasi
     assignments_total: int = 0
     assignments_fetched: int = 0
     assignments_new: int = 0
@@ -42,12 +43,13 @@ class SyncState:
     is_running: bool = False
     is_shutting_down: bool = False
     is_vpn_fetching: bool = False
-    current_survey: Optional[str] = None
-    current_survey_config_id: Optional[str] = None
-    current_job_id: Optional[int] = None
-    last_result: Optional[dict] = None
-    started_at: Optional[datetime] = None
+    current_survey: str | None = None
+    current_survey_config_id: str | None = None
+    current_job_id: int | None = None
+    last_result: dict | None = None
+    started_at: datetime | None = None
     queue_count: int = 0
     progress: SyncProgress = SyncProgress()
+
 
 sync_state = SyncState()

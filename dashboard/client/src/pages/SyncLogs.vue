@@ -300,161 +300,177 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
-import { useRoute } from 'vue-router'
-import { useQuasar, copyToClipboard } from 'quasar'
+import { copyToClipboard, useQuasar } from "quasar";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 
-const route = useRoute()
-const $q = useQuasar()
-const logs = ref<any[]>([])
-const loading = ref(true)
-const exporting = ref(false)
-const liveStatus = ref<any>(null)
-const mirroringStatus = ref<any>(null)
-const showSkippedDialog = ref(false)
-let pollTimer: any = null
+const route = useRoute();
+const $q = useQuasar();
+const logs = ref<any[]>([]);
+const loading = ref(true);
+const exporting = ref(false);
+const liveStatus = ref<any>(null);
+const mirroringStatus = ref<any>(null);
+const showSkippedDialog = ref(false);
+let pollTimer: any = null;
 
 const phases = [
-  { key: 'login', icon: 'lock', label: 'Login SSO' },
-  { key: 'resolve', icon: 'search', label: 'Resolve Survey' },
-  { key: 'fetch_users', icon: 'group', label: 'Fetch Users' },
-  { key: 'fetch_assignments', icon: 'download', label: 'Fetch Assignments' },
-  { key: 'upsert', icon: 'save', label: 'Simpan DB' },
-]
+	{ key: "login", icon: "lock", label: "Login SSO" },
+	{ key: "resolve", icon: "search", label: "Resolve Survey" },
+	{ key: "fetch_users", icon: "group", label: "Fetch Users" },
+	{ key: "fetch_assignments", icon: "download", label: "Fetch Assignments" },
+	{ key: "upsert", icon: "save", label: "Simpan DB" },
+];
 
-const phaseOrder = phases.map(p => p.key)
+const phaseOrder = phases.map((p) => p.key);
 
 function getPhaseColor(phaseKey: string) {
-  const current = liveStatus.value?.progress?.phase
-  if (!current) return 'grey-8'
-  const currentIdx = phaseOrder.indexOf(current)
-  const thisIdx = phaseOrder.indexOf(phaseKey)
-  if (thisIdx < currentIdx) return 'positive'
-  if (thisIdx === currentIdx) return 'primary'
-  return 'grey-8'
+	const current = liveStatus.value?.progress?.phase;
+	if (!current) return "grey-8";
+	const currentIdx = phaseOrder.indexOf(current);
+	const thisIdx = phaseOrder.indexOf(phaseKey);
+	if (thisIdx < currentIdx) return "positive";
+	if (thisIdx === currentIdx) return "primary";
+	return "grey-8";
 }
 
 const elapsedLabel = computed(() => {
-  if (!liveStatus.value?.started_at) return ''
-  const start = new Date(liveStatus.value.started_at)
-  const now = new Date()
-  const sec = Math.floor((now.getTime() - start.getTime()) / 1000)
-  if (sec < 60) return `${sec}s`
-  return `${Math.floor(sec / 60)}m ${sec % 60}s`
-})
+	if (!liveStatus.value?.started_at) return "";
+	const start = new Date(liveStatus.value.started_at);
+	const now = new Date();
+	const sec = Math.floor((now.getTime() - start.getTime()) / 1000);
+	if (sec < 60) return `${sec}s`;
+	return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+});
 
 const timingPhases = [
-  { key: 'login', label: 'Login SSO', alias: 'SSO', color: '#3498db' },
-  { key: 'metadata', label: 'Metadata Resolve', alias: 'Meta', color: '#9b59b6' },
-  { key: 'fetch', label: 'API Fetching', alias: 'Fetch', color: '#e67e22' },
-  { key: 'upsert', label: 'Database Save', alias: 'DB', color: '#2ecc71' },
-]
+	{ key: "login", label: "Login SSO", alias: "SSO", color: "#3498db" },
+	{ key: "metadata", label: "Metadata Resolve", alias: "Meta", color: "#9b59b6" },
+	{ key: "fetch", label: "API Fetching", alias: "Fetch", color: "#e67e22" },
+	{ key: "upsert", label: "Database Save", alias: "DB", color: "#2ecc71" },
+];
 
 function getPhaseWidth(log: any, key: string) {
-  if (!log.timings || !log.timings.total) return '0%'
-  const val = log.timings[key] || 0
-  return `${(val / log.timings.total) * 100}%`
+	if (!log.timings || !log.timings.total) return "0%";
+	const val = log.timings[key] || 0;
+	return `${(val / log.timings.total) * 100}%`;
 }
 
 function formatDate(dateStr: string) {
-  if (!dateStr) return '-'
-  const utcDateStr = dateStr.endsWith('Z') ? dateStr : `${dateStr}Z`
-  return new Date(utcDateStr).toLocaleString('id-ID')
+	if (!dateStr) return "-";
+	const utcDateStr = dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`;
+	return new Date(utcDateStr).toLocaleString("id-ID");
 }
 
 function calculateDuration(start: string, end: string) {
-  if (!start) return '-'
-  if (!end) return 'In progress...'
-  const ms = new Date(end).getTime() - new Date(start).getTime()
-  if (ms < 1000) return `${ms}ms`
-  const sec = Math.floor(ms / 1000)
-  if (sec < 60) return `${sec}s`
-  return `${Math.floor(sec / 60)}m ${sec % 60}s`
+	if (!start) return "-";
+	if (!end) return "In progress...";
+	const ms = new Date(end).getTime() - new Date(start).getTime();
+	if (ms < 1000) return `${ms}ms`;
+	const sec = Math.floor(ms / 1000);
+	if (sec < 60) return `${sec}s`;
+	return `${Math.floor(sec / 60)}m ${sec % 60}s`;
 }
 
 function statusIcon(status: string) {
-  return status === 'success' ? 'check_circle' : status === 'running' ? 'sync' : status === 'queued' ? 'hourglass_empty' : 'error'
+	return status === "success"
+		? "check_circle"
+		: status === "running"
+			? "sync"
+			: status === "queued"
+				? "hourglass_empty"
+				: "error";
 }
 
 function statusColor(status: string) {
-  return status === 'success' ? 'positive' : status === 'running' ? 'primary' : status === 'queued' ? 'grey' : 'negative'
+	return status === "success"
+		? "positive"
+		: status === "running"
+			? "primary"
+			: status === "queued"
+				? "grey"
+				: "negative";
 }
 
 // Unified State Fetch: Replaces pollStatus, fetchLogs, fetchMirroring
 async function fetchDashboardState() {
-  try {
-    const res = await fetch(`/api/surveys/${route.params.id}/sync-dashboard-state`)
-    const data = await res.json()
-    
-    // Smooth update to avoid UI flickering
-    liveStatus.value = data.robotStatus
-    mirroringStatus.value = data.mirroring
-    logs.value = data.logs
-  } catch (e) {
-    console.error('Failed to fetch unified dashboard state', e)
-  } finally {
-    loading.value = false
-  }
+	try {
+		const res = await fetch(`/api/surveys/${route.params.id}/sync-dashboard-state`);
+		const data = await res.json();
+
+		// Smooth update to avoid UI flickering
+		liveStatus.value = data.robotStatus;
+		mirroringStatus.value = data.mirroring;
+		logs.value = data.logs;
+	} catch (e) {
+		console.error("Failed to fetch unified dashboard state", e);
+	} finally {
+		loading.value = false;
+	}
 }
 
 async function fetchLogsAndStatus() {
-  loading.value = true
-  await fetchDashboardState()
+	loading.value = true;
+	await fetchDashboardState();
 }
 
 async function exportLogs() {
-  exporting.value = true
-  try {
-    window.location.href = `/api/surveys/${route.params.id}/logs/export`
-  } catch {
-    $q.notify({ type: 'negative', message: 'Gagal ekspor log' })
-  } finally {
-    setTimeout(() => { exporting.value = false }, 1000)
-  }
+	exporting.value = true;
+	try {
+		window.location.href = `/api/surveys/${route.params.id}/logs/export`;
+	} catch {
+		$q.notify({ type: "negative", message: "Gagal ekspor log" });
+	} finally {
+		setTimeout(() => {
+			exporting.value = false;
+		}, 1000);
+	}
 }
 
-
-
 function copyForAI() {
-  if (!logs.value.length) return
-  
-  let md = `# Sync Log Report - Survey ID: ${route.params.id}\n`
-  md += `Generated at: ${new Date().toLocaleString()}\n\n`
-  
-  if (mirroringStatus.value) {
-    const s = mirroringStatus.value
-    md += `## Image Vault Status\n`
-    md += `- Combined Progress: ${s.mirrored} / ${s.total - s.skipped} assignments processed\n`
-    md += `- Skipped (No Image): ${s.skipped}\n`
-    md += `- Completion: ${(((s.mirrored) / (s.total - s.skipped)) * 100).toFixed(1)}%\n\n`
-  }
-  
-  md += `## Execution History (Last 5 cycles)\n\n`
-  md += `| Time | Status | New | Upd | Skip | Timing (L/M/F/D) |\n`
-  md += `|---|---|---|---|---|---|\n`
-  
-  logs.value.slice(0, 5).forEach(l => {
-    const t = l.timings || {}
-    const tStr = `${t.login || 0}/${t.metadata || 0}/${t.fetch || 0}/${t.upsert || 0}ms`
-    md += `| ${formatDate(l.startedAt)} | ${l.status} | ${l.totalNew} | ${l.totalUpdated} | ${l.totalSkipped} | ${tStr} |\n`
-  })
-  
-  md += `\n*Timing Legend: L=Login, M=Metadata, F=Fetch, D=Database Save*`
-  
-  copyToClipboard(md).then(() => {
-    $q.notify({ type: 'positive', message: 'Log report copied to clipboard for AI analysis', icon: 'auto_awesome' })
-  })
+	if (!logs.value.length) return;
+
+	let md = `# Sync Log Report - Survey ID: ${route.params.id}\n`;
+	md += `Generated at: ${new Date().toLocaleString()}\n\n`;
+
+	if (mirroringStatus.value) {
+		const s = mirroringStatus.value;
+		md += `## Image Vault Status\n`;
+		md += `- Combined Progress: ${s.mirrored} / ${s.total - s.skipped} assignments processed\n`;
+		md += `- Skipped (No Image): ${s.skipped}\n`;
+		md += `- Completion: ${((s.mirrored / (s.total - s.skipped)) * 100).toFixed(1)}%\n\n`;
+	}
+
+	md += `## Execution History (Last 5 cycles)\n\n`;
+	md += `| Time | Status | New | Upd | Skip | Timing (L/M/F/D) |\n`;
+	md += `|---|---|---|---|---|---|\n`;
+
+	logs.value.slice(0, 5).forEach((l) => {
+		const t = l.timings || {};
+		const tStr = `${t.login || 0}/${t.metadata || 0}/${t.fetch || 0}/${t.upsert || 0}ms`;
+		md += `| ${formatDate(l.startedAt)} | ${l.status} | ${l.totalNew} | ${l.totalUpdated} | ${l.totalSkipped} | ${tStr} |\n`;
+	});
+
+	md += `\n*Timing Legend: L=Login, M=Metadata, F=Fetch, D=Database Save*`;
+
+	copyToClipboard(md).then(() => {
+		$q.notify({
+			type: "positive",
+			message: "Log report copied to clipboard for AI analysis",
+			icon: "auto_awesome",
+		});
+	});
 }
 
 onMounted(async () => {
-  await fetchLogsAndStatus()
-  // Poll every 10s for dashboard state
-  pollTimer = setInterval(fetchDashboardState, 10000)
-})
+	await fetchLogsAndStatus();
+	// Poll every 10s for dashboard state
+	pollTimer = setInterval(fetchDashboardState, 10000);
+});
 
 onBeforeUnmount(() => {
-  if (pollTimer) clearInterval(pollTimer)
-})
+	if (pollTimer) clearInterval(pollTimer);
+});
 </script>
 
 <style scoped>

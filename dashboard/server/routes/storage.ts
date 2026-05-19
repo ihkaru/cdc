@@ -1,67 +1,67 @@
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Elysia, t } from "elysia";
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 
 const s3Client = new S3Client({
-  endpoint: process.env.S3_ENDPOINT || "http://s3:8333",
-  region: "us-east-1",
-  credentials: {
-    accessKeyId: process.env.S3_ACCESS_KEY || "cdcadmin",
-    secretAccessKey: process.env.S3_SECRET_KEY || "cdcsecret",
-  },
-  forcePathStyle: true,
+	endpoint: process.env.S3_ENDPOINT || "http://s3:8333",
+	region: "us-east-1",
+	credentials: {
+		accessKeyId: process.env.S3_ACCESS_KEY || "cdcadmin",
+		secretAccessKey: process.env.S3_SECRET_KEY || "cdcsecret",
+	},
+	forcePathStyle: true,
 });
 
 import { requireAuth } from "../middleware/auth";
 
 export const storageRoutes = new Elysia({ prefix: "/storage" })
-  .use(requireAuth)
-  .get("/view/*", async ({ params, set }) => {
-    try {
-      const path = params["*"];
-      
-      // Path Traversal Protection
-      if (path.includes("..") || path.includes("./") || path.includes("//")) {
-          set.status = 400;
-          return "Illegal path sequence detected";
-      }
+	.use(requireAuth)
+	.get("/view/*", async ({ params, set }) => {
+		try {
+			const path = params["*"];
 
-      const [bucket, ...rest] = path.split("/");
-      const key = rest.join("/");
+			// Path Traversal Protection
+			if (path.includes("..") || path.includes("./") || path.includes("//")) {
+				set.status = 400;
+				return "Illegal path sequence detected";
+			}
 
-      if (!bucket || !key) {
-          set.status = 400;
-          return "Invalid path format. Expected {bucket}/{key}";
-      }
+			const [bucket, ...rest] = path.split("/");
+			const key = rest.join("/");
 
-      const command = new GetObjectCommand({
-        Bucket: bucket,
-        Key: key,
-      });
+			if (!bucket || !key) {
+				set.status = 400;
+				return "Invalid path format. Expected {bucket}/{key}";
+			}
 
-      const response = await s3Client.send(command);
+			const command = new GetObjectCommand({
+				Bucket: bucket,
+				Key: key,
+			});
 
-      if (!response.Body) {
-        set.status = 404;
-        return "Not Found";
-      }
+			const response = await s3Client.send(command);
 
-      // Proxy the headers
-      if (response.ContentType) {
-          set.headers["content-type"] = response.ContentType;
-      }
-      if (response.ContentLength) {
-          set.headers["content-length"] = response.ContentLength.toString();
-      }
-      set.headers["cache-control"] = "public, max-age=31536000";
+			if (!response.Body) {
+				set.status = 404;
+				return "Not Found";
+			}
 
-      // Return the raw response using transformToByteArray to prevent Elysia from stringifying it into JSON
-      const bytes = await response.Body.transformToByteArray();
-      return new Response(bytes, {
-          headers: set.headers as Record<string, string>
-      });
-    } catch (error) {
-      console.error("Storage proxy error:", error);
-      set.status = 404;
-      return "Image Not Found or Expired in Local Vault";
-    }
-  });
+			// Proxy the headers
+			if (response.ContentType) {
+				set.headers["content-type"] = response.ContentType;
+			}
+			if (response.ContentLength) {
+				set.headers["content-length"] = response.ContentLength.toString();
+			}
+			set.headers["cache-control"] = "public, max-age=31536000";
+
+			// Return the raw response using transformToByteArray to prevent Elysia from stringifying it into JSON
+			const bytes = await response.Body.transformToByteArray();
+			return new Response(bytes, {
+				headers: set.headers as Record<string, string>,
+			});
+		} catch (error) {
+			console.error("Storage proxy error:", error);
+			set.status = 404;
+			return "Image Not Found or Expired in Local Vault";
+		}
+	});

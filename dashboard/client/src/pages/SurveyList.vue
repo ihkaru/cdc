@@ -144,132 +144,137 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useQuasar } from 'quasar'
-import { vpnStatus } from '../composables/useVpn'
-import { api } from 'src/boot/axios'
+import { useQuasar } from "quasar";
+import { api } from "src/boot/axios";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { vpnStatus } from "../composables/useVpn";
 
-const $q = useQuasar()
-const searchQuery = ref('')
-const surveys = ref<any[]>([])
-const loading = ref(true)
-const syncingId = ref<string | null>(null)
-const rpaStatus = ref<any>({})
-let pollTimer: any = null
+const $q = useQuasar();
+const searchQuery = ref("");
+const surveys = ref<any[]>([]);
+const loading = ref(true);
+const syncingId = ref<string | null>(null);
+const rpaStatus = ref<any>({});
+let pollTimer: any = null;
 
 const filteredSurveys = computed(() => {
-  if (!searchQuery.value) return surveys.value
-  const q = searchQuery.value.toLowerCase()
-  return surveys.value.filter(s => 
-    (s.surveyName && s.surveyName.toLowerCase().includes(q)) ||
-    (s.ssoUsername && s.ssoUsername.toLowerCase().includes(q)) ||
-    (s.filterKabupaten && s.filterKabupaten.toLowerCase().includes(q))
-  )
-})
+	if (!searchQuery.value) return surveys.value;
+	const q = searchQuery.value.toLowerCase();
+	return surveys.value.filter(
+		(s) =>
+			(s.surveyName && s.surveyName.toLowerCase().includes(q)) ||
+			(s.ssoUsername && s.ssoUsername.toLowerCase().includes(q)) ||
+			(s.filterKabupaten && s.filterKabupaten.toLowerCase().includes(q)),
+	);
+});
 
 async function loadData() {
-  loading.value = true
-  try {
-    const [surveysRes, statusRes] = await Promise.all([
-      api.get('/surveys'),
-      api.get('/surveys/sync/status')
-    ])
-    surveys.value = surveysRes.data
-    rpaStatus.value = statusRes.data
-  } catch (e) {
-    console.error(e)
-  } finally {
-    loading.value = false
-  }
+	loading.value = true;
+	try {
+		const [surveysRes, statusRes] = await Promise.all([
+			api.get("/surveys"),
+			api.get("/surveys/sync/status"),
+		]);
+		surveys.value = surveysRes.data;
+		rpaStatus.value = statusRes.data;
+	} catch (e) {
+		console.error(e);
+	} finally {
+		loading.value = false;
+	}
 }
 
 async function refreshStatus() {
-  try {
-    const res = await api.get('/surveys/sync/status')
-    rpaStatus.value = res.data
-  } catch {}
+	try {
+		const res = await api.get("/surveys/sync/status");
+		rpaStatus.value = res.data;
+	} catch {}
 }
 
 function isJobActive(surveyId: string): boolean {
-  // Check if this survey is currently running
-  if (rpaStatus.value.is_running && rpaStatus.value.current_survey_config_id === surveyId) {
-    return true
-  }
-  // Check if queued
-  if (rpaStatus.value.queue) {
-    // We don't have survey_config_id in queue, so can't check directly
-    // The RPA endpoint handles dedup, so this is just a UI hint
-  }
-  return false
+	// Check if this survey is currently running
+	if (rpaStatus.value.is_running && rpaStatus.value.current_survey_config_id === surveyId) {
+		return true;
+	}
+	// Check if queued
+	if (rpaStatus.value.queue) {
+		// We don't have survey_config_id in queue, so can't check directly
+		// The RPA endpoint handles dedup, so this is just a UI hint
+	}
+	return false;
 }
 
 function getSyncButtonColor(surveyId: string): string {
-  return 'primary'
+	return "primary";
 }
 
 function getSyncButtonLabel(surveyId: string): string {
-  if (syncingId.value === surveyId) return 'Queueing...'
-  if (rpaStatus.value.is_running) return 'Queue Sync'
-  return 'Sync Now'
+	if (syncingId.value === surveyId) return "Queueing...";
+	if (rpaStatus.value.is_running) return "Queue Sync";
+	return "Sync Now";
 }
 
 async function triggerSync(id: string) {
-  if (syncingId.value) return
-  syncingId.value = id
-  try {
-    const res = await api.post(`/surveys/${id}/sync`)
-    const data = res.data
-    if (data.status === 'already_queued') {
-      $q.notify({ type: 'warning', message: data.message })
-    } else {
-      $q.notify({ type: 'positive', message: data.message || 'Sync queued!' })
-    }
-    refreshStatus()
-  } catch (e: any) {
-    const msg = e.response?.data?.message || e.response?.data?.detail || e.message || 'Failed to trigger sync'
-    $q.notify({ type: 'negative', message: 'Error: ' + msg })
-  } finally {
-    syncingId.value = null
-  }
+	if (syncingId.value) return;
+	syncingId.value = id;
+	try {
+		const res = await api.post(`/surveys/${id}/sync`);
+		const data = res.data;
+		if (data.status === "already_queued") {
+			$q.notify({ type: "warning", message: data.message });
+		} else {
+			$q.notify({ type: "positive", message: data.message || "Sync queued!" });
+		}
+		refreshStatus();
+	} catch (e: any) {
+		const msg =
+			e.response?.data?.message ||
+			e.response?.data?.detail ||
+			e.message ||
+			"Failed to trigger sync";
+		$q.notify({ type: "negative", message: "Error: " + msg });
+	} finally {
+		syncingId.value = null;
+	}
 }
 
 async function cancelJob(jobId: number, surveyName: string) {
-  try {
-    const res = await api.delete(`/surveys/sync/${jobId}`)
-    $q.notify({ type: 'info', message: `Sync "${surveyName}" dibatalkan` })
-    refreshStatus()
-  } catch {
-    $q.notify({ type: 'negative', message: 'Gagal membatalkan job' })
-  }
+	try {
+		const res = await api.delete(`/surveys/sync/${jobId}`);
+		$q.notify({ type: "info", message: `Sync "${surveyName}" dibatalkan` });
+		refreshStatus();
+	} catch {
+		$q.notify({ type: "negative", message: "Gagal membatalkan job" });
+	}
 }
 
 function deleteSurvey(id: string) {
-  $q.dialog({
-    title: 'Confirm Deletion',
-    message: 'Hapus survey ini beserta semua datanya?',
-    cancel: true,
-    persistent: true,
-    dark: true
-  }).onOk(async () => {
-    try {
-      await api.delete(`/surveys/${id}`)
-      $q.notify({ type: 'info', message: 'Survey deleted' })
-      loadData()
-    } catch (e) {
-      $q.notify({ type: 'negative', message: 'Failed to delete' })
-    }
-  })
+	$q.dialog({
+		title: "Confirm Deletion",
+		message: "Hapus survey ini beserta semua datanya?",
+		cancel: true,
+		persistent: true,
+		dark: true,
+	}).onOk(async () => {
+		try {
+			await api.delete(`/surveys/${id}`);
+			$q.notify({ type: "info", message: "Survey deleted" });
+			loadData();
+		} catch (e) {
+			$q.notify({ type: "negative", message: "Failed to delete" });
+		}
+	});
 }
 
 onMounted(() => {
-  loadData()
-  // Poll status every 10s
-  pollTimer = setInterval(refreshStatus, 10000)
-})
+	loadData();
+	// Poll status every 10s
+	pollTimer = setInterval(refreshStatus, 10000);
+});
 
 onBeforeUnmount(() => {
-  if (pollTimer) clearInterval(pollTimer)
-})
+	if (pollTimer) clearInterval(pollTimer);
+});
 </script>
 
 <style scoped>

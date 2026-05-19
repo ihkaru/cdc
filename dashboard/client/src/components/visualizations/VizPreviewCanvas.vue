@@ -50,16 +50,16 @@
 </template>
 
 <script setup lang="ts">
-import VChart from 'vue-echarts'
-import { computed } from 'vue'
-import { formatNumber, getChartOption } from '../../utils/chartOptions'
-import VizMapLibre from './VizMapLibre.vue'
+import { computed } from "vue";
+import VChart from "vue-echarts";
+import { formatNumber, getChartOption } from "../../utils/chartOptions";
+import VizMapLibre from "./VizMapLibre.vue";
 
 const props = defineProps<{
-  newViz: any
-  previewData: any
-  previewLoading: boolean
-}>()
+	newViz: any;
+	previewData: any;
+	previewLoading: boolean;
+}>();
 </script>
 
 <style scoped>

@@ -1,24 +1,19 @@
-import os
 import asyncio
+import os
 from datetime import datetime, timezone
+
 from playwright.async_api import async_playwright
 
-from db.connection import init_db, get_session, reset_engine
-from db.models import SyncLog, SystemSettings, Assignment
-from db.repository import SyncStats
-
-from state import sync_state
-from schemas import SyncRequest
+from api_client import FasihApiClient, FasihAuthError
 from auth import auto_login, launch_stealth_browser, new_stealth_context
-from api_client import FasihApiClient
-from pages.survey_navigator import find_survey_id, navigate_to_data_tab
-from pages.filter_rotator import iterate_filters, get_total_entries
-from pages.assignment_page import get_all_assignments_metadata
-
+from connectivity import FasihConnectionError, ensure_connected
+from db.connection import get_session, init_db, reset_engine
+from db.models import Assignment, SyncLog, SystemSettings
+from db.repository import SyncStats
+from schemas import SyncRequest
+from state import sync_state
 from worker.fast_mode import run_fast_sync
 from worker.full_mode import run_full_sync
-from connectivity import ensure_connected, FasihConnectionError
-from api_client import FasihAuthError
 
 
 def _progress(phase: str, label: str, **kwargs):
@@ -30,12 +25,13 @@ def _progress(phase: str, label: str, **kwargs):
             setattr(sync_state.progress, k, v)
     print(f"📊 [PROGRESS] [{phase}] {label}")
 
+
 async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
     """Run the actual sync cycle for one job."""
-    
+
     # Check and self-heal connectivity (VPN/Cookie)
     await ensure_connected()
-    
+
     SKIP_DETAIL_FETCH = os.getenv("SKIP_DETAIL_FETCH", "false").lower() == "true"
 
     reset_engine()
@@ -59,13 +55,10 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
 
     try:
         # Global timeout to prevent infinite hang (e.g. DNS or asyncio deadlock)
-        async with asyncio.timeout(1200): # 20 minutes
+        async with asyncio.timeout(1200):  # 20 minutes
             async with async_playwright() as p:
                 browser = await launch_stealth_browser(p)
-                context = await new_stealth_context(
-                    browser,
-                    viewport={"width": 1280, "height": 800}
-                )
+                context = await new_stealth_context(browser, viewport={"width": 1280, "height": 800})
 
                 try:
                     page = await context.new_page()
@@ -79,10 +72,11 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                     # Close browser right after login!
                     await browser.close()
                     browser = None  # To avoid closing twice in finally
-                    
+
                     # Save cookies to DB for self-healing archiver (Multi-survey support)
                     try:
                         import json
+
                         db_session = get_session()
                         setting = db_session.query(SystemSettings).filter_by(key="sso_cookies").first()
                         if setting:
@@ -98,7 +92,6 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                         print(f"   ⚠️ Warning: Failed to save SSO cookies to DB: {db_e}")
 
                     async with FasihApiClient(cookie_dict) as api:
-
                         print("\n--- FASE 2: Resolving API Metadata ---")
                         _progress("resolve_survey", f"🔍 Mencari survey: {req.survey_name}...")
                         survey_id = await api.get_survey_id(req.survey_name)
@@ -111,55 +104,76 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                             raise Exception(f"Period/Role tidak ditemukan untuk survey {survey_id}")
 
                         _progress("resolve_survey", "🗺️ Mengambil metadata region...")
-                        prov_uuid, region_filter, kab_full_code, region_group_id = await api.get_region_metadata(req.filter_provinsi, req.filter_kabupaten, survey_id)
+                        prov_uuid, region_filter, kab_full_code, region_group_id = await api.get_region_metadata(
+                            req.filter_provinsi, req.filter_kabupaten, survey_id
+                        )
 
                         # Safety Gate: Jika provinsi diisi tapi tidak ketemu di API, jangan lanjut.
                         # Ini mencegah robot menarik data se-Indonesia/se-Provinsi secara tidak sengaja yang memicu timeout.
                         if req.filter_provinsi and not prov_uuid:
-                            raise Exception(f"Gagal memetakan wilayah: '{req.filter_provinsi}' tidak ditemukan di API FASIH")
-                        
+                            raise Exception(
+                                f"Gagal memetakan wilayah: '{req.filter_provinsi}' tidak ditemukan di API FASIH"
+                            )
+
                         if req.filter_kabupaten and not kab_full_code:
-                            print(f"   ⚠️ Warning: Kabupaten '{req.filter_kabupaten}' tidak ter-resolve, fallback ke Provinsi")
+                            print(
+                                f"   ⚠️ Warning: Kabupaten '{req.filter_kabupaten}' tidak ter-resolve, fallback ke Provinsi"
+                            )
 
                         # --- MODE: USER SLICING (DIRECT) ---
                         # Looping langsung per Petugas (Pencacah/Pengawas).
                         # Strategi ini lebih cepat karena jumlah switch filter lebih sedikit.
-                        
+
                         filters_to_run = []
 
                         _progress("fetch_users", "👥 Mengambil daftar petugas...")
-                        pengawas_list, pencacah_list = await api.get_users_by_region(period_id, role_ids, kab_full_code, survey_role_group_id)
+                        pengawas_list, pencacah_list = await api.get_users_by_region(
+                            period_id, role_ids, kab_full_code, survey_role_group_id
+                        )
 
                         if req.filter_rotation == "pencacah" and pencacah_list:
                             for idx, user in enumerate(pencacah_list):
-                                filters_to_run.append({
-                                    "label": f"[{idx+1}/{len(pencacah_list)}] Pencacah: {user['fullname']}",
-                                    "pengawas_id": None,
-                                    "pencacah_id": user['userId']
-                                })
+                                filters_to_run.append(
+                                    {
+                                        "label": f"[{idx + 1}/{len(pencacah_list)}] Pencacah: {user['fullname']}",
+                                        "pengawas_id": None,
+                                        "pencacah_id": user["userId"],
+                                    }
+                                )
                             for idx, user in enumerate(pengawas_list):
-                                filters_to_run.append({
-                                    "label": f"[{len(pencacah_list)+idx+1}/{len(pencacah_list)+len(pengawas_list)}] Pengawas: {user['fullname']}",
-                                    "pencacah_id": None
-                                })
+                                filters_to_run.append(
+                                    {
+                                        "label": f"[{len(pencacah_list) + idx + 1}/{len(pencacah_list) + len(pengawas_list)}] Pengawas: {user['fullname']}",
+                                        "pencacah_id": None,
+                                    }
+                                )
                         else:
                             for idx, user in enumerate(pengawas_list):
-                                filters_to_run.append({
-                                    "label": f"[{idx+1}/{len(pengawas_list)}] Pengawas: {user['fullname']}",
-                                    "pengawas_id": user['userId'],
-                                    "pencacah_id": None
-                                })
-                        
+                                filters_to_run.append(
+                                    {
+                                        "label": f"[{idx + 1}/{len(pengawas_list)}] Pengawas: {user['fullname']}",
+                                        "pengawas_id": user["userId"],
+                                        "pencacah_id": None,
+                                    }
+                                )
+
                         # Fallback if no users found: fetch region-wide
                         if not filters_to_run:
-                            filters_to_run.append({
-                                "label": "[1/1] Wilayah Saja (Tanpa Pengawas/Pencacah)",
-                                "pengawas_id": None,
-                                "pencacah_id": None
-                            })
+                            filters_to_run.append(
+                                {
+                                    "label": "[1/1] Wilayah Saja (Tanpa Pengawas/Pencacah)",
+                                    "pengawas_id": None,
+                                    "pencacah_id": None,
+                                }
+                            )
 
                         users_count = len(filters_to_run)
-                        _progress("fetch_assignments", f"⚡ Memulai fetch {users_count} petugas secara concurrent...", users_total=users_count, users_done=0)
+                        _progress(
+                            "fetch_assignments",
+                            f"⚡ Memulai fetch {users_count} petugas secara concurrent...",
+                            users_total=users_count,
+                            users_done=0,
+                        )
 
                         if SKIP_DETAIL_FETCH:
                             # Fast sync stats
@@ -174,7 +188,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                                 region_full_code=kab_full_code,
                                 region_group_id=region_group_id,
                                 filters_to_run=filters_to_run,
-                                sync_log_id=sync_log.id
+                                sync_log_id=sync_log.id,
                             )
                         else:
                             # Full sync stats (Full results are in run_stats.total_fetched)
@@ -190,40 +204,43 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                                 region_full_code=kab_full_code,
                                 region_group_id=region_group_id,
                                 filters_to_run=filters_to_run,
-                                sync_log_id=sync_log.id
+                                sync_log_id=sync_log.id,
                             )
-                        
+
                         stats = run_stats
 
                 finally:
-                    if 'browser' in locals() and browser:
+                    if "browser" in locals() and browser:
                         await browser.close()
 
         # Calculate total images found in this run
         total_images_in_run = 0
-        from extractors.json_logic import extract_variables_from_json
         import json
-        
+
+        from extractors.json_logic import extract_variables_from_json
+
         # We find assignments updated in this survey_config during this specific sync
         # Since we don't have the full list of objects easily from BulkUpserter,
         # we query the DB for the survey_config_id and date_synced (approximate)
         # OR better: we query all assignments for this survey_config that are NOT mirrored yet
         # but belong to this sync window.
-        
-        # Simplified: Just count all un-mirrored images for this survey_config 
+
+        # Simplified: Just count all un-mirrored images for this survey_config
         # to give a realistic "Remaining Work" for the archiver.
-        upserted_assignments = session.query(Assignment).filter(
-            Assignment.survey_config_id == req.survey_config_id,
-            Assignment.local_image_mirrored == False
-        ).all()
-        
+        upserted_assignments = (
+            session.query(Assignment)
+            .filter(Assignment.survey_config_id == req.survey_config_id, Assignment.local_image_mirrored == False)
+            .all()
+        )
+
         for a in upserted_assignments:
             data = json.loads(a.data_json)
             vars_map = extract_variables_from_json(data)
             for k, v in vars_map.items():
                 if isinstance(v, str) and v.startswith("http"):
-                    is_image = any(ext in v.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']) or \
-                               any(kw in k.lower() or kw in v.lower() for kw in ['foto', 'image', 'media'])
+                    is_image = any(ext in v.lower() for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif"]) or any(
+                        kw in k.lower() or kw in v.lower() for kw in ["foto", "image", "media"]
+                    )
                     if is_image:
                         total_images_in_run += 1
 
@@ -236,7 +253,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
         log.total_skipped = stats.total_skipped
         log.total_failed = stats.total_failed
         log.total_images = total_images_in_run
-        log.images_mirrored = 0 # Will be updated by archiver in background
+        log.images_mirrored = 0  # Will be updated by archiver in background
         log.status = "success"
         session.commit()
 
@@ -257,7 +274,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
         log = session.query(SyncLog).get(sync_log.id)
         log.finished_at = datetime.now(timezone.utc)
         log.status = "failed"
-        log.notes = f"Infrastructure Failure: {str(e)}"
+        log.notes = f"Infrastructure Failure: {e!s}"
         session.commit()
 
         sync_state.last_result = {
@@ -289,7 +306,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
         log.status = "failed"
         log.notes = "Interrupted by system shutdown (SIGTERM/Restart)"
         session.commit()
-        
+
         sync_state.last_result = {
             "status": "failed",
             "survey": req.survey_name,

@@ -1,9 +1,9 @@
-import os
 import asyncio
+import os
 import random
-from typing import List, Dict, Any, Optional
+from typing import Any
 
-from db.repository import get_existing_modifications_by_ids_batched, BatchUpserterBulk, SyncStats, normalize_bps_date
+from db.repository import BatchUpserterBulk, SyncStats, get_existing_modifications_by_ids_batched, normalize_bps_date
 from pages.detail_page import fetch_assignments_concurrent
 from state import sync_state
 
@@ -15,12 +15,12 @@ async def _fetch_one(
     api_client: Any,
     period_id: str,
     prov_code: str,
-    region_filter: Optional[str],
+    region_filter: str | None,
     region_group_id: str,
-    f: Dict,
+    f: dict,
     semaphore: asyncio.Semaphore,
-    index: int = 0
-) -> tuple[Dict, List[Dict]]:
+    index: int = 0,
+) -> tuple[dict, list[dict]]:
     """Fetch metadata 1 user, throttled by semaphore + jitter."""
     jitter = random.uniform(0, min(index * 0.2, 2.0))
     await asyncio.sleep(jitter)
@@ -34,7 +34,7 @@ async def _fetch_one(
                 desa_uuid=f.get("desa_uuid"),
                 pengawas_id=f.get("pengawas_id"),
                 pencacah_id=f.get("pencacah_id"),
-                region_group_id=region_group_id
+                region_group_id=region_group_id,
             )
             return f, results or []
         except Exception as e:
@@ -45,19 +45,19 @@ async def _fetch_one(
 async def run_full_sync(
     session,
     api_client: Any,
-    cookie_dict: Dict[str, str],
+    cookie_dict: dict[str, str],
     survey_id: str,
     period_id: str,
     survey_config_id: str,
     prov_code: str,
-    region_filter: Optional[str],
-    region_full_code: Optional[str],
+    region_filter: str | None,
+    region_full_code: str | None,
     region_group_id: str,
-    filters_to_run: List[Dict[str, Any]],
-    sync_log_id: int = None
+    filters_to_run: list[dict[str, Any]],
+    sync_log_id: int = None,
 ) -> SyncStats:
     """
-    Full sync: 
+    Full sync:
     1. Smart Metadata Fetch: Fan-out per user. Jika user > 1000 (cap), slice per-kecamatan.
     2. Streaming Detail Fetch: Fetch response detail JSON + real-time Batch Upsert.
     """
@@ -84,59 +84,68 @@ async def run_full_sync(
         for idx, f in enumerate(filters_to_run)
     ]
 
-    all_metadata_map: Dict[str, Dict] = {}
+    all_metadata_map: dict[str, dict] = {}
     done_count = 0
-    
+
     async def _handle_results(f_user, results):
         nonlocal done_count
         done_count += 1
         sync_state.progress.users_done = done_count
-        
+
         user_total_metadata = {m.get("id"): m for m in results if m.get("id")}
-        
+
         # If capped at 1000, we must slice immediately
         if len(results) >= 1000 and parent_full_code:
-            if sync_state.is_shutting_down: return
-            
+            if sync_state.is_shutting_down:
+                return
+
             print(f"   ⚠️  [CAP] {f_user.get('label')} hit {len(results)} limit. Diving into sub-regions...")
             sync_state.progress.phase_label = f"🔬 Slicing {f_user.get('label')}..."
-            
+
             l3_list = await api_client.get_sub_regions(3, region_group_id, parent_full_code)
             if l3_list:
+
                 async def _slice_l3(l3):
-                    if sync_state.is_shutting_down: return {}
+                    if sync_state.is_shutting_down:
+                        return {}
                     sub_f = f_user.copy()
                     sub_f["kec_uuid"] = l3.get("id")
                     sub_f["label"] = f"{f_user.get('label')} - {l3.get('name')}"
-                    _, sub_res = await _fetch_one(api_client, period_id, prov_code, region_filter, region_group_id, sub_f, sem, 0)
+                    _, sub_res = await _fetch_one(
+                        api_client, period_id, prov_code, region_filter, region_group_id, sub_f, sem, 0
+                    )
                     local_map = {m.get("id"): m for m in sub_res if m.get("id")}
-                    
+
                     if len(sub_res) >= 1000 and not sync_state.is_shutting_down:
                         l4_list = await api_client.get_sub_regions(4, region_group_id, l3.get("fullCode"))
                         if l4_list:
+
                             async def _slice_l4(l4):
-                                if sync_state.is_shutting_down: return {}
+                                if sync_state.is_shutting_down:
+                                    return {}
                                 sub_f4 = sub_f.copy()
                                 sub_f4["desa_uuid"] = l4.get("id")
-                                _, res4 = await _fetch_one(api_client, period_id, prov_code, region_filter, region_group_id, sub_f4, sem, 0)
+                                _, res4 = await _fetch_one(
+                                    api_client, period_id, prov_code, region_filter, region_group_id, sub_f4, sem, 0
+                                )
                                 return {m.get("id"): m for m in res4 if m.get("id")}
-                            
+
                             l4_results = await asyncio.gather(*[_slice_l4(l4) for l4 in l4_list])
-                            for r in l4_results: local_map.update(r)
+                            for r in l4_results:
+                                local_map.update(r)
                     return local_map
 
                 l3_results = await asyncio.gather(*[_slice_l3(l3) for l3 in l3_list])
-                for r in l3_results: user_total_metadata.update(r)
+                for r in l3_results:
+                    user_total_metadata.update(r)
 
         # Merge this user's results into global map
         all_metadata_map.update(user_total_metadata)
 
         found_for_this_user = len(user_total_metadata)
-        sync_state.progress.phase_label = (
-            f"⚡ [{done_count}/{users_total}] {f_user.get('label','?')}: {found_for_this_user} → total {len(all_metadata_map)}"
-        )
+        sync_state.progress.phase_label = f"⚡ [{done_count}/{users_total}] {f_user.get('label', '?')}: {found_for_this_user} → total {len(all_metadata_map)}"
         status = "✅" if found_for_this_user else "○"
-        print(f"   {status} [{done_count}/{users_total}] {f_user.get('label','?')}: {found_for_this_user} records")
+        print(f"   {status} [{done_count}/{users_total}] {f_user.get('label', '?')}: {found_for_this_user} records")
 
     for coro in asyncio.as_completed(all_tasks):
         if sync_state.is_shutting_down:
@@ -161,7 +170,8 @@ async def run_full_sync(
     total_skipped = 0
 
     for m in unique_metadata:
-        if sync_state.is_shutting_down: break
+        if sync_state.is_shutting_down:
+            break
         rec_id = m.get("id")
         api_val = m.get("dateModifiedRemote")
         db_val = existing_mods.get(rec_id)
@@ -187,9 +197,10 @@ async def run_full_sync(
     sync_state.progress.assignments_fetched = 0
 
     upserter = BatchUpserterBulk(session, batch_size=500, sync_log_id=sync_log_id)
-    
+
     try:
-        def on_progress(fetched_count: int, total: int, data_json: Optional[Dict]):
+
+        def on_progress(fetched_count: int, total: int, data_json: dict | None):
             sync_state.progress.assignments_fetched = fetched_count
             sync_state.progress.phase_label = f"⬇️ Detail: {fetched_count}/{total} fetched..."
             if data_json and not sync_state.is_shutting_down:
@@ -197,9 +208,7 @@ async def run_full_sync(
                 upserter.add(data_json)
 
         await fetch_assignments_concurrent(
-            cookie_dict, to_fetch_links,
-            concurrency=DETAIL_CONCURRENCY,
-            on_progress=on_progress
+            cookie_dict, to_fetch_links, concurrency=DETAIL_CONCURRENCY, on_progress=on_progress
         )
     except asyncio.CancelledError:
         print("🛑 [FULL] Interrupted during streaming sync. Emergency flushing...")
@@ -209,6 +218,8 @@ async def run_full_sync(
         # Final commit even if interrupted
         stats = upserter.finish()
         stats.total_skipped += total_skipped
-    
-    print(f"   ✅ Full sync selesai: processed={stats.total_fetched:,}, new={stats.total_new:,}, skipped={stats.total_skipped:,}")
+
+    print(
+        f"   ✅ Full sync selesai: processed={stats.total_fetched:,}, new={stats.total_new:,}, skipped={stats.total_skipped:,}"
+    )
     return stats

@@ -92,152 +92,153 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { useQuasar } from 'quasar'
+import { VueMonacoEditor } from "@guolao/vue-monaco-editor";
+import { BarChart } from "echarts/charts";
+import {
+	GridComponent,
+	LegendComponent,
+	TitleComponent,
+	TooltipComponent,
+} from "echarts/components";
 
 // ECharts setup
-import { use } from 'echarts/core'
-import { CanvasRenderer } from 'echarts/renderers'
-import { BarChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components'
-import VChart, { THEME_KEY } from 'vue-echarts'
-import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
-import { provide } from 'vue'
+import { use } from "echarts/core";
+import { CanvasRenderer } from "echarts/renderers";
+import { useQuasar } from "quasar";
+import { computed, onMounted, provide, ref, watch } from "vue";
+import VChart, { THEME_KEY } from "vue-echarts";
+import { useRoute } from "vue-router";
+import draggable from "vuedraggable";
+import VizAddEditDialog from "../components/visualizations/VizAddEditDialog.vue";
+import VizBulkImportDialog from "../components/visualizations/VizBulkImportDialog.vue";
+import VizCard from "../components/visualizations/VizCard.vue";
+import VizPreviewCanvas from "../components/visualizations/VizPreviewCanvas.vue";
+import { useBulkImport } from "../composables/visualizations/useBulkImport";
+import { useVisualizationData } from "../composables/visualizations/useVisualizationData";
 
-import { useVisualizationData } from '../composables/visualizations/useVisualizationData'
-import { useBulkImport } from '../composables/visualizations/useBulkImport'
-import VizCard from '../components/visualizations/VizCard.vue'
-import VizAddEditDialog from '../components/visualizations/VizAddEditDialog.vue'
-import VizBulkImportDialog from '../components/visualizations/VizBulkImportDialog.vue'
-import VizPreviewCanvas from '../components/visualizations/VizPreviewCanvas.vue'
-import draggable from 'vuedraggable'
+use([CanvasRenderer, BarChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent]);
+provide(THEME_KEY, "dark");
 
-use([CanvasRenderer, BarChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent])
-provide(THEME_KEY, 'dark')
+import { formatNumber, getChartOption } from "../utils/chartOptions";
 
-import { formatNumber, getChartOption } from '../utils/chartOptions'
+const route = useRoute();
+const $q = useQuasar();
+const surveyId = route.params.id as string;
 
-const route = useRoute()
-const $q = useQuasar()
-const surveyId = route.params.id as string
-
-const addEditDialogRef = ref<any>(null)
+const addEditDialogRef = ref<any>(null);
 
 const {
-  surveyName,
-  loading,
-  labelSchema,
-  visualizations,
-  vizData,
-  loadingData,
-  loadData,
-  fetchVizData
-} = useVisualizationData(surveyId)
+	surveyName,
+	loading,
+	labelSchema,
+	visualizations,
+	vizData,
+	loadingData,
+	loadData,
+	fetchVizData,
+} = useVisualizationData(surveyId);
 
-const {
-  showBulkDialog,
-  bulkJsonStr,
-  importingBulk,
-  openBulkDialog,
-  submitBulkImport
-} = useBulkImport(visualizations, fetchVizData)
+const { showBulkDialog, bulkJsonStr, importingBulk, openBulkDialog, submitBulkImport } =
+	useBulkImport(visualizations, fetchVizData);
 
 const filterOperators = [
-  { label: '=', value: 'equals' },
-  { label: '!=', value: 'not_equals' },
-  { label: 'Contains', value: 'contains' },
-  { label: '>', value: 'greater_than' },
-  { label: '<', value: 'less_than' }
-]
+	{ label: "=", value: "equals" },
+	{ label: "!=", value: "not_equals" },
+	{ label: "Contains", value: "contains" },
+	{ label: ">", value: "greater_than" },
+	{ label: "<", value: "less_than" },
+];
 
-const showAddDialog = ref(false)
-const isEditing = ref(false)
-const editingVizId = ref<number | null>(null)
-const configTab = ref('form')
-const jsonConfigStr = ref('{}')
+const showAddDialog = ref(false);
+const isEditing = ref(false);
+const editingVizId = ref<number | null>(null);
+const configTab = ref("form");
+const jsonConfigStr = ref("{}");
 
-const previewData = ref<any>(null)
-const previewLoading = ref(false)
-let previewTimeout: any = null
-const saving = ref(false)
-const saveError = ref('')
-const copyingAI = ref(false)
-const copySuccess = ref(false)
-
+const previewData = ref<any>(null);
+const previewLoading = ref(false);
+let previewTimeout: any = null;
+const saving = ref(false);
+const saveError = ref("");
+const copyingAI = ref(false);
+const copySuccess = ref(false);
 
 async function copyAIContext() {
-  copyingAI.value = true
-  try {
-    const res = await fetch(`/api/surveys/${surveyId}/visualizations/ai-context`)
-    if (!res.ok) throw new Error('Gagal mengambil data AI')
-    const json = await res.json() as any
-    if (json.markdown) {
-      await (navigator as any).clipboard.writeText(json.markdown)
-      $q.notify({ type: 'positive', message: 'Prompt tercopy ke Clipboard! Salin ke ChatGPT / Gemini.', icon: 'auto_awesome' })
-      copySuccess.value = true
-      setTimeout(() => { copySuccess.value = false }, 2000)
-    }
-  } catch (e: any) {
-    $q.notify({ type: 'negative', message: 'Gagal menyalin context: ' + e.message })
-  } finally {
-    copyingAI.value = false
-  }
+	copyingAI.value = true;
+	try {
+		const res = await fetch(`/api/surveys/${surveyId}/visualizations/ai-context`);
+		if (!res.ok) throw new Error("Gagal mengambil data AI");
+		const json = (await res.json()) as any;
+		if (json.markdown) {
+			await (navigator as any).clipboard.writeText(json.markdown);
+			$q.notify({
+				type: "positive",
+				message: "Prompt tercopy ke Clipboard! Salin ke ChatGPT / Gemini.",
+				icon: "auto_awesome",
+			});
+			copySuccess.value = true;
+			setTimeout(() => {
+				copySuccess.value = false;
+			}, 2000);
+		}
+	} catch (e: any) {
+		$q.notify({ type: "negative", message: "Gagal menyalin context: " + e.message });
+	} finally {
+		copyingAI.value = false;
+	}
 }
-
-
-
-
 
 async function deleteViz(vizId: number) {
-  $q.dialog({
-    title: 'Hapus Visualisasi',
-    message: 'Yakin ingin menghapus visualisasi ini?',
-    cancel: true,
-    persistent: true,
-    dark: true
-  }).onOk(async () => {
-    try {
-      await fetch(`/api/surveys/${surveyId}/visualizations/${vizId}`, { method: 'DELETE' })
-      visualizations.value = visualizations.value.filter(v => v.id !== vizId)
-      delete vizData.value[vizId]
-      $q.notify({ type: 'info', message: 'Visualisasi dihapus' })
-    } catch {
-      $q.notify({ type: 'negative', message: 'Gagal menghapus visualisasi' })
-    }
-  })
+	$q.dialog({
+		title: "Hapus Visualisasi",
+		message: "Yakin ingin menghapus visualisasi ini?",
+		cancel: true,
+		persistent: true,
+		dark: true,
+	}).onOk(async () => {
+		try {
+			await fetch(`/api/surveys/${surveyId}/visualizations/${vizId}`, { method: "DELETE" });
+			visualizations.value = visualizations.value.filter((v) => v.id !== vizId);
+			delete vizData.value[vizId];
+			$q.notify({ type: "info", message: "Visualisasi dihapus" });
+		} catch {
+			$q.notify({ type: "negative", message: "Gagal menghapus visualisasi" });
+		}
+	});
 }
 
-
-
 async function onReorder() {
-  const payload = visualizations.value.map((viz, index) => ({
-    id: viz.id,
-    sortOrder: index
-  }))
+	const payload = visualizations.value.map((viz, index) => ({
+		id: viz.id,
+		sortOrder: index,
+	}));
 
-  try {
-    const res = await fetch(`/api/surveys/${surveyId}/visualizations/reorder`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-    
-    if (!res.ok) {
-      throw new Error('Gagal menyimpan urutan')
-    }
-    
-    $q.notify({ type: 'positive', message: 'Urutan visualisasi berhasil disimpan', position: 'bottom-right' })
-  } catch (e: any) {
-    $q.notify({ type: 'negative', message: e.message })
-    // Reload data to revert to original order if API call fails
-    loadData()
-  }
+	try {
+		const res = await fetch(`/api/surveys/${surveyId}/visualizations/reorder`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		});
+
+		if (!res.ok) {
+			throw new Error("Gagal menyimpan urutan");
+		}
+
+		$q.notify({
+			type: "positive",
+			message: "Urutan visualisasi berhasil disimpan",
+			position: "bottom-right",
+		});
+	} catch (e: any) {
+		$q.notify({ type: "negative", message: e.message });
+		// Reload data to revert to original order if API call fails
+		loadData();
+	}
 }
 
 onMounted(() => {
-  loadData()
-})
+	loadData();
+});
 </script>
 
 <style scoped>

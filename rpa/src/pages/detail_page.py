@@ -5,12 +5,12 @@ Supports both serial (via Playwright page.evaluate) and concurrent (via aiohttp)
 fetching strategies. Concurrent mode uses cookies from the Playwright session
 to make parallel HTTP requests with asyncio.Semaphore for rate-limiting.
 """
+
+import asyncio
 import os
 import re
-import json
-import asyncio
 import ssl
-from typing import Optional
+
 from api_client import FasihAuthError
 
 TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
@@ -24,7 +24,7 @@ def extract_assignment_id(detail_url: str) -> str | None:
     Ekstrak Assignment ID dari URL detail.
     Contoh: /survey-collection/assignment-detail/{ASSIGNMENT_ID}/{SURVEY_ID}
     """
-    match = re.search(r'/assignment-detail/([a-f0-9\-]+)/', detail_url)
+    match = re.search(r"/assignment-detail/([a-f0-9\-]+)/", detail_url)
     if match:
         return match.group(1)
     return None
@@ -34,9 +34,9 @@ async def fetch_assignment_data(page, detail_url: str) -> dict | None:
     """
     Panggil API JSON langsung dari browser context via fetch().
     Memanfaatkan cookies session yang sudah aktif.
-    
+
     Dengan retry logic: coba hingga MAX_RETRIES kali jika gagal.
-    
+
     Returns:
         dict data assignment, atau None jika gagal
     """
@@ -49,7 +49,8 @@ async def fetch_assignment_data(page, detail_url: str) -> dict | None:
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            result = await page.evaluate('''async (apiUrl) => {
+            result = await page.evaluate(
+                """async (apiUrl) => {
                 try {
                     const response = await fetch(apiUrl, {
                         method: 'GET',
@@ -64,13 +65,15 @@ async def fetch_assignment_data(page, detail_url: str) -> dict | None:
                 } catch (e) {
                     return { error: true, message: e.toString() };
                 }
-            }''', api_url)
+            }""",
+                api_url,
+            )
 
             if result and result.get("success"):
                 return result.get("data", {})
 
             error_msg = result.get("message", "Unknown") if result else "No response"
-            
+
             if attempt < MAX_RETRIES:
                 print(f"   ⚠️ Attempt {attempt}/{MAX_RETRIES} gagal ({error_msg}), retry in {RETRY_DELAY}s...")
                 await asyncio.sleep(RETRY_DELAY)
@@ -93,6 +96,7 @@ async def fetch_assignment_data(page, detail_url: str) -> dict | None:
 # Concurrent Fetcher — uses aiohttp with cookies from Playwright
 # =====================================================================
 
+
 async def extract_cookies_from_context(context) -> dict:
     """Extract cookies from Playwright browser context as a dict for aiohttp."""
     cookies = await context.cookies()
@@ -104,9 +108,10 @@ async def _fetch_one(
     assignment_id: str,
     semaphore: asyncio.Semaphore,
     retries: int = MAX_RETRIES,
-) -> Optional[dict]:
+) -> dict | None:
     """Fetch a single assignment detail via aiohttp with retry and semaphore."""
     import aiohttp
+
     api_url = f"{API_BASE}?id={assignment_id}"
 
     async with semaphore:
@@ -136,7 +141,7 @@ async def _fetch_one(
                     body = await resp.json()
                     if body and body.get("success"):
                         return body.get("data", {})
-                    
+
                     print(f"   ❌ {assignment_id[:8]}... API returned success=False: {body}")
 
                     if attempt < retries:
@@ -181,8 +186,7 @@ async def fetch_assignments_concurrent(
         List of successfully fetched assignment data dicts
     """
     import aiohttp
-    
-    
+
     # Create SSL context that doesn't verify (VPN internal network)
     ssl_ctx = ssl.create_default_context()
     ssl_ctx.check_hostname = False
@@ -204,7 +208,7 @@ async def fetch_assignments_concurrent(
     results = []
     completed = 0
     total = len(id_map)
-    
+
     # Use a cookie jar with the extracted cookies
     jar = aiohttp.CookieJar(unsafe=True)
     connector = aiohttp.TCPConnector(ssl=ssl_ctx, limit=concurrency + 20)
@@ -224,7 +228,7 @@ async def fetch_assignments_concurrent(
                     data = await coro
                     completed += 1
 
-                    # Memory optimization: if on_progress (callback) is provided, 
+                    # Memory optimization: if on_progress (callback) is provided,
                     # we don't need to store all results in memory here.
                     # The caller handles the storage (e.g. BatchUpserterBulk).
                     if not on_progress and data:
@@ -235,8 +239,10 @@ async def fetch_assignments_concurrent(
                     elif completed % 100 == 0 or completed == total:
                         # Fallback logging if no callback
                         print(f"   📊 Progress: {completed}/{total}")
-                except FasihAuthError as ae:
-                    print(f"   🚨 [Early-Abort] Ditemukan FasihAuthError (session expired)! Menghentikan semua sisa request...")
+                except FasihAuthError:
+                    print(
+                        "   🚨 [Early-Abort] Ditemukan FasihAuthError (session expired)! Menghentikan semua sisa request..."
+                    )
                     for t in tasks:
                         if not t.done():
                             t.cancel()

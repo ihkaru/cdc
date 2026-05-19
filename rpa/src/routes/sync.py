@@ -1,19 +1,20 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from datetime import datetime, timezone
 import json
 import logging
+from datetime import datetime, timezone
 
+from fastapi import APIRouter, BackgroundTasks, HTTPException
+
+from auth import fetch_vpn_cookie
 from db.connection import get_session, init_db, reset_engine
 from db.models import SyncLog, SystemSettings
-
+from schemas import StatusResponse, SyncRequest, SyncResponse, VpnCookieRequest
 from state import sync_state
-from schemas import SyncRequest, SyncResponse, StatusResponse, VpnCookieRequest
-from auth import fetch_vpn_cookie
-from worker.queue import _get_queued_jobs, _get_queue_position, _queue_worker
 from utils.logger import trace_var
+from worker.queue import _get_queue_position, _get_queued_jobs, _queue_worker
 
 logger = logging.getLogger("rpa.routes.sync")
 router = APIRouter()
+
 
 @router.get("/health")
 def health():
@@ -28,18 +29,21 @@ def status():
         session = get_session()
         queued = _get_queued_jobs(session)
         import json
+
         for i, job in enumerate(queued):
             try:
                 req_data = json.loads(job.notes or "{}")
                 survey_name = req_data.get("survey_name", "Unknown")
             except:
                 survey_name = "Unknown"
-            queue.append({
-                "job_id": job.id,
-                "survey_name": survey_name,
-                "position": i + 1,
-                "status": "queued",
-            })
+            queue.append(
+                {
+                    "job_id": job.id,
+                    "survey_name": survey_name,
+                    "position": i + 1,
+                    "status": "queued",
+                }
+            )
         session.close()
     except:
         pass
@@ -79,7 +83,7 @@ async def trigger_sync(req: SyncRequest, background_tasks: BackgroundTasks):
         return SyncResponse(
             status="already_queued",
             message=f"Survey '{req.survey_name}' sudah dalam antrian"
-                    + (f" (posisi {pos})" if pos else " (sedang berjalan)"),
+            + (f" (posisi {pos})" if pos else " (sedang berjalan)"),
             job_id=existing.id,
             queue_position=pos,
         )
@@ -87,7 +91,7 @@ async def trigger_sync(req: SyncRequest, background_tasks: BackgroundTasks):
     # Create queued job — store request data in notes as JSON
     req_dict = req.dict()
     req_dict["trace_id"] = trace_var.get()
-    
+
     sync_log = SyncLog(
         survey_config_id=req.survey_config_id,
         started_at=datetime.now(timezone.utc),
@@ -137,21 +141,23 @@ async def cancel_job(job_id: int):
     return {"status": "cancelled", "message": f"Job {job_id} cancelled"}
 
 
-from connectivity import check_fasih_reachable, is_session_stale
+from connectivity import check_fasih_reachable
+
 
 @router.get("/vpn/check")
 async def check_vpn():
     import os
+
     logger.info("Received VPN status check request")
     try:
         # 1. Check application-level reachability (can we reach the FASIH server?)
         reachable, reason = await check_fasih_reachable()
-        
+
         # 2. Check physical interface (Informational only)
         has_tun = os.path.exists("/sys/class/net/tun0")
         has_ppp = os.path.exists("/sys/class/net/ppp0")
         has_vpn = has_tun or has_ppp
-        
+
         if reachable:
             if has_tun:
                 info = "VPN Connected (via tun0)"
@@ -161,18 +167,14 @@ async def check_vpn():
                 info = "VPN Connected (Transparently via Host)"
             logger.info(f"VPN check outcome: reachable - {info}")
             return {"connected": True, "info": info}
-            
+
         err_msg = f"FASIH-SM unreachable: {reason} (Interface: {'tun0/ppp0 UP' if has_vpn else 'Missing'})"
         logger.warning(f"VPN check outcome: unreachable - {err_msg}")
-        return {
-            "connected": False, 
-            "reason": err_msg
-        }
-        
+        return {"connected": False, "reason": err_msg}
+
     except Exception as e:
         logger.exception("Unexpected exception occurred in /vpn/check handler")
-        return {"connected": False, "reason": f"Status check error: {str(e)}"}
-
+        return {"connected": False, "reason": f"Status check error: {e!s}"}
 
 
 @router.post("/vpn/auto-fetch")
@@ -199,7 +201,7 @@ async def auto_fetch_vpn(req: VpnCookieRequest):
             user_display = f"{req.sso_username[:3]}***" if req.sso_username else "None"
             logger.info(f"🔄 Starting auto-fetch VPN cookie for user {user_display}...")
             cookie = await fetch_vpn_cookie(req.sso_username, req.sso_password)
-            
+
             if cookie:
                 await sync_cookie_to_db(cookie)
                 logger.info("VPN cookie successfully synchronized to database")
@@ -220,26 +222,26 @@ async def refresh_assignment(assignment_id: str):
     Refetch assignment detail from BPS and update the local database.
     Used by the archiver to heal expired 403 links.
     """
-    from db.models import Assignment, SystemSettings
     from api_client import FasihApiClient
-    
+    from db.models import Assignment
+
     reset_engine()
     init_db()
     session = get_session()
-    
+
     try:
         # Get SSO cookies from SystemSettings
         cookie_setting = session.query(SystemSettings).filter_by(key="sso_cookies").first()
         if not cookie_setting:
             raise HTTPException(status_code=401, detail="No active SSO session. Please trigger a sync first.")
-            
+
         cookies = json.loads(cookie_setting.value)
-        
+
         async with FasihApiClient(cookies) as api:
             new_data = await api.get_assignment_detail(assignment_id)
             if not new_data:
                 raise HTTPException(status_code=404, detail="Failed to fetch fresh data from BPS")
-            
+
             # Update the assignment in DB
             assignment = session.query(Assignment).get(assignment_id)
             if assignment:
@@ -249,22 +251,26 @@ async def refresh_assignment(assignment_id: str):
                 return {"status": "success", "message": f"Assignment {assignment_id} refreshed"}
             else:
                 raise HTTPException(status_code=404, detail="Assignment not found in local DB")
-                
+
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         session.close()
 
+
 from pydantic import BaseModel
+
 
 class AssignmentFileNamesPayload(BaseModel):
     assignmentId: str
     fileNames: list[str]
 
+
 class RefreshImageUrlsRequest(BaseModel):
     survey_period_id: str
     assignments_payload: list[AssignmentFileNamesPayload]
+
 
 @router.post("/sync/refresh-image-urls")
 async def refresh_image_urls(req: RefreshImageUrlsRequest):
@@ -272,28 +278,27 @@ async def refresh_image_urls(req: RefreshImageUrlsRequest):
     Get fresh S3 Presigned URLs directly from BPS /presigned-url-get endpoint.
     Returns: { "s3_key_1": "https://fresh_url...", ... }
     """
-    from db.models import SystemSettings
     from api_client import FasihApiClient
-    
+
     reset_engine()
     init_db()
     session = get_session()
-    
+
     try:
         cookie_setting = session.query(SystemSettings).filter_by(key="sso_cookies").first()
         if not cookie_setting:
             raise HTTPException(status_code=401, detail="No active SSO session. Please trigger a sync first.")
-            
+
         cookies = json.loads(cookie_setting.value)
-        
+
         async with FasihApiClient(cookies) as api:
             payload_dicts = [item.dict() for item in req.assignments_payload]
             fresh_urls = await api.get_fresh_image_urls(req.survey_period_id, payload_dicts)
             if fresh_urls is None:
                 raise HTTPException(status_code=500, detail="Failed to fetch fresh presigned URLs from BPS")
-            
+
             return {"status": "success", "data": fresh_urls}
-            
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:

@@ -5,22 +5,17 @@ from datetime import datetime, timezone
 
 from db.connection import get_session, init_db, reset_engine
 from db.models import SyncLog
-
-from state import sync_state
 from schemas import SyncRequest
-from worker.job_runner import _run_single_job
+from state import sync_state
 from utils.logger import trace_var
+from worker.job_runner import _run_single_job
 
 logger = logging.getLogger("rpa.worker.queue")
 
+
 def _get_queued_jobs(session) -> list:
     """Get all queued jobs ordered by creation time."""
-    return (
-        session.query(SyncLog)
-        .filter(SyncLog.status == "queued")
-        .order_by(SyncLog.started_at.asc())
-        .all()
-    )
+    return session.query(SyncLog).filter(SyncLog.status == "queued").order_by(SyncLog.started_at.asc()).all()
 
 
 def _get_queue_position(session, job_id: int) -> int:
@@ -33,6 +28,7 @@ def _get_queue_position(session, job_id: int) -> int:
 
 
 _worker_running = False
+
 
 async def _queue_worker():
     """Background worker that processes queued jobs one by one."""
@@ -88,7 +84,7 @@ async def _queue_worker():
                     db_job = db_session.query(SyncLog).get(job.id)
                     if db_job and db_job.status in ["queued", "running"]:
                         db_job.status = "failed"
-                        db_job.notes = f"Critical worker error: {str(e)}"
+                        db_job.notes = f"Critical worker error: {e!s}"
                         db_job.finished_at = datetime.now(timezone.utc)
                         db_session.commit()
                     db_session.close()
@@ -104,6 +100,7 @@ async def _queue_worker():
     finally:
         _worker_running = False
         sync_state.queue_count = 0
+
 
 async def trigger_worker():
     """Trigger the queue worker if it's not already running."""

@@ -1,5 +1,6 @@
 import json
 
+
 def extract_variables_from_json(data, prefix="", depth=0, max_depth=15):
     """
     Recursive function to flatten nested JSON and extract variables.
@@ -15,7 +16,7 @@ def extract_variables_from_json(data, prefix="", depth=0, max_depth=15):
     if isinstance(data, dict):
         for key, value in data.items():
             new_key = f"{prefix}{key}"
-            
+
             # Handle FASIH media array pattern: [{"url": "...", "fileName": "..."}]
             if isinstance(value, list) and len(value) > 0:
                 # Check if it's a media array
@@ -29,10 +30,10 @@ def extract_variables_from_json(data, prefix="", depth=0, max_depth=15):
                 else:
                     # Regular list
                     variables.update(extract_variables_from_json(value, f"{new_key}__", depth + 1))
-            
+
             elif isinstance(value, dict):
                 variables.update(extract_variables_from_json(value, f"{new_key}__", depth + 1))
-            
+
             elif isinstance(value, str):
                 # Check if it's a stringified JSON
                 if (value.startswith("{") and value.endswith("}")) or (value.startswith("[") and value.endswith("]")):
@@ -45,7 +46,7 @@ def extract_variables_from_json(data, prefix="", depth=0, max_depth=15):
                     variables[new_key] = value
             else:
                 variables[new_key] = value
-                
+
     elif isinstance(data, list):
         for i, item in enumerate(data):
             # NEW: FASIH Specialized array handling (matches Dashboard TS extractVariables logic)
@@ -60,7 +61,7 @@ def extract_variables_from_json(data, prefix="", depth=0, max_depth=15):
                     variables.update(extract_variables_from_json(item, f"{prefix}{i}__", depth + 1))
             else:
                 variables.update(extract_variables_from_json(item, f"{prefix}{i}__", depth + 1))
-            
+
     if depth == 0:
         print(f"   🐛 [Extractor] Finished. Extracted {len(variables)} variables.")
     return variables

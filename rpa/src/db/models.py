@@ -1,9 +1,11 @@
 """
 Database models — SQLAlchemy ORM (PostgreSQL)
 """
+
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
@@ -11,7 +13,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    JSON,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase
@@ -23,6 +24,7 @@ class Base(DeclarativeBase):
 
 class SurveyConfig(Base):
     """Config satu survey — credentials, filter, interval."""
+
     __tablename__ = "survey_configs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, comment="UUID")
@@ -35,8 +37,9 @@ class SurveyConfig(Base):
     interval_minutes = Column(Integer, default=30)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
-                        onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     def __repr__(self):
         return f"<SurveyConfig(name={self.survey_name}, active={self.is_active})>"
@@ -44,11 +47,16 @@ class SurveyConfig(Base):
 
 class Assignment(Base):
     """Setiap baris = 1 assignment dari FASIH-SM"""
+
     __tablename__ = "assignments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, comment="UUID _id dari API FASIH")
-    survey_config_id = Column(UUID(as_uuid=True), ForeignKey("survey_configs.id", ondelete="CASCADE"),
-                              index=True, comment="FK ke survey_configs")
+    survey_config_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("survey_configs.id", ondelete="CASCADE"),
+        index=True,
+        comment="FK ke survey_configs",
+    )
     code_identity = Column(String, index=True, comment="Kode identitas")
     survey_period_id = Column(UUID(as_uuid=True), comment="UUID periode survey")
     assignment_status_alias = Column(String, comment="Status: OPEN, SUBMITTED, dll")
@@ -56,7 +64,9 @@ class Assignment(Base):
     data_json = Column(JSON, comment="Full JSON payload dari API")
     flat_data = Column(JSON, default={}, comment="Flattened metric columns")
     date_modified_remote = Column(String, comment="date_modified dari API")
-    sync_log_id = Column(Integer, ForeignKey("sync_logs.id", ondelete="SET NULL"), index=True, comment="ID log sinkronisasi terakhir")
+    sync_log_id = Column(
+        Integer, ForeignKey("sync_logs.id", ondelete="SET NULL"), index=True, comment="ID log sinkronisasi terakhir"
+    )
     date_synced = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
@@ -72,11 +82,11 @@ class Assignment(Base):
 
 class SyncLog(Base):
     """Log per-run sinkronisasi"""
+
     __tablename__ = "sync_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    survey_config_id = Column(UUID(as_uuid=True), ForeignKey("survey_configs.id", ondelete="CASCADE"),
-                              index=True)
+    survey_config_id = Column(UUID(as_uuid=True), ForeignKey("survey_configs.id", ondelete="CASCADE"), index=True)
     started_at = Column(DateTime)
     finished_at = Column(DateTime)
     total_fetched = Column(Integer, default=0)
@@ -96,12 +106,14 @@ class SyncLog(Base):
 
 class SystemSettings(Base):
     """Pengaturan global / token"""
+
     __tablename__ = "system_settings"
 
     key = Column(String, primary_key=True)
     value = Column(String, nullable=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
-                        onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     def __repr__(self):
         return f"<SystemSettings(key={self.key})>"

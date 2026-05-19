@@ -1,9 +1,11 @@
 """
 Database connection — PostgreSQL via SQLAlchemy.
 """
+
 import os
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
 
 _engine = None
 _SessionLocal = None
@@ -41,6 +43,7 @@ def get_session(database_url: str = "") -> Session:
 def init_db(database_url: str = ""):
     """Create all tables if they don't exist."""
     from .models import Base
+
     engine = get_engine(database_url)
     Base.metadata.create_all(bind=engine)
 
@@ -54,6 +57,6 @@ def reset_engine():
             print("🚰 Pool connections gracefully disposed.")
         except Exception as e:
             print(f"⚠️ Error disposing engine: {e}")
-            
+
     _engine = None
     _SessionLocal = None

@@ -201,227 +201,238 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { useQuasar } from 'quasar'
-import { vpnStatus } from '../composables/useVpn'
-import { api } from 'src/boot/axios'
+import { useQuasar } from "quasar";
+import { api } from "src/boot/axios";
+import { computed, onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { vpnStatus } from "../composables/useVpn";
 
-const $q = useQuasar()
-const router = useRouter()
-const route = useRoute()
+const $q = useQuasar();
+const router = useRouter();
+const route = useRoute();
 
-const isEdit = computed(() => !!route.params.id)
-const loading = ref(false)
-const saving = ref(false)
-const connecting = ref(false)
-const loadingKabupaten = ref(false)
-const step = ref(1)
+const isEdit = computed(() => !!route.params.id);
+const loading = ref(false);
+const saving = ref(false);
+const connecting = ref(false);
+const loadingKabupaten = ref(false);
+const step = ref(1);
 
 // --- FASIH Data State ---
-const rawSurveys = ref<any[]>([])
-const surveyOptions = ref<any[]>([])
+const rawSurveys = ref<any[]>([]);
+const surveyOptions = ref<any[]>([]);
 
-const rawProvinsi = ref<any[]>([])
-const provinsiOptions = ref<any[]>([])
+const rawProvinsi = ref<any[]>([]);
+const provinsiOptions = ref<any[]>([]);
 
-const rawKabupaten = ref<any[]>([])
-const kabupatenOptions = ref<any[]>([])
+const rawKabupaten = ref<any[]>([]);
+const kabupatenOptions = ref<any[]>([]);
 
 // Component modeled objects for q-select
-const selectedProvinsi = ref<{name: string, fullCode: string} | null>(null)
-const selectedKabupaten = ref<{name: string, fullCode: string} | null>(null)
+const selectedProvinsi = ref<{ name: string; fullCode: string } | null>(null);
+const selectedKabupaten = ref<{ name: string; fullCode: string } | null>(null);
 
 const rotationOptions = [
-  { label: 'Per Pengawas (Cepat)', value: 'pengawas' },
-  { label: 'Per Pencacah (Aman/Detail)', value: 'pencacah' }
-]
+	{ label: "Per Pengawas (Cepat)", value: "pengawas" },
+	{ label: "Per Pencacah (Aman/Detail)", value: "pencacah" },
+];
 
 const form = ref({
-  surveyName: '',
-  ssoUsername: '',
-  ssoPassword: '',
-  filterProvinsi: '',
-  filterKabupaten: '',
-  filterRotation: 'pengawas',
-  intervalMinutes: 30,
-  isActive: true
-})
+	surveyName: "",
+	ssoUsername: "",
+	ssoPassword: "",
+	filterProvinsi: "",
+	filterKabupaten: "",
+	filterRotation: "pengawas",
+	intervalMinutes: 30,
+	isActive: true,
+});
 
 async function loadData() {
-  if (!isEdit.value) return
-  loading.value = true
-  try {
-    const res = await api.get(`/surveys/${route.params.id}`)
-    const data = res.data
-    // Populate form
-    form.value = { ...data, ssoPassword: '' }
-    
-    // In edit mode, if we have filter values but no API context yet, 
-    // we make synthetic objects so they display nicely.
-    if (form.value.filterProvinsi) {
-      selectedProvinsi.value = { 
-        name: form.value.filterProvinsi, 
-        fullCode: form.value.filterProvinsi.match(/\[(\d+)\]/)?.[1] || '' 
-      }
-    }
-    if (form.value.filterKabupaten) {
-      selectedKabupaten.value = { 
-        name: form.value.filterKabupaten, 
-        fullCode: form.value.filterKabupaten.match(/\[(\d+)\]/)?.[1] || '' 
-      }
-    }
+	if (!isEdit.value) return;
+	loading.value = true;
+	try {
+		const res = await api.get(`/surveys/${route.params.id}`);
+		const data = res.data;
+		// Populate form
+		form.value = { ...data, ssoPassword: "" };
 
-    // Set survey option manually (so it shows directly)
-    rawSurveys.value = [{ name: form.value.surveyName }]
-    surveyOptions.value = rawSurveys.value
+		// In edit mode, if we have filter values but no API context yet,
+		// we make synthetic objects so they display nicely.
+		if (form.value.filterProvinsi) {
+			selectedProvinsi.value = {
+				name: form.value.filterProvinsi,
+				fullCode: form.value.filterProvinsi.match(/\[(\d+)\]/)?.[1] || "",
+			};
+		}
+		if (form.value.filterKabupaten) {
+			selectedKabupaten.value = {
+				name: form.value.filterKabupaten,
+				fullCode: form.value.filterKabupaten.match(/\[(\d+)\]/)?.[1] || "",
+			};
+		}
 
-    // Skip directly to config step 3 on edit by default
-    step.value = 3
-  } catch (e) {
-    $q.notify({ type: 'negative', message: 'Failed to load survey' })
-    router.push('/')
-  } finally {
-    loading.value = false
-  }
+		// Set survey option manually (so it shows directly)
+		rawSurveys.value = [{ name: form.value.surveyName }];
+		surveyOptions.value = rawSurveys.value;
+
+		// Skip directly to config step 3 on edit by default
+		step.value = 3;
+	} catch (e) {
+		$q.notify({ type: "negative", message: "Failed to load survey" });
+		router.push("/");
+	} finally {
+		loading.value = false;
+	}
 }
 
 // === STEP 1: Connect to FASIH ===
 async function onConnectFasih() {
-  connecting.value = true
-  try {
-    const res = await api.post('/surveys/fasih/lookup', {
-        ssoUsername: form.value.ssoUsername,
-        ssoPassword: form.value.ssoPassword
-    })
+	connecting.value = true;
+	try {
+		const res = await api.post("/surveys/fasih/lookup", {
+			ssoUsername: form.value.ssoUsername,
+			ssoPassword: form.value.ssoPassword,
+		});
 
-    const data = res.data
-    
-    // Process Surveys
-    rawSurveys.value = data.surveys || []
-    surveyOptions.value = [...rawSurveys.value]
-    
-    // Process Provinsi
-    // Prefix the name with code to match legacy string format 
-    // "[61] KALIMANTAN BARAT" as requested by existing system
-    rawProvinsi.value = (data.provinces || []).map((p: any) => {
-      // Check if p.name already starts with [XX]
-      const name = p.name.startsWith('[') ? p.name : `[${p.fullCode}] ${p.name}`
-      return { ...p, name }
-    })
-    provinsiOptions.value = [...rawProvinsi.value]
+		const data = res.data;
 
-    $q.notify({ type: 'positive', message: `Berhasil login! Menemukan ${rawSurveys.value.length} survey.` })
-    step.value = 2 // Move to next step
-  } catch (e: any) {
-    $q.notify({ type: 'negative', message: e.message || 'Terjadi kesalahan jaringan' })
-  } finally {
-    connecting.value = false
-  }
+		// Process Surveys
+		rawSurveys.value = data.surveys || [];
+		surveyOptions.value = [...rawSurveys.value];
+
+		// Process Provinsi
+		// Prefix the name with code to match legacy string format
+		// "[61] KALIMANTAN BARAT" as requested by existing system
+		rawProvinsi.value = (data.provinces || []).map((p: any) => {
+			// Check if p.name already starts with [XX]
+			const name = p.name.startsWith("[") ? p.name : `[${p.fullCode}] ${p.name}`;
+			return { ...p, name };
+		});
+		provinsiOptions.value = [...rawProvinsi.value];
+
+		$q.notify({
+			type: "positive",
+			message: `Berhasil login! Menemukan ${rawSurveys.value.length} survey.`,
+		});
+		step.value = 2; // Move to next step
+	} catch (e: any) {
+		$q.notify({ type: "negative", message: e.message || "Terjadi kesalahan jaringan" });
+	} finally {
+		connecting.value = false;
+	}
 }
 
 // === Select Handlers ===
 function onProvinsiChange(val: any) {
-  form.value.filterProvinsi = val ? val.name : ''
-  selectedKabupaten.value = null
-  form.value.filterKabupaten = ''
-  
-  if (val) {
-    loadKabupaten(val.fullCode)
-  }
+	form.value.filterProvinsi = val ? val.name : "";
+	selectedKabupaten.value = null;
+	form.value.filterKabupaten = "";
+
+	if (val) {
+		loadKabupaten(val.fullCode);
+	}
 }
 
 function onKabupatenChange(val: any) {
-  form.value.filterKabupaten = val ? val.name : ''
+	form.value.filterKabupaten = val ? val.name : "";
 }
 
 async function loadKabupaten(provFullCode: string) {
-  loadingKabupaten.value = true
-  rawKabupaten.value = []
-  kabupatenOptions.value = []
-  
-  try {
-    const res = await api.post('/surveys/fasih/kabupaten', {
-        ssoUsername: form.value.ssoUsername,
-        ssoPassword: form.value.ssoPassword,
-        provFullCode: provFullCode
-    })
+	loadingKabupaten.value = true;
+	rawKabupaten.value = [];
+	kabupatenOptions.value = [];
 
-    const data = res.data
-      rawKabupaten.value = (data.kabupaten || []).map((k: any) => {
-        const name = k.name.startsWith('[') ? k.name : `[${k.fullCode.substring(2)}] ${k.name}`
-        return { ...k, name }
-      })
-      kabupatenOptions.value = [...rawKabupaten.value]
-    } catch (e) {
-    console.error('Failed to load kabupaten:', e)
-    $q.notify({ type: 'warning', message: 'Gagal memuat daftar kabupaten' })
-  } finally {
-    loadingKabupaten.value = false
-  }
+	try {
+		const res = await api.post("/surveys/fasih/kabupaten", {
+			ssoUsername: form.value.ssoUsername,
+			ssoPassword: form.value.ssoPassword,
+			provFullCode: provFullCode,
+		});
+
+		const data = res.data;
+		rawKabupaten.value = (data.kabupaten || []).map((k: any) => {
+			const name = k.name.startsWith("[") ? k.name : `[${k.fullCode.substring(2)}] ${k.name}`;
+			return { ...k, name };
+		});
+		kabupatenOptions.value = [...rawKabupaten.value];
+	} catch (e) {
+		console.error("Failed to load kabupaten:", e);
+		$q.notify({ type: "warning", message: "Gagal memuat daftar kabupaten" });
+	} finally {
+		loadingKabupaten.value = false;
+	}
 }
 
 // === Filtering for Search Inputs ===
 function filterSurveys(val: string, update: Function) {
-  if (val === '') {
-    update(() => { surveyOptions.value = rawSurveys.value })
-    return
-  }
-  update(() => {
-    const needle = val.toLowerCase()
-    surveyOptions.value = rawSurveys.value.filter(v => v.name.toLowerCase().includes(needle))
-  })
+	if (val === "") {
+		update(() => {
+			surveyOptions.value = rawSurveys.value;
+		});
+		return;
+	}
+	update(() => {
+		const needle = val.toLowerCase();
+		surveyOptions.value = rawSurveys.value.filter((v) => v.name.toLowerCase().includes(needle));
+	});
 }
 
 function filterProvinsi(val: string, update: Function) {
-  if (val === '') {
-    update(() => { provinsiOptions.value = rawProvinsi.value })
-    return
-  }
-  update(() => {
-    const needle = val.toLowerCase()
-    provinsiOptions.value = rawProvinsi.value.filter(v => v.name.toLowerCase().includes(needle))
-  })
+	if (val === "") {
+		update(() => {
+			provinsiOptions.value = rawProvinsi.value;
+		});
+		return;
+	}
+	update(() => {
+		const needle = val.toLowerCase();
+		provinsiOptions.value = rawProvinsi.value.filter((v) => v.name.toLowerCase().includes(needle));
+	});
 }
 
 function filterKabupaten(val: string, update: Function) {
-  if (val === '') {
-    update(() => { kabupatenOptions.value = rawKabupaten.value })
-    return
-  }
-  update(() => {
-    const needle = val.toLowerCase()
-    kabupatenOptions.value = rawKabupaten.value.filter(v => v.name.toLowerCase().includes(needle))
-  })
+	if (val === "") {
+		update(() => {
+			kabupatenOptions.value = rawKabupaten.value;
+		});
+		return;
+	}
+	update(() => {
+		const needle = val.toLowerCase();
+		kabupatenOptions.value = rawKabupaten.value.filter((v) =>
+			v.name.toLowerCase().includes(needle),
+		);
+	});
 }
 
 // === Save to Dashboard DB ===
 async function save() {
-  saving.value = true
-  try {
-    const url = isEdit.value ? `/surveys/${route.params.id}` : '/surveys'
-    const method = isEdit.value ? 'put' : 'post'
-    
-    const payload = { ...form.value }
-    if (isEdit.value && !payload.ssoPassword) delete (payload as any).ssoPassword
+	saving.value = true;
+	try {
+		const url = isEdit.value ? `/surveys/${route.params.id}` : "/surveys";
+		const method = isEdit.value ? "put" : "post";
 
-    const res = await api({
-      url,
-      method,
-      data: payload
-    })
-    
-    $q.notify({ type: 'positive', message: 'Survey berhasil disimpan' })
-    router.push('/')
-  } catch (e: any) {
-    const msg = e.response?.data?.message || e.message || 'Network error'
-    $q.notify({ type: 'negative', message: 'Error: ' + msg })
-  } finally {
-    saving.value = false
-  }
+		const payload = { ...form.value };
+		if (isEdit.value && !payload.ssoPassword) delete (payload as any).ssoPassword;
+
+		const res = await api({
+			url,
+			method,
+			data: payload,
+		});
+
+		$q.notify({ type: "positive", message: "Survey berhasil disimpan" });
+		router.push("/");
+	} catch (e: any) {
+		const msg = e.response?.data?.message || e.message || "Network error";
+		$q.notify({ type: "negative", message: "Error: " + msg });
+	} finally {
+		saving.value = false;
+	}
 }
 
-onMounted(() => loadData())
+onMounted(() => loadData());
 </script>
 
 <style scoped>

@@ -17,7 +17,6 @@ import json
 import os
 import sys
 import time
-import traceback
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -29,8 +28,10 @@ TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def hr(char="─", width=70):
     print(char * width)
+
 
 def section(title: str):
     print()
@@ -38,15 +39,19 @@ def section(title: str):
     print(f"  {title}")
     hr("═")
 
+
 def step(label: str):
     print(f"\n▶  {label}")
     hr("─")
 
+
 def result(key: str, val, unit=""):
     print(f"   {'·'} {key:<38} {val} {unit}")
 
+
 def warn(msg: str):
     print(f"   ⚠  {msg}")
+
 
 def fail(msg: str):
     print(f"   ✗  {msg}")
@@ -57,15 +62,17 @@ def fail(msg: str):
 # Decrypt password: format iv_hex:cipher_hex (AES-256-CBC) dari dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def decrypt_aes_cbc(encrypted_str: str) -> str:
     """Decrypt AES-256-CBC format: 'iv_hex:ciphertext_hex' (digunakan oleh Dashboard TS).
-    
+
     Key derivation: SHA-256(key_string) — identik dengan Node.js:
       createHash('sha256').update(ENCRYPTION_KEY).digest()
     """
     import hashlib
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
     from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
     key_str = os.environ.get("ENCRYPTION_KEY", "")
     if not key_str:
@@ -92,13 +99,15 @@ def decrypt_aes_cbc(encrypted_str: str) -> str:
 # Fase 0: Baca config dari DB
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def load_survey_config():
     """Pilih survey dengan jumlah records di DB antara 50–1000 (cukup besar untuk
     throughput yang bermakna, cukup kecil agar benchmark selesai cepat).
     Fallback ke survey aktif pertama jika tidak ada yang masuk range."""
-    from db.connection import get_session
-    from db.models import SurveyConfig, Assignment
     from sqlalchemy import func
+
+    from db.connection import get_session
+    from db.models import Assignment, SurveyConfig
 
     session = get_session()
     # Hitung jumlah assignment per survey_config_id
@@ -112,9 +121,7 @@ def load_survey_config():
     # Pilih survey aktif yang masuk range 50–1000 records, urutkan terbanyak dulu
     active_surveys = session.query(SurveyConfig).filter_by(is_active=True).all()
     candidates = [
-        (sc, count_map.get(str(sc.id), 0))
-        for sc in active_surveys
-        if 50 <= count_map.get(str(sc.id), 0) <= 1000
+        (sc, count_map.get(str(sc.id), 0)) for sc in active_surveys if 50 <= count_map.get(str(sc.id), 0) <= 1000
     ]
     candidates.sort(key=lambda x: x[1], reverse=True)  # terbanyak dulu dalam range
 
@@ -137,10 +144,14 @@ def load_survey_config():
 # Cookie probe: cek apakah cookies di DB masih valid tanpa login ulang
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 async def probe_cookies(cookies: dict) -> bool:
     """Kirim satu request ringan ke API survey list.
     Return True jika server memberi JSON (session valid), False jika redirect HTML."""
-    import aiohttp, ssl
+    import ssl
+
+    import aiohttp
+
     ssl_ctx = ssl.create_default_context()
     ssl_ctx.check_hostname = False
     ssl_ctx.verify_mode = ssl.CERT_NONE
@@ -154,15 +165,20 @@ async def probe_cookies(cookies: dict) -> bool:
         "Cookie": cookie_str,
     }
     try:
-        async with aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(ssl=ssl_ctx)
-        ) as s:
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_ctx)) as s:
             # Endpoint ringan: survey list page 0 size 1
-            payload = {"pageNumber": 0, "pageSize": 1, "sortBy": "CREATED_AT",
-                       "sortDirection": "DESC", "keywordSearch": ""}
+            payload = {
+                "pageNumber": 0,
+                "pageSize": 1,
+                "sortBy": "CREATED_AT",
+                "sortDirection": "DESC",
+                "keywordSearch": "",
+            }
             async with s.post(
                 f"{TARGET_URL}/survey/api/v1/surveys/datatable?surveyType=Pencacahan",
-                json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
             ) as r:
                 ct = r.headers.get("content-type", "")
                 return "application/json" in ct
@@ -197,13 +213,15 @@ async def get_valid_cookies(sc, password: str) -> tuple:
 
     # Fallback: login via Playwright
     from playwright.async_api import async_playwright
+
     from auth import auto_login
+
     t0 = time.perf_counter()
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, slow_mo=50)
         context = await browser.new_context(
             viewport={"width": 1280, "height": 800},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
         page = await context.new_page()
         login_ok, cookies_dict, err_msg = await auto_login(page, sc.sso_username, password)
@@ -219,6 +237,7 @@ async def get_valid_cookies(sc, password: str) -> tuple:
             setting.value = json.dumps(cookies_dict)
         else:
             from db.models import SystemSettings as _SS
+
             setting = _SS(key="sso_cookies", value=json.dumps(cookies_dict))
             dbs.add(setting)
         dbs.commit()
@@ -233,13 +252,14 @@ async def get_valid_cookies(sc, password: str) -> tuple:
 # Main benchmark
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 async def run_benchmark():
     section("🚀 BENCHMARK KECEPATAN TARIK DATA FASIH-SM")
     print(f"  Target  : {TARGET_URL}")
     print(f"  Waktu   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"  Mode    : Identik dengan flow RPA Produksi (main.py)\n")
+    print("  Mode    : Identik dengan flow RPA Produksi (main.py)\n")
 
-    timings = {}   # dict label → ms
+    timings = {}  # dict label → ms
     results_summary = []
 
     # ── Fase 0: Load config ──────────────────────────────────────────────────
@@ -271,7 +291,6 @@ async def run_benchmark():
     from api_client import FasihApiClient
 
     async with FasihApiClient(cookies) as api:
-
         # Fase 2: Resolve Survey ID
         step("Fase 2 · Resolusi Survey ID (Endpoint: /survey/api/v1/surveys/datatable)")
         t0 = time.perf_counter()
@@ -329,12 +348,18 @@ async def run_benchmark():
         result("Pengawas/Admin ditemukan", len(pengawas_list), "orang")
         result("Pencacah ditemukan", len(pencacah_list), "orang")
         result("Latency list user", f"{ms:.1f}", "ms")
-        results_summary.append(("Users by region", f"{ms:.0f} ms  ({len(pengawas_list)} pengawas, {len(pencacah_list)} pencacah)"))
+        results_summary.append(
+            ("Users by region", f"{ms:.0f} ms  ({len(pengawas_list)} pengawas, {len(pencacah_list)} pencacah)")
+        )
 
         # Fase 4: Assignment Datatable — THROUGHPUT TEST
-        step("Fase 4 · Throughput Assignment Datatable (Endpoint: /analytic/api/v2/assignment/datatable-all-user-survey-periode)")
-        print(f"  Filter: periode={period_id[:8]}... | prov={prov_uuid and prov_uuid[:8]}... | kab={region_uuid and region_uuid[:8]}...")
-        print(f"  (Menarik semua halaman dengan page_size=1000 — identik dengan sync riil)")
+        step(
+            "Fase 4 · Throughput Assignment Datatable (Endpoint: /analytic/api/v2/assignment/datatable-all-user-survey-periode)"
+        )
+        print(
+            f"  Filter: periode={period_id[:8]}... | prov={prov_uuid and prov_uuid[:8]}... | kab={region_uuid and region_uuid[:8]}..."
+        )
+        print("  (Menarik semua halaman dengan page_size=1000 — identik dengan sync riil)")
 
         t0 = time.perf_counter()
         assignments = await api.get_assignments_metadata(
@@ -352,28 +377,28 @@ async def run_benchmark():
         result("Waktu total fetch datatable", f"{ms:.0f}", "ms")
         if n > 0:
             result("Throughput datatable", f"{rps:.1f}", "records/detik")
-            results_summary.append((
-                "Assignment datatable throughput",
-                f"{n} records dalam {ms:.0f} ms → {rps:.1f} rec/s"
-            ))
+            results_summary.append(
+                ("Assignment datatable throughput", f"{n} records dalam {ms:.0f} ms → {rps:.1f} rec/s")
+            )
         else:
             # API return 0 — akun ini mungkin tidak punya akses datatable.
             # Cek jumlah records yang sudah tersimpan di DB lokal sebagai konteks.
+            from sqlalchemy import func
+
             from db.connection import get_session as _gs2
             from db.models import Assignment
-            from sqlalchemy import func
+
             _dbs = _gs2()
             db_count = _dbs.query(func.count(Assignment.id)).filter_by(survey_config_id=sc.id).scalar()
             _dbs.close()
-            warn(f"Datatable API return 0 — akun mungkin tidak memiliki akses view-all.")
+            warn("Datatable API return 0 — akun mungkin tidak memiliki akses view-all.")
             warn(f"Records tersimpan di DB lokal untuk survey ini: {db_count} records")
-            results_summary.append((
-                "Assignment datatable throughput",
-                f"0 from API (DB lokal: {db_count} records)"
-            ))
+            results_summary.append(("Assignment datatable throughput", f"0 from API (DB lokal: {db_count} records)"))
 
         # Fase 5: Assignment Detail — SAMPLE latency
-        step("Fase 5 · Latency Detail Assignment (Endpoint: /assignment-general/api/assignment/get-by-id-with-data-for-scm)")
+        step(
+            "Fase 5 · Latency Detail Assignment (Endpoint: /assignment-general/api/assignment/get-by-id-with-data-for-scm)"
+        )
         sample_ids = [m["id"] for m in assignments[:5]] if assignments else []
 
         # Fallback: ambil sample ID dari DB lokal jika datatable API return 0
@@ -381,6 +406,7 @@ async def run_benchmark():
             warn("Datatable return 0 — menggunakan sample IDs dari DB lokal untuk uji latency detail.")
             from db.connection import get_session as _gs3
             from db.models import Assignment
+
             _dbs3 = _gs3()
             db_samples = _dbs3.query(Assignment).filter_by(survey_config_id=sc.id).limit(5).all()
             _dbs3.close()
@@ -408,10 +434,9 @@ async def run_benchmark():
             result("Latency detail — rata-rata", f"{avg_detail:.1f}", "ms")
             result("Latency detail — min", f"{min_detail:.1f}", "ms")
             result("Latency detail — maks", f"{max_detail:.1f}", "ms")
-            results_summary.append((
-                "Assignment detail latency (avg)",
-                f"{avg_detail:.1f} ms (sample {len(sample_ids)})"
-            ))
+            results_summary.append(
+                ("Assignment detail latency (avg)", f"{avg_detail:.1f} ms (sample {len(sample_ids)})")
+            )
 
         # Fase 6: Deep Dive Verification (Smart Slicing)
         step("Fase 6 · Verifikasi Deep Dive (Endpoint: /region/api/v1/region/level3)")
@@ -419,17 +444,21 @@ async def run_benchmark():
             t0 = time.perf_counter()
             sub_regions = await api.get_sub_regions(3, region_group_id2, region_full_code)
             ms = (time.perf_counter() - t0) * 1000
-            
+
             result("Parent Region Code", region_full_code)
             result("Sub-regions found (Level 3)", len(sub_regions))
             result("Latency Level 3 lookup", f"{ms:.1f}", "ms")
-            
+
             if sub_regions:
                 sample_sub = sub_regions[0]
                 result("Sample Sub-region", f"{sample_sub.get('name')} ({sample_sub.get('fullCode')})")
-                results_summary.append(("Deep Dive Capability", f"✅ Found {len(sub_regions)} sub-regions for {region_full_code}"))
+                results_summary.append(
+                    ("Deep Dive Capability", f"✅ Found {len(sub_regions)} sub-regions for {region_full_code}")
+                )
             else:
-                warn(f"Tidak ada sub-wilayah (Kecamatan) ditemukan untuk {region_full_code}. Verifikasi logic slicing manual diperlukan.")
+                warn(
+                    f"Tidak ada sub-wilayah (Kecamatan) ditemukan untuk {region_full_code}. Verifikasi logic slicing manual diperlukan."
+                )
                 results_summary.append(("Deep Dive Capability", "⚠ No sub-regions (L3) returned"))
         else:
             warn("Data region tidak lengkap (Missing Full Code/Group ID). Skip verifikasi Deep Dive.")

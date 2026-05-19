@@ -342,35 +342,35 @@
 </template>
 
 <script setup lang="ts">
-import { toRef } from 'vue'
-import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
-import { useVizForm } from '../../composables/visualizations/useVizForm'
-import VizPreviewCanvas from './VizPreviewCanvas.vue'
+import { VueMonacoEditor } from "@guolao/vue-monaco-editor";
+import { toRef } from "vue";
+import { useVizForm } from "../../composables/visualizations/useVizForm";
+import VizPreviewCanvas from "./VizPreviewCanvas.vue";
 
 const props = defineProps<{
-  labelSchema: any
-  visualizations: any[]
-  fetchVizData: (id: number) => Promise<void>
-}>()
+	labelSchema: any;
+	visualizations: any[];
+	fetchVizData: (id: number) => Promise<void>;
+}>();
 
 const filterOperators = [
-  { label: '=', value: 'equals' },
-  { label: '!=', value: 'not_equals' },
-  { label: 'Contains', value: 'contains' },
-  { label: '>', value: 'greater_than' },
-  { label: '<', value: 'less_than' }
-]
+	{ label: "=", value: "equals" },
+	{ label: "!=", value: "not_equals" },
+	{ label: "Contains", value: "contains" },
+	{ label: ">", value: "greater_than" },
+	{ label: "<", value: "less_than" },
+];
 
 const form = useVizForm(
-  toRef(props, 'labelSchema'),
-  toRef(props, 'visualizations'),
-  props.fetchVizData
-)
+	toRef(props, "labelSchema"),
+	toRef(props, "visualizations"),
+	props.fetchVizData,
+);
 
 defineExpose({
-  openAddDialog: form.openAddDialog,
-  openEditDialog: form.openEditDialog
-})
+	openAddDialog: form.openAddDialog,
+	openEditDialog: form.openEditDialog,
+});
 </script>
 
 <style scoped>

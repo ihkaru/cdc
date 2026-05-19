@@ -153,113 +153,112 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { vpnStatus, useVpn } from '../composables/useVpn'
-import { useAuthStore } from 'src/stores/auth'
+import { useQuasar } from "quasar";
+import { useAuthStore } from "src/stores/auth";
+import { onBeforeUnmount, onMounted, ref } from "vue";
+import { useVpn, vpnStatus } from "../composables/useVpn";
 
-import { useQuasar } from 'quasar'
-
-const $q = useQuasar()
-const { checkVPN } = useVpn()
-const auth = useAuthStore()
+const $q = useQuasar();
+const { checkVPN } = useVpn();
+const auth = useAuthStore();
 
 async function onLogout() {
-  $q.loading.show({
-    message: 'Logging out...'
-  })
-  try {
-    await auth.logout()
-  } finally {
-    $q.loading.hide()
-  }
+	$q.loading.show({
+		message: "Logging out...",
+	});
+	try {
+		await auth.logout();
+	} finally {
+		$q.loading.hide();
+	}
 }
 
-const showCookieDialog = ref(false)
-const cookieInput = ref('')
-const cookieLoading = ref(false)
-const cookieError = ref('')
-const cookieSuccess = ref('')
-let timer: any = null
-let rapidTimer: any = null
+const showCookieDialog = ref(false);
+const cookieInput = ref("");
+const cookieLoading = ref(false);
+const cookieError = ref("");
+const cookieSuccess = ref("");
+let timer: any = null;
+let rapidTimer: any = null;
 
 function startRapidPolling() {
-  // Clear any existing rapid poll
-  if (rapidTimer) clearInterval(rapidTimer)
-  // Poll every 3s for 30s, stop early if connected
-  let elapsed = 0
-  rapidTimer = setInterval(async () => {
-    elapsed += 3000
-    await checkVPN()
-    if (vpnStatus.value?.connected || elapsed >= 30000) {
-      clearInterval(rapidTimer)
-      rapidTimer = null
-    }
-  }, 3000)
+	// Clear any existing rapid poll
+	if (rapidTimer) clearInterval(rapidTimer);
+	// Poll every 3s for 30s, stop early if connected
+	let elapsed = 0;
+	rapidTimer = setInterval(async () => {
+		elapsed += 3000;
+		await checkVPN();
+		if (vpnStatus.value?.connected || elapsed >= 30000) {
+			clearInterval(rapidTimer);
+			rapidTimer = null;
+		}
+	}, 3000);
 }
 
 async function submitCookie() {
-  cookieLoading.value = true
-  cookieError.value = ''
-  cookieSuccess.value = ''
-  try {
-    const res = await fetch('/api/surveys/vpn/cookie', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cookie: cookieInput.value })
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.message || 'Failed to update cookie')
-    cookieSuccess.value = data.message || 'Cookie updated!'
-    cookieInput.value = ''
-    // Start rapid polling to quickly detect VPN reconnect
-    startRapidPolling()
-  } catch (e: any) {
-    cookieError.value = e.message || 'Unknown error'
-  } finally {
-    cookieLoading.value = false
-  }
+	cookieLoading.value = true;
+	cookieError.value = "";
+	cookieSuccess.value = "";
+	try {
+		const res = await fetch("/api/surveys/vpn/cookie", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ cookie: cookieInput.value }),
+		});
+		const data = await res.json();
+		if (!res.ok) throw new Error(data.message || "Failed to update cookie");
+		cookieSuccess.value = data.message || "Cookie updated!";
+		cookieInput.value = "";
+		// Start rapid polling to quickly detect VPN reconnect
+		startRapidPolling();
+	} catch (e: any) {
+		cookieError.value = e.message || "Unknown error";
+	} finally {
+		cookieLoading.value = false;
+	}
 }
 
 async function clearCookie() {
-  cookieLoading.value = true
-  cookieError.value = ''
-  cookieSuccess.value = ''
-  try {
-    const res = await fetch('/api/surveys/vpn/cookie', { method: 'DELETE' })
-    const data = await res.json()
-    cookieSuccess.value = data.message || 'Cookie cleared!'
-  } catch (e: any) {
-    cookieError.value = e.message || 'Unknown error'
-  } finally {
-    cookieLoading.value = false
-  }
+	cookieLoading.value = true;
+	cookieError.value = "";
+	cookieSuccess.value = "";
+	try {
+		const res = await fetch("/api/surveys/vpn/cookie", { method: "DELETE" });
+		const data = await res.json();
+		cookieSuccess.value = data.message || "Cookie cleared!";
+	} catch (e: any) {
+		cookieError.value = e.message || "Unknown error";
+	} finally {
+		cookieLoading.value = false;
+	}
 }
 
 async function triggerAutoFix() {
-  cookieLoading.value = true
-  cookieError.value = ''
-  cookieSuccess.value = ''
-  try {
-    const res = await fetch('/api/surveys/vpn/auto-fetch', { method: 'POST' })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.message || 'Auto-fix failed')
-    cookieSuccess.value = 'Auto-fix triggered! RPA is grabbing the cookie...'
-    startRapidPolling()
-  } catch (e: any) {
-    cookieError.value = e.message || 'Unknown error'
-  } finally {
-    cookieLoading.value = false
-  }
+	cookieLoading.value = true;
+	cookieError.value = "";
+	cookieSuccess.value = "";
+	try {
+		const res = await fetch("/api/surveys/vpn/auto-fetch", { method: "POST" });
+		const data = await res.json();
+		if (!res.ok) throw new Error(data.message || "Auto-fix failed");
+		cookieSuccess.value = "Auto-fix triggered! RPA is grabbing the cookie...";
+		startRapidPolling();
+	} catch (e: any) {
+		cookieError.value = e.message || "Unknown error";
+	} finally {
+		cookieLoading.value = false;
+	}
 }
 
 onMounted(() => {
-  checkVPN()
-  timer = setInterval(checkVPN, 30000)
-})
+	checkVPN();
+	timer = setInterval(checkVPN, 30000);
+});
 
 onBeforeUnmount(() => {
-  if (timer) clearInterval(timer)
-})
+	if (timer) clearInterval(timer);
+});
 </script>
 
 <style lang="scss">

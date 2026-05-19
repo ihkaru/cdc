@@ -375,339 +375,398 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
-import { useRoute } from 'vue-router'
-import { useQuasar } from 'quasar'
+import { useQuasar } from "quasar";
+import { computed, onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 
 interface ApiResponse<T> {
-  data: T;
-  pagination: {
-    total: number;
-    nextCursor?: string;
-  };
+	data: T;
+	pagination: {
+		total: number;
+		nextCursor?: string;
+	};
 }
 
-const route = useRoute()
-const $q = useQuasar()
-const surveyId = route.params.id as string
+const route = useRoute();
+const $q = useQuasar();
+const surveyId = route.params.id as string;
 
-const loading = ref(true)
-const assignments = ref<any[]>([])
-const stats = ref<any>(null)
-const workloads = ref<any[]>([])
-const surveyName = ref('')
-const labelCount = ref(0)
-const labelSchema = ref<any>(null)
+const loading = ref(true);
+const assignments = ref<any[]>([]);
+const stats = ref<any>(null);
+const workloads = ref<any[]>([]);
+const surveyName = ref("");
+const labelCount = ref(0);
+const labelSchema = ref<any>(null);
 
 // Upload state
-const showUploadDialog = ref(false)
-const uploadFile = ref<File | null>(null)
-const uploading = ref(false)
-const uploadError = ref('')
-const uploadSuccess = ref('')
-const downloading = ref(false)
-const exporting = ref(false)
+const showUploadDialog = ref(false);
+const uploadFile = ref<File | null>(null);
+const uploading = ref(false);
+const uploadError = ref("");
+const uploadSuccess = ref("");
+const downloading = ref(false);
+const exporting = ref(false);
 
 const pagination = ref({
-  page: 1,
-  rowsPerPage: 10,
-  rowsNumber: 0
-})
+	page: 1,
+	rowsPerPage: 10,
+	rowsNumber: 0,
+});
 
 // Cursor history for prev/next navigation
 // cursors[0] = undefined (first page), cursors[1] = cursor for page 2, etc.
-const cursorHistory = ref<(string | undefined)[]>([undefined])
+const cursorHistory = ref<(string | undefined)[]>([undefined]);
 
-const searchQuery = ref('')
-const colSearchQuery = ref('')
-const allAvailableColumns = ref<any[]>([])
-const visibleColumnKeys = ref<string[]>([])
+const searchQuery = ref("");
+const colSearchQuery = ref("");
+const allAvailableColumns = ref<any[]>([]);
+const visibleColumnKeys = ref<string[]>([]);
 
-const PREF_KEY = computed(() => `cdc_cols_${surveyId}`)
+const PREF_KEY = computed(() => `cdc_cols_${surveyId}`);
 
 function loadColumnPreferences() {
-  const saved = localStorage.getItem(PREF_KEY.value)
-  if (saved) {
-    try {
-      visibleColumnKeys.value = JSON.parse(saved)
-    } catch {}
-  }
+	const saved = localStorage.getItem(PREF_KEY.value);
+	if (saved) {
+		try {
+			visibleColumnKeys.value = JSON.parse(saved);
+		} catch {}
+	}
 }
 
 function saveColumnPreferences() {
-  localStorage.setItem(PREF_KEY.value, JSON.stringify(visibleColumnKeys.value))
+	localStorage.setItem(PREF_KEY.value, JSON.stringify(visibleColumnKeys.value));
 }
 
 async function fetchSchema() {
-  try {
-     const res = await fetch(`/api/surveys/${surveyId}/visualizations/schema`)
-     const data = await res.json()
-     allAvailableColumns.value = data.columns || []
-  } catch(e) { console.error('Failed to load full schema for columns') }
+	try {
+		const res = await fetch(`/api/surveys/${surveyId}/visualizations/schema`);
+		const data = await res.json();
+		allAvailableColumns.value = data.columns || [];
+	} catch (e) {
+		console.error("Failed to load full schema for columns");
+	}
 }
 
 const filteredAvailableColumns = computed(() => {
-  if (!colSearchQuery.value) return allAvailableColumns.value
-  const q = colSearchQuery.value.toLowerCase()
-  return allAvailableColumns.value.filter(col => 
-    col.name.toLowerCase().includes(q)
-  )
-})
+	if (!colSearchQuery.value) return allAvailableColumns.value;
+	const q = colSearchQuery.value.toLowerCase();
+	return allAvailableColumns.value.filter((col) => col.name.toLowerCase().includes(q));
+});
 
 function onSearch() {
-  pagination.value.page = 1
-  cursorHistory.value = [undefined]
-  onRequest({ pagination: pagination.value })
+	pagination.value.page = 1;
+	cursorHistory.value = [undefined];
+	onRequest({ pagination: pagination.value });
 }
 
 const computedColumns = computed(() => {
-  const baseCols = [
-    { name: 'identity', required: true, label: 'Code Identity', align: 'left' as const, field: 'codeIdentity' },
-    { name: 'user', align: 'left' as const, label: 'Assigned User', field: 'currentUserUsername' },
-    { name: 'status', align: 'left' as const, label: 'Status', field: 'assignmentStatusAlias' },
-    { name: 'date', align: 'left' as const, label: 'Last Modified', field: 'dateModifiedRemote' },
-    { name: 'attachments', align: 'left' as const, label: 'Attachments', field: 'attachments' }
-  ]
+	const baseCols = [
+		{
+			name: "identity",
+			required: true,
+			label: "Code Identity",
+			align: "left" as const,
+			field: "codeIdentity",
+		},
+		{ name: "user", align: "left" as const, label: "Assigned User", field: "currentUserUsername" },
+		{ name: "status", align: "left" as const, label: "Status", field: "assignmentStatusAlias" },
+		{ name: "date", align: "left" as const, label: "Last Modified", field: "dateModifiedRemote" },
+		{ name: "attachments", align: "left" as const, label: "Attachments", field: "attachments" },
+	];
 
-  const dyCols = visibleColumnKeys.value
-    .filter(key => key !== 'codeIdentity' && key !== 'assignmentStatusAlias' && key !== 'currentUserUsername' && key !== 'dateModifiedRemote')
-    .map(key => {
-      return {
-        name: key,
-        align: 'left' as const,
-        label: key,
-        field: (row: any) => {
-           if (row.flatData && row.flatData[key] !== undefined) return row.flatData[key]
-           if (row.labelData && row.labelData[key] !== undefined) return row.labelData[key]
-           if (row[key] !== undefined) return row[key]
-           return '-'
-        }
-      }
-    })
+	const dyCols = visibleColumnKeys.value
+		.filter(
+			(key) =>
+				key !== "codeIdentity" &&
+				key !== "assignmentStatusAlias" &&
+				key !== "currentUserUsername" &&
+				key !== "dateModifiedRemote",
+		)
+		.map((key) => {
+			return {
+				name: key,
+				align: "left" as const,
+				label: key,
+				field: (row: any) => {
+					if (row.flatData && row.flatData[key] !== undefined) return row.flatData[key];
+					if (row.labelData && row.labelData[key] !== undefined) return row.labelData[key];
+					if (row[key] !== undefined) return row[key];
+					return "-";
+				},
+			};
+		});
 
-  const enrichmentCol = { name: 'labelData', align: 'left' as const, label: 'Enrichment', field: 'labelData' }
-  
-  return [...baseCols, ...dyCols, enrichmentCol]
-})
+	const enrichmentCol = {
+		name: "labelData",
+		align: "left" as const,
+		label: "Enrichment",
+		field: "labelData",
+	};
+
+	return [...baseCols, ...dyCols, enrichmentCol];
+});
 
 const workloadCols = [
-  { name: 'index', label: '#', field: 'index', align: 'left' as const },
-  { name: 'username', label: 'Assigned User', field: 'username', align: 'left' as const, sortable: true },
-  { name: 'pending', label: 'Pending Action', field: 'pending', align: 'center' as const, sortable: true, sortOrder: 'da' as const },
-  { name: 'open', label: 'Open / Draft', field: 'open', align: 'center' as const, sortable: true },
-  { name: 'rejected', label: 'Rejected', field: 'rejected', align: 'center' as const, sortable: true },
-  { name: 'completed', label: 'Completed / Submitted', field: 'completed', align: 'center' as const, sortable: true },
-  { name: 'total', label: 'Total Handled', field: 'total', align: 'center' as const, sortable: true }
-]
+	{ name: "index", label: "#", field: "index", align: "left" as const },
+	{
+		name: "username",
+		label: "Assigned User",
+		field: "username",
+		align: "left" as const,
+		sortable: true,
+	},
+	{
+		name: "pending",
+		label: "Pending Action",
+		field: "pending",
+		align: "center" as const,
+		sortable: true,
+		sortOrder: "da" as const,
+	},
+	{ name: "open", label: "Open / Draft", field: "open", align: "center" as const, sortable: true },
+	{
+		name: "rejected",
+		label: "Rejected",
+		field: "rejected",
+		align: "center" as const,
+		sortable: true,
+	},
+	{
+		name: "completed",
+		label: "Completed / Submitted",
+		field: "completed",
+		align: "center" as const,
+		sortable: true,
+	},
+	{
+		name: "total",
+		label: "Total Handled",
+		field: "total",
+		align: "center" as const,
+		sortable: true,
+	},
+];
 
 function badgeColor(status: string) {
-  if (status.includes('COMPLETED') || status.includes('UPLOADED')) return 'positive'
-  if (status.includes('IN_PROGRESS') || status.includes('DRAFT')) return 'warning'
-  return 'grey-8'
+	if (status.includes("COMPLETED") || status.includes("UPLOADED")) return "positive";
+	if (status.includes("IN_PROGRESS") || status.includes("DRAFT")) return "warning";
+	return "grey-8";
 }
 
 function formatDate(dateStr: string) {
-  if (!dateStr) return '-'
-  try {
-    const d = new Date(dateStr)
-    if (isNaN(d.getTime())) return dateStr // Try to just return original if invalid
-    return d.toLocaleString('id-ID')
-  } catch {
-    return dateStr
-  }
+	if (!dateStr) return "-";
+	try {
+		const d = new Date(dateStr);
+		if (isNaN(d.getTime())) return dateStr; // Try to just return original if invalid
+		return d.toLocaleString("id-ID");
+	} catch {
+		return dateStr;
+	}
 }
 
 function isMirrored(row: any, colName: string) {
-  return row.localImageMirrored && row.localImagePaths && row.localImagePaths[colName]
+	return row.localImageMirrored && row.localImagePaths && row.localImagePaths[colName];
 }
 
 function getImageLabel(row: any, colName: string, originalUrl: string) {
-  const isImage = originalUrl.includes('foto') || colName.toLowerCase().includes('foto')
-  if (isMirrored(row, colName)) return isImage ? 'View (Vault)' : 'Link (Vault)'
-  return isImage ? 'View Image' : 'Link'
+	const isImage = originalUrl.includes("foto") || colName.toLowerCase().includes("foto");
+	if (isMirrored(row, colName)) return isImage ? "View (Vault)" : "Link (Vault)";
+	return isImage ? "View Image" : "Link";
 }
 
 function getImageUrl(row: any, colName: string, originalUrl: string) {
-  if (isMirrored(row, colName)) {
-    // SeaweedFS path is bucket/key, proxy expects /storage/view/bucket/key
-    return `/storage/view/${row.localImagePaths[colName]}`
-  }
-  return originalUrl
+	if (isMirrored(row, colName)) {
+		// SeaweedFS path is bucket/key, proxy expects /storage/view/bucket/key
+		return `/storage/view/${row.localImagePaths[colName]}`;
+	}
+	return originalUrl;
 }
 
 function getUnmirroredImages(row: any) {
-  if (!row.flatData) return []
-  const imgs = []
-  for (const [key, value] of Object.entries(row.flatData)) {
-    if (typeof value === 'string' && value.startsWith('http')) {
-      const vLower = value.toLowerCase()
-      const kLower = key.toLowerCase()
-      if (vLower.includes('.jpg') || vLower.includes('.jpeg') || vLower.includes('.png') || 
-          kLower.includes('foto') || kLower.includes('image') || kLower.includes('media')) {
-        // Skip if this image is already in the mirrored vault
-        if (row.localImagePaths && row.localImagePaths[key]) continue
-        imgs.push({ key, url: value })
-      }
-    }
-  }
-  return imgs
+	if (!row.flatData) return [];
+	const imgs = [];
+	for (const [key, value] of Object.entries(row.flatData)) {
+		if (typeof value === "string" && value.startsWith("http")) {
+			const vLower = value.toLowerCase();
+			const kLower = key.toLowerCase();
+			if (
+				vLower.includes(".jpg") ||
+				vLower.includes(".jpeg") ||
+				vLower.includes(".png") ||
+				kLower.includes("foto") ||
+				kLower.includes("image") ||
+				kLower.includes("media")
+			) {
+				// Skip if this image is already in the mirrored vault
+				if (row.localImagePaths && row.localImagePaths[key]) continue;
+				imgs.push({ key, url: value });
+			}
+		}
+	}
+	return imgs;
 }
 
 function hasUnmirroredImages(row: any) {
-  return getUnmirroredImages(row).length > 0
+	return getUnmirroredImages(row).length > 0;
 }
 
 async function loadStatsAndSurvey() {
-  try {
-    const [statsRes, surveyRes, labelsRes, schemaRes, workloadRes] = await Promise.all([
-      fetch(`/api/surveys/${surveyId}/stats`),
-      fetch(`/api/surveys/${surveyId}`),
-      fetch(`/api/surveys/${surveyId}/labels?limit=1`),
-      fetch(`/api/surveys/${surveyId}/labels/schema`),
-      fetch(`/api/surveys/${surveyId}/workload`)
-    ])
-    stats.value = await statsRes.json()
-    const survey = await surveyRes.json()
-    surveyName.value = survey.surveyName
-    const labelsData = await labelsRes.json() as ApiResponse<any>
-    labelCount.value = labelsData?.pagination?.total || 0
-    labelSchema.value = await schemaRes.json()
-    workloads.value = await workloadRes.json()
-  } catch (e) {
-    console.error('Failed to load stats')
-  }
+	try {
+		const [statsRes, surveyRes, labelsRes, schemaRes, workloadRes] = await Promise.all([
+			fetch(`/api/surveys/${surveyId}/stats`),
+			fetch(`/api/surveys/${surveyId}`),
+			fetch(`/api/surveys/${surveyId}/labels?limit=1`),
+			fetch(`/api/surveys/${surveyId}/labels/schema`),
+			fetch(`/api/surveys/${surveyId}/workload`),
+		]);
+		stats.value = await statsRes.json();
+		const survey = await surveyRes.json();
+		surveyName.value = survey.surveyName;
+		const labelsData = (await labelsRes.json()) as ApiResponse<any>;
+		labelCount.value = labelsData?.pagination?.total || 0;
+		labelSchema.value = await schemaRes.json();
+		workloads.value = await workloadRes.json();
+	} catch (e) {
+		console.error("Failed to load stats");
+	}
 }
 
 async function onRequest(props: any) {
-  const { page, rowsPerPage } = props.pagination
-  loading.value = true
-  try {
-    // If rowsPerPage changed, reset all cursor history (cursors are page-size-specific)
-    if (rowsPerPage !== pagination.value.rowsPerPage) {
-      cursorHistory.value = [undefined]
-    }
+	const { page, rowsPerPage } = props.pagination;
+	loading.value = true;
+	try {
+		// If rowsPerPage changed, reset all cursor history (cursors are page-size-specific)
+		if (rowsPerPage !== pagination.value.rowsPerPage) {
+			cursorHistory.value = [undefined];
+		}
 
-    // Determine which cursor to use based on page direction
-    // cursors are tracked in cursorHistory array indexed by page number (0-based)
-    const pageIdx = page - 1
-    
-    // Grow cursor history array if needed
-    while (cursorHistory.value.length <= pageIdx) {
-      cursorHistory.value.push(undefined)
-    }
-    
-    const cursor = cursorHistory.value[pageIdx]
-    const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''
-    const searchParam = searchQuery.value ? `&q=${encodeURIComponent(searchQuery.value)}` : ''
-    
-    const res = await fetch(`/api/surveys/${surveyId}/assignments?limit=${rowsPerPage}${cursorParam}${searchParam}&page=${page}`)
-    const data = await res.json() as ApiResponse<any[]>
-    console.log('🔍 CDC Debug: Assignments payload:', data.data)
-    if (data.data.length > 0) {
-      const first = data.data[0]
-      console.log('🔍 CDC Debug: First record mirror status:', {
-        id: first.id,
-        localImageMirrored: first.localImageMirrored,
-        hasPaths: !!first.localImagePaths,
-        keys: first.localImagePaths ? Object.keys(first.localImagePaths) : []
-      })
-    }
-    assignments.value = data.data
-    pagination.value.rowsNumber = data.pagination.total
-    pagination.value.page = page
-    pagination.value.rowsPerPage = rowsPerPage
-    
-    // Store the next cursor for the NEXT page
-    if (data.pagination.nextCursor) {
-      cursorHistory.value[pageIdx + 1] = data.pagination.nextCursor
-    }
-  } catch (e) {
-    console.error('Failed to load assignments')
-  } finally {
-    loading.value = false
-  }
+		// Determine which cursor to use based on page direction
+		// cursors are tracked in cursorHistory array indexed by page number (0-based)
+		const pageIdx = page - 1;
+
+		// Grow cursor history array if needed
+		while (cursorHistory.value.length <= pageIdx) {
+			cursorHistory.value.push(undefined);
+		}
+
+		const cursor = cursorHistory.value[pageIdx];
+		const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+		const searchParam = searchQuery.value ? `&q=${encodeURIComponent(searchQuery.value)}` : "";
+
+		const res = await fetch(
+			`/api/surveys/${surveyId}/assignments?limit=${rowsPerPage}${cursorParam}${searchParam}&page=${page}`,
+		);
+		const data = (await res.json()) as ApiResponse<any[]>;
+		console.log("🔍 CDC Debug: Assignments payload:", data.data);
+		if (data.data.length > 0) {
+			const first = data.data[0];
+			console.log("🔍 CDC Debug: First record mirror status:", {
+				id: first.id,
+				localImageMirrored: first.localImageMirrored,
+				hasPaths: !!first.localImagePaths,
+				keys: first.localImagePaths ? Object.keys(first.localImagePaths) : [],
+			});
+		}
+		assignments.value = data.data;
+		pagination.value.rowsNumber = data.pagination.total;
+		pagination.value.page = page;
+		pagination.value.rowsPerPage = rowsPerPage;
+
+		// Store the next cursor for the NEXT page
+		if (data.pagination.nextCursor) {
+			cursorHistory.value[pageIdx + 1] = data.pagination.nextCursor;
+		}
+	} catch (e) {
+		console.error("Failed to load assignments");
+	} finally {
+		loading.value = false;
+	}
 }
 
-
 async function downloadTemplate() {
-  downloading.value = true
-  try {
-    // Use same-window navigation — Content-Disposition: attachment prevents
-    // page replacement and triggers a proper download with correct filename
-    window.location.href = `/api/surveys/${surveyId}/labels/template`
-  } catch {
-    $q.notify({ type: 'negative', message: 'Gagal download template' })
-  } finally {
-    setTimeout(() => { downloading.value = false }, 1000)
-  }
+	downloading.value = true;
+	try {
+		// Use same-window navigation — Content-Disposition: attachment prevents
+		// page replacement and triggers a proper download with correct filename
+		window.location.href = `/api/surveys/${surveyId}/labels/template`;
+	} catch {
+		$q.notify({ type: "negative", message: "Gagal download template" });
+	} finally {
+		setTimeout(() => {
+			downloading.value = false;
+		}, 1000);
+	}
 }
 
 async function exportToExcel() {
-  exporting.value = true
-  try {
-    const searchParam = searchQuery.value ? `?q=${encodeURIComponent(searchQuery.value)}` : ''
-    // Directly trigger download via window.location.href to handle Buffer response
-    window.location.href = `/api/surveys/${surveyId}/assignments/export${searchParam}`
-  } catch {
-    $q.notify({ type: 'negative', message: 'Gagal export data' })
-  } finally {
-    setTimeout(() => { exporting.value = false }, 2000)
-  }
+	exporting.value = true;
+	try {
+		const searchParam = searchQuery.value ? `?q=${encodeURIComponent(searchQuery.value)}` : "";
+		// Directly trigger download via window.location.href to handle Buffer response
+		window.location.href = `/api/surveys/${surveyId}/assignments/export${searchParam}`;
+	} catch {
+		$q.notify({ type: "negative", message: "Gagal export data" });
+	} finally {
+		setTimeout(() => {
+			exporting.value = false;
+		}, 2000);
+	}
 }
 
 async function uploadLabels() {
-  if (!uploadFile.value) return
-  uploading.value = true
-  uploadError.value = ''
-  uploadSuccess.value = ''
+	if (!uploadFile.value) return;
+	uploading.value = true;
+	uploadError.value = "";
+	uploadSuccess.value = "";
 
-  const formData = new FormData()
-  formData.append('file', uploadFile.value)
+	const formData = new FormData();
+	formData.append("file", uploadFile.value);
 
-  try {
-    const res = await fetch(`/api/surveys/${surveyId}/labels/upload`, {
-      method: 'POST',
-      body: formData,
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Upload gagal')
-    uploadSuccess.value = data.message
-    uploadFile.value = null
-    // Refresh data
-    loadStatsAndSurvey()
-    onRequest({ pagination: pagination.value })
-  } catch (e: any) {
-    uploadError.value = e.message
-  } finally {
-    uploading.value = false
-  }
+	try {
+		const res = await fetch(`/api/surveys/${surveyId}/labels/upload`, {
+			method: "POST",
+			body: formData,
+		});
+		const data = await res.json();
+		if (!res.ok) throw new Error(data.error || "Upload gagal");
+		uploadSuccess.value = data.message;
+		uploadFile.value = null;
+		// Refresh data
+		loadStatsAndSurvey();
+		onRequest({ pagination: pagination.value });
+	} catch (e: any) {
+		uploadError.value = e.message;
+	} finally {
+		uploading.value = false;
+	}
 }
 
 async function clearLabels() {
-  $q.dialog({
-    title: 'Hapus Semua Label',
-    message: 'Yakin ingin menghapus semua label untuk survey ini?',
-    cancel: true,
-    persistent: true,
-    dark: true
-  }).onOk(async () => {
-    try {
-      await fetch(`/api/surveys/${surveyId}/labels`, { method: 'DELETE' })
-      $q.notify({ type: 'info', message: 'Semua label dihapus' })
-      labelCount.value = 0
-      onRequest({ pagination: pagination.value })
-    } catch {
-      $q.notify({ type: 'negative', message: 'Gagal menghapus label' })
-    }
-  })
+	$q.dialog({
+		title: "Hapus Semua Label",
+		message: "Yakin ingin menghapus semua label untuk survey ini?",
+		cancel: true,
+		persistent: true,
+		dark: true,
+	}).onOk(async () => {
+		try {
+			await fetch(`/api/surveys/${surveyId}/labels`, { method: "DELETE" });
+			$q.notify({ type: "info", message: "Semua label dihapus" });
+			labelCount.value = 0;
+			onRequest({ pagination: pagination.value });
+		} catch {
+			$q.notify({ type: "negative", message: "Gagal menghapus label" });
+		}
+	});
 }
 
 onMounted(() => {
-  loadColumnPreferences()
-  fetchSchema()
-  loadStatsAndSurvey()
-  onRequest({ pagination: pagination.value })
-})
+	loadColumnPreferences();
+	fetchSchema();
+	loadStatsAndSurvey();
+	onRequest({ pagination: pagination.value });
+});
 </script>
 
 <style scoped>

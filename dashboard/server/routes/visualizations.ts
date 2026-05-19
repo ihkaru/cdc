@@ -1,259 +1,293 @@
+import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { visualizationConfigs, labelData, labelSchemas, assignments } from "../db/schema";
-import { eq, sql, and } from "drizzle-orm";
+import { assignments, labelData, labelSchemas, visualizationConfigs } from "../db/schema";
 
-function flattenObj(obj: any, prefix = '', depth = 0): Record<string, any> {
-    let result: Record<string, any> = {};
-    if (!obj || typeof obj !== 'object' || depth > 5) return result;
-    
-    for (const key in obj) {
-        if (obj[key] === null || obj[key] === undefined) continue;
-        
-        const newKey = prefix ? `${prefix}.${key}` : key;
-        const value = obj[key];
+function flattenObj(obj: any, prefix = "", depth = 0): Record<string, any> {
+	const result: Record<string, any> = {};
+	if (!obj || typeof obj !== "object" || depth > 5) return result;
 
-        if (typeof value === 'object' && !Array.isArray(value)) {
-            Object.assign(result, flattenObj(value, newKey, depth + 1));
-        } else if (Array.isArray(value)) {
-            // Keep arrays as strings if they are simple, or just ignore complex ones
-            result[newKey] = JSON.stringify(value);
-        } else {
-            result[newKey] = value;
-        }
-    }
-    return result;
+	for (const key in obj) {
+		if (obj[key] === null || obj[key] === undefined) continue;
+
+		const newKey = prefix ? `${prefix}.${key}` : key;
+		const value = obj[key];
+
+		if (typeof value === "object" && !Array.isArray(value)) {
+			Object.assign(result, flattenObj(value, newKey, depth + 1));
+		} else if (Array.isArray(value)) {
+			// Keep arrays as strings if they are simple, or just ignore complex ones
+			result[newKey] = JSON.stringify(value);
+		} else {
+			result[newKey] = value;
+		}
+	}
+	return result;
 }
 
 // Extract variables aggressively from FASIH structure including deep nested fields
 function extractVariables(dataJson: any): Record<string, any> {
-    if (!dataJson) return {};
-    const dataObj = typeof dataJson === 'string' ? JSON.parse(dataJson) : dataJson;
-    const vars: Record<string, any> = {};
+	if (!dataJson) return {};
+	const dataObj = typeof dataJson === "string" ? JSON.parse(dataJson) : dataJson;
+	const vars: Record<string, any> = {};
 
-    function explore(obj: any, prefix = '', depth = 0) {
-        if (!obj || typeof obj !== 'object' || depth > 5) return;
-        
-        for (const k in obj) {
-            let val = obj[k];
-            const keyName = prefix ? `${prefix}.${k}` : k;
-            
-            if (val === null || val === undefined) continue;
+	function explore(obj: any, prefix = "", depth = 0) {
+		if (!obj || typeof obj !== "object" || depth > 5) return;
 
-            // Handle stringified JSON (common in FASIH 'data' or 'pre_defined_data' fields)
-            if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
-                try {
-                    const parsed = JSON.parse(val);
-                    if (parsed && typeof parsed === 'object') {
-                        explore(parsed, keyName, depth); // Explore inside parsed string content
-                        continue;
-                    }
-                } catch (e) {}
-            }
+		for (const k in obj) {
+			const val = obj[k];
+			const keyName = prefix ? `${prefix}.${k}` : k;
 
-            if (typeof val === 'object' && !Array.isArray(val)) {
-                explore(val, keyName, depth + 1);
-            } else if (Array.isArray(val)) {
-                // FASIH Specialized: 'answers', 'predata', or 'data' arrays
-                if (k === 'answers' || k === 'predata' || k === 'data') {
-                    val.forEach((item: any) => {
-                        if (item && item.dataKey) {
-                            let ans = item.answer;
-                            // Extract URL from photo/media array if present
-                            if (Array.isArray(ans) && ans.length > 0 && ans[0]?.url) {
-                                ans = ans[0].url;
-                            }
-                            vars[item.dataKey] = ans;
-                        }
-                    });
-                }
-            } else {
-                // Scalar values
-                const isUrl = typeof val === 'string' && val.startsWith('http');
-                const isImageKey = /foto|image|img|photo/i.test(k);
-                
-                if (isUrl || isImageKey || depth < 2) {
-                    vars[keyName] = val;
-                }
-            }
-        }
-    }
+			if (val === null || val === undefined) continue;
 
-    explore(dataObj);
-    return vars;
+			// Handle stringified JSON (common in FASIH 'data' or 'pre_defined_data' fields)
+			if (typeof val === "string" && (val.startsWith("{") || val.startsWith("["))) {
+				try {
+					const parsed = JSON.parse(val);
+					if (parsed && typeof parsed === "object") {
+						explore(parsed, keyName, depth); // Explore inside parsed string content
+						continue;
+					}
+				} catch (e) {}
+			}
+
+			if (typeof val === "object" && !Array.isArray(val)) {
+				explore(val, keyName, depth + 1);
+			} else if (Array.isArray(val)) {
+				// FASIH Specialized: 'answers', 'predata', or 'data' arrays
+				if (k === "answers" || k === "predata" || k === "data") {
+					val.forEach((item: any) => {
+						if (item && item.dataKey) {
+							let ans = item.answer;
+							// Extract URL from photo/media array if present
+							if (Array.isArray(ans) && ans.length > 0 && ans[0]?.url) {
+								ans = ans[0].url;
+							}
+							vars[item.dataKey] = ans;
+						}
+					});
+				}
+			} else {
+				// Scalar values
+				const isUrl = typeof val === "string" && val.startsWith("http");
+				const isImageKey = /foto|image|img|photo/i.test(k);
+
+				if (isUrl || isImageKey || depth < 2) {
+					vars[keyName] = val;
+				}
+			}
+		}
+	}
+
+	explore(dataObj);
+	return vars;
 }
 
-async function buildAndExecuteChartQuery(chartType: string, config: Record<string, any>, surveyId: string) {
-    const sanitize = (val: string) => val ? val.replace(/'/g, "''") : "";
+async function buildAndExecuteChartQuery(
+	chartType: string,
+	config: Record<string, any>,
+	surveyId: string,
+) {
+	const sanitize = (val: string) => (val ? val.replace(/'/g, "''") : "");
 
-    const getColumnSql = (col: string) => {
-        if (!col) return "NULL";
-        const base = ["assignmentStatusAlias", "currentUserUsername", "dateModifiedRemote", "codeIdentity"];
-        if (base.includes(col)) {
-            const snake = col.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
-            return `"assignments"."${snake}"`;
-        }
+	const getColumnSql = (col: string) => {
+		if (!col) return "NULL";
+		const base = [
+			"assignmentStatusAlias",
+			"currentUserUsername",
+			"dateModifiedRemote",
+			"codeIdentity",
+		];
+		if (base.includes(col)) {
+			const snake = col.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+			return `"assignments"."${snake}"`;
+		}
 
-        if (col === "current_user_fullname") {
-            return `"assignments"."data_json"->>'current_user_fullname'`;
-        }
+		if (col === "current_user_fullname") {
+			return `"assignments"."data_json"->>'current_user_fullname'`;
+		}
 
-        const safeCol = sanitize(col);
-        return `COALESCE("assignments"."flat_data"->>'${safeCol}', "label_data"."data"->>'${safeCol}')`;
-    };
+		const safeCol = sanitize(col);
+		return `COALESCE("assignments"."flat_data"->>'${safeCol}', "label_data"."data"->>'${safeCol}')`;
+	};
 
-    const getFilterSql = (filters: any[]) => {
-        if (!filters || filters.length === 0) return "";
-        const conditions = filters.map(f => {
-            const col = getColumnSql(f.column);
-            const val = sanitize(String(f.value));
-            switch (f.operator) {
-                case 'equals': return `${col} = '${val}'`;
-                case 'not_equals': return `${col} != '${val}'`;
-                case 'contains': return `LOWER(CAST(${col} AS TEXT)) LIKE LOWER('%${val}%')`;
-                case 'greater_than': return `CAST(NULLIF(TRIM(CAST(${col} AS TEXT)), '') AS NUMERIC) > ${Number(val) || 0}`;
-                case 'less_than': return `CAST(NULLIF(TRIM(CAST(${col} AS TEXT)), '') AS NUMERIC) < ${Number(val) || 0}`;
-                default: return `${col} = '${val}'`;
-            }
-        });
-        return ` FILTER (WHERE ${conditions.join(' AND ')})`;
-    };
+	const getFilterSql = (filters: any[]) => {
+		if (!filters || filters.length === 0) return "";
+		const conditions = filters.map((f) => {
+			const col = getColumnSql(f.column);
+			const val = sanitize(String(f.value));
+			switch (f.operator) {
+				case "equals":
+					return `${col} = '${val}'`;
+				case "not_equals":
+					return `${col} != '${val}'`;
+				case "contains":
+					return `LOWER(CAST(${col} AS TEXT)) LIKE LOWER('%${val}%')`;
+				case "greater_than":
+					return `CAST(NULLIF(TRIM(CAST(${col} AS TEXT)), '') AS NUMERIC) > ${Number(val) || 0}`;
+				case "less_than":
+					return `CAST(NULLIF(TRIM(CAST(${col} AS TEXT)), '') AS NUMERIC) < ${Number(val) || 0}`;
+				default:
+					return `${col} = '${val}'`;
+			}
+		});
+		return ` FILTER (WHERE ${conditions.join(" AND ")})`;
+	};
 
-    const getAggregateSql = (metric: any) => {
-        const colSql = getColumnSql(metric.column);
-        const filterSql = getFilterSql(metric.filters);
-        const agg = metric.aggregation || 'count';
+	const getAggregateSql = (metric: any) => {
+		const colSql = getColumnSql(metric.column);
+		const filterSql = getFilterSql(metric.filters);
+		const agg = metric.aggregation || "count";
 
-        if (agg === "count") return `COUNT(${colSql})${filterSql}`; // Count non-nulls
+		if (agg === "count") return `COUNT(${colSql})${filterSql}`; // Count non-nulls
 
-        // Cast to numeric to allow math aggregations. Use NULLIF to avoid casting empty strings.
-        const numericSql = `CAST(NULLIF(TRIM(${colSql}), '') AS NUMERIC)`;
+		// Cast to numeric to allow math aggregations. Use NULLIF to avoid casting empty strings.
+		const numericSql = `CAST(NULLIF(TRIM(${colSql}), '') AS NUMERIC)`;
 
-        switch (agg) {
-            case "sum": return `SUM(${numericSql})${filterSql}`;
-            case "avg": return `AVG(${numericSql})${filterSql}`;
-            case "min": return `MIN(${numericSql})${filterSql}`;
-            case "max": return `MAX(${numericSql})${filterSql}`;
-            default: return `SUM(${numericSql})${filterSql}`;
-        }
-    };
+		switch (agg) {
+			case "sum":
+				return `SUM(${numericSql})${filterSql}`;
+			case "avg":
+				return `AVG(${numericSql})${filterSql}`;
+			case "min":
+				return `MIN(${numericSql})${filterSql}`;
+			case "max":
+				return `MAX(${numericSql})${filterSql}`;
+			default:
+				return `SUM(${numericSql})${filterSql}`;
+		}
+	};
 
-    // Normalize config to support multiple metrics Backward Compatibility
-    let metrics: any[] = config.metrics || [];
-    if (metrics.length === 0) {
-        if (chartType === "scorecard") {
-            metrics = [{ id: "m1", label: config.label || config.metricColumn, column: config.metricColumn, aggregation: config.aggregation }];
-        } else if (chartType !== "map_point") {
-            metrics = [{ id: "m1", label: config.label || config.yColumn, column: config.yColumn, aggregation: config.aggregation }];
-        }
-    }
+	// Normalize config to support multiple metrics Backward Compatibility
+	let metrics: any[] = config.metrics || [];
+	if (metrics.length === 0) {
+		if (chartType === "scorecard") {
+			metrics = [
+				{
+					id: "m1",
+					label: config.label || config.metricColumn,
+					column: config.metricColumn,
+					aggregation: config.aggregation,
+				},
+			];
+		} else if (chartType !== "map_point") {
+			metrics = [
+				{
+					id: "m1",
+					label: config.label || config.yColumn,
+					column: config.yColumn,
+					aggregation: config.aggregation,
+				},
+			];
+		}
+	}
 
-    // Separate regular vs calculated metrics
-    const regularMetrics = metrics.filter(m => m.type !== 'calculated');
-    const calcMetrics = metrics.filter(m => m.type === 'calculated');
+	// Separate regular vs calculated metrics
+	const regularMetrics = metrics.filter((m) => m.type !== "calculated");
+	const calcMetrics = metrics.filter((m) => m.type === "calculated");
 
-    // Build SELECT expressions for regular metrics
-    const metricSelects = regularMetrics.map((m, idx) => {
-        return `${getAggregateSql(m)} as "metric_${m.id || idx}"`;
-    });
+	// Build SELECT expressions for regular metrics
+	const metricSelects = regularMetrics.map((m, idx) => {
+		return `${getAggregateSql(m)} as "metric_${m.id || idx}"`;
+	});
 
-    const evaluateCalculations = (row: any) => {
-        // Create context obj `{ m1: 10, m2: 5 }`
-        const ctx: Record<string, number> = {};
-        regularMetrics.forEach((m, idx) => {
-            const key = `metric_${m.id || idx}`;
-            ctx[m.id || String(idx)] = Number(row[key]) || 0;
-        });
+	const evaluateCalculations = (row: any) => {
+		// Create context obj `{ m1: 10, m2: 5 }`
+		const ctx: Record<string, number> = {};
+		regularMetrics.forEach((m, idx) => {
+			const key = `metric_${m.id || idx}`;
+			ctx[m.id || String(idx)] = Number(row[key]) || 0;
+		});
 
-        // Evaluate calc metrics safely
-        calcMetrics.forEach((cm, idx) => {
-            try {
-                // VERY basic expression evaluator (avoids eval)
-                // Assuming simple algebraic like "m1 / m2" or "m1 * 100"
-                const expr = cm.expression || "0";
-                // simple replacement of variables
-                let mathStr = expr;
-                for (const key of Object.keys(ctx).sort((a, b) => b.length - a.length)) {
-                    mathStr = mathStr.replace(new RegExp(`\\b${key}\\b`, 'g'), String(ctx[key]));
-                }
-                const result = new Function(`return ${mathStr}`)();
-                row[`metric_${cm.id || idx}`] = Number(result) || 0;
-            } catch {
-                row[`metric_${cm.id || idx}`] = 0;
-            }
-        });
-        return row;
-    };
+		// Evaluate calc metrics safely
+		calcMetrics.forEach((cm, idx) => {
+			try {
+				// VERY basic expression evaluator (avoids eval)
+				// Assuming simple algebraic like "m1 / m2" or "m1 * 100"
+				const expr = cm.expression || "0";
+				// simple replacement of variables
+				let mathStr = expr;
+				for (const key of Object.keys(ctx).sort((a, b) => b.length - a.length)) {
+					mathStr = mathStr.replace(new RegExp(`\\b${key}\\b`, "g"), String(ctx[key]));
+				}
+				const result = new Function(`return ${mathStr}`)();
+				row[`metric_${cm.id || idx}`] = Number(result) || 0;
+			} catch {
+				row[`metric_${cm.id || idx}`] = 0;
+			}
+		});
+		return row;
+	};
 
-
-    if (chartType === "scorecard") {
-        const query = sql`
+	if (chartType === "scorecard") {
+		const query = sql`
             SELECT 
-                ${sql.raw(metricSelects.join(', \n                '))},
+                ${sql.raw(metricSelects.join(", \n                "))},
                 COUNT(*) as "total_rows_count"
             FROM assignments
             LEFT JOIN label_data ON assignments.code_identity = label_data.code_identity AND assignments.survey_config_id = label_data.survey_config_id
             WHERE assignments.survey_config_id = ${surveyId}
         `;
 
-        const queryRes = await db.execute(query) as unknown as Record<string, unknown>[];
-        let row = queryRes[0] as any || {};
-        row = evaluateCalculations(row);
+		const queryRes = (await db.execute(query)) as unknown as Record<string, unknown>[];
+		let row = (queryRes[0] as any) || {};
+		row = evaluateCalculations(row);
 
-        const primaryMetric = metrics[0];
-        const valCol = `metric_${primaryMetric.id || 0}`;
+		const primaryMetric = metrics[0];
+		const valCol = `metric_${primaryMetric.id || 0}`;
 
-        return {
-            type: "scorecard",
-            value: Number(row[valCol]) || 0,
-            label: primaryMetric.label,
-            count: Number(row.total_rows_count) || 0,
-            all_metrics: row,
-        };
-    }
+		return {
+			type: "scorecard",
+			value: Number(row[valCol]) || 0,
+			label: primaryMetric.label,
+			count: Number(row.total_rows_count) || 0,
+			all_metrics: row,
+		};
+	}
 
-    if (chartType === "map_point") {
-        const { latColumn, lngColumn, colorBy, popupFields } = config;
+	if (chartType === "map_point") {
+		const { latColumn, lngColumn, colorBy, popupFields } = config;
 
-        if (!latColumn || !lngColumn) {
-            return { error: "latColumn and lngColumn are required for map_point" };
-        }
+		if (!latColumn || !lngColumn) {
+			return { error: "latColumn and lngColumn are required for map_point" };
+		}
 
-        const latSql = getColumnSql(latColumn);
-        const lngSql = getColumnSql(lngColumn);
-        const colorSql = colorBy ? getColumnSql(colorBy) : "NULL";
+		const latSql = getColumnSql(latColumn);
+		const lngSql = getColumnSql(lngColumn);
+		const colorSql = colorBy ? getColumnSql(colorBy) : "NULL";
 
-        // Additional fields to show in popups — {column, label}[] alias pairs
-        // Accepts both string[] (legacy) and {column, label}[] (new format)
-        const rawPopupFields: any[] = Array.isArray(popupFields) ? popupFields : [];
-        const extraPopupFields = rawPopupFields
-            .filter(f => f != null)
-            .map((f, i) => ({
-                column: typeof f === 'string' ? f : (f.column || ''),
-                label: typeof f === 'string' ? f : (f.label || f.column || ''),
-                idx: i
-            }))
-            .filter(f => f.column);
+		// Additional fields to show in popups — {column, label}[] alias pairs
+		// Accepts both string[] (legacy) and {column, label}[] (new format)
+		const rawPopupFields: any[] = Array.isArray(popupFields) ? popupFields : [];
+		const extraPopupFields = rawPopupFields
+			.filter((f) => f != null)
+			.map((f, i) => ({
+				column: typeof f === "string" ? f : f.column || "",
+				label: typeof f === "string" ? f : f.label || f.column || "",
+				idx: i,
+			}))
+			.filter((f) => f.column);
 
-        const popupSelects = extraPopupFields.map(f => {
-            const colSql = getColumnSql(f.column);
-            return `${colSql} as "popup_${f.idx}_${sanitize(f.column)}"`;
-        });
+		const popupSelects = extraPopupFields.map((f) => {
+			const colSql = getColumnSql(f.column);
+			return `${colSql} as "popup_${f.idx}_${sanitize(f.column)}"`;
+		});
 
-        // Build SELECT list
-        const popupSelectsStr = popupSelects.length > 0 ? `, ${popupSelects.join(', ')}` : '';
+		// Build SELECT list
+		const popupSelectsStr = popupSelects.length > 0 ? `, ${popupSelects.join(", ")}` : "";
 
-        const groupByAliases = ['"lng"', '"lat"', '"color_val"'];
-        extraPopupFields.forEach(f => {
-            groupByAliases.push(`"popup_${f.idx}_${sanitize(f.column)}"`);
-        });
+		const groupByAliases = ['"lng"', '"lat"', '"color_val"'];
+		extraPopupFields.forEach((f) => {
+			groupByAliases.push(`"popup_${f.idx}_${sanitize(f.column)}"`);
+		});
 
-        // Always append row count so front-end circle-radius sizing has a metric_count
-        const metricRawStr = metricSelects.length > 0
-            ? sql.raw(`${metricSelects.join(',\n                ')}, COUNT(*)::int as "metric_count"`)
-            : sql.raw(`COUNT(*)::int as "metric_count"`);
+		// Always append row count so front-end circle-radius sizing has a metric_count
+		const metricRawStr =
+			metricSelects.length > 0
+				? sql.raw(`${metricSelects.join(",\n                ")}, COUNT(*)::int as "metric_count"`)
+				: sql.raw(`COUNT(*)::int as "metric_count"`);
 
-        const query = sql`
+		const query = sql`
             SELECT 
                 ROUND(CAST(NULLIF(TRIM(CAST(${sql.raw(lngSql)} AS TEXT)), '') AS NUMERIC), 4) as "lng",
                 ROUND(CAST(NULLIF(TRIM(CAST(${sql.raw(latSql)} AS TEXT)), '') AS NUMERIC), 4) as "lat",
@@ -266,457 +300,478 @@ async function buildAndExecuteChartQuery(chartType: string, config: Record<strin
               AND NULLIF(TRIM(CAST(${sql.raw(latSql)} AS TEXT)), '') IS NOT NULL
               AND NOT (ROUND(CAST(NULLIF(TRIM(CAST(${sql.raw(lngSql)} AS TEXT)), '') AS NUMERIC), 6) = 0
                   AND ROUND(CAST(NULLIF(TRIM(CAST(${sql.raw(latSql)} AS TEXT)), '') AS NUMERIC), 6) = 0)
-            GROUP BY ${sql.raw(groupByAliases.join(', '))}
+            GROUP BY ${sql.raw(groupByAliases.join(", "))}
         `;
 
-        const queryRes = await db.execute(query) as unknown as Record<string, unknown>[];
+		const queryRes = (await db.execute(query)) as unknown as Record<string, unknown>[];
 
-        // Attach the popup field metadata for the frontend to use when rendering labels
-        const popupFieldMeta = extraPopupFields.map(f => ({
-            key: `popup_${f.idx}_${sanitize(f.column)}`,
-            label: f.label  // The user-provided alias label
-        }));
+		// Attach the popup field metadata for the frontend to use when rendering labels
+		const popupFieldMeta = extraPopupFields.map((f) => ({
+			key: `popup_${f.idx}_${sanitize(f.column)}`,
+			label: f.label, // The user-provided alias label
+		}));
 
-        let res = queryRes.map(row => evaluateCalculations(row as any));
+		const res = queryRes.map((row) => evaluateCalculations(row as any));
 
-        return {
-            type: "map_point",
-            popupFieldMeta,
-            data: res
-        };
-    }
+		return {
+			type: "map_point",
+			popupFieldMeta,
+			data: res,
+		};
+	}
 
-    if (chartType === "bar_vertical" || chartType === "bar_horizontal" || chartType === "data_table") {
-        const { xColumn, groupBy } = config;
+	if (
+		chartType === "bar_vertical" ||
+		chartType === "bar_horizontal" ||
+		chartType === "data_table"
+	) {
+		const { xColumn, groupBy } = config;
 
-        const catSql = getColumnSql(xColumn);
-        const groupSql = groupBy ? getColumnSql(groupBy) : "NULL";
+		const catSql = getColumnSql(xColumn);
+		const groupSql = groupBy ? getColumnSql(groupBy) : "NULL";
 
-        const query = sql`
+		const query = sql`
             SELECT 
                 ${sql.raw(`COALESCE(${catSql}, 'Unknown')`)} as "category",
                 ${sql.raw(groupBy ? `COALESCE(${groupSql}, 'Unknown')` : "NULL")} as "group_val",
-                ${sql.raw(metricSelects.join(', \n                '))}
+                ${sql.raw(metricSelects.join(", \n                "))}
             FROM assignments
             LEFT JOIN label_data ON assignments.code_identity = label_data.code_identity AND assignments.survey_config_id = label_data.survey_config_id
             WHERE assignments.survey_config_id = ${surveyId}
-            GROUP BY "category"${sql.raw(groupBy ? ', "group_val"' : '')}
+            GROUP BY "category"${sql.raw(groupBy ? ', "group_val"' : "")}
             ORDER BY "category" ASC
         `;
 
-        const queryRes = await db.execute(query) as unknown as Record<string, unknown>[];
+		const queryRes = (await db.execute(query)) as unknown as Record<string, unknown>[];
 
-        // Post-process calculated metrics
-        let res = queryRes.map(row => evaluateCalculations(row as any));
+		// Post-process calculated metrics
+		const res = queryRes.map((row) => evaluateCalculations(row as any));
 
-        if (chartType === "data_table") {
-            const columns = [
-                { name: 'category', label: xColumn, align: 'left', field: 'category', sortable: true },
-                ...(groupBy ? [{ name: 'group_val', label: groupBy, align: 'left', field: 'group_val', sortable: true }] : []),
-                ...metrics.map((m, i) => ({
-                    name: `metric_${m.id || i}`,
-                    label: m.label || m.id,
-                    align: 'right',
-                    field: `metric_${m.id || i}`,
-                    sortable: true
-                }))
-            ];
-            return {
-                type: "data_table",
-                columns,
-                rows: res
-            };
-        }
+		if (chartType === "data_table") {
+			const columns = [
+				{ name: "category", label: xColumn, align: "left", field: "category", sortable: true },
+				...(groupBy
+					? [
+							{
+								name: "group_val",
+								label: groupBy,
+								align: "left",
+								field: "group_val",
+								sortable: true,
+							},
+						]
+					: []),
+				...metrics.map((m, i) => ({
+					name: `metric_${m.id || i}`,
+					label: m.label || m.id,
+					align: "right",
+					field: `metric_${m.id || i}`,
+					sortable: true,
+				})),
+			];
+			return {
+				type: "data_table",
+				columns,
+				rows: res,
+			};
+		}
 
-        if (groupBy) {
-            // Ensure single metric for grouped bar chart (simplicity), or multi-metric without group_val
-            const targetMetric = metrics[0];
-            const valCol = `metric_${targetMetric.id || 0}`;
+		if (groupBy) {
+			// Ensure single metric for grouped bar chart (simplicity), or multi-metric without group_val
+			const targetMetric = metrics[0];
+			const valCol = `metric_${targetMetric.id || 0}`;
 
-            const seriesMap = new Map<string, Map<string, number>>();
-            const categories = new Set<string>();
+			const seriesMap = new Map<string, Map<string, number>>();
+			const categories = new Set<string>();
 
-            for (const row of res as any[]) {
-                const xVal = String(row.category);
-                const gVal = String(row.group_val);
-                const val = Number(row[valCol]) || 0;
+			for (const row of res as any[]) {
+				const xVal = String(row.category);
+				const gVal = String(row.group_val);
+				const val = Number(row[valCol]) || 0;
 
-                categories.add(xVal);
-                if (!seriesMap.has(gVal)) seriesMap.set(gVal, new Map());
-                seriesMap.get(gVal)!.set(xVal, val);
-            }
+				categories.add(xVal);
+				if (!seriesMap.has(gVal)) seriesMap.set(gVal, new Map());
+				seriesMap.get(gVal)!.set(xVal, val);
+			}
 
-            const categoryArr = Array.from(categories).sort();
-            const series = Array.from(seriesMap.entries()).map(([name, dataMap]) => ({
-                name,
-                data: categoryArr.map(cat => dataMap.get(cat) ?? 0),
-            }));
+			const categoryArr = Array.from(categories).sort();
+			const series = Array.from(seriesMap.entries()).map(([name, dataMap]) => ({
+				name,
+				data: categoryArr.map((cat) => dataMap.get(cat) ?? 0),
+			}));
 
-            return {
-                type: chartType,
-                categories: categoryArr,
-                series,
-            };
-        } else {
-            const categories = [];
-            const rowsArray = res as any[];
-            for (const row of rowsArray) {
-                categories.push(String(row.category));
-            }
+			return {
+				type: chartType,
+				categories: categoryArr,
+				series,
+			};
+		} else {
+			const categories = [];
+			const rowsArray = res as any[];
+			for (const row of rowsArray) {
+				categories.push(String(row.category));
+			}
 
-            const series = metrics.map((m, i) => {
-                const valCol = `metric_${m.id || i}`;
-                return {
-                    name: m.label || m.id,
-                    data: rowsArray.map(r => Number(r[valCol]) || 0)
-                };
-            });
+			const series = metrics.map((m, i) => {
+				const valCol = `metric_${m.id || i}`;
+				return {
+					name: m.label || m.id,
+					data: rowsArray.map((r) => Number(r[valCol]) || 0),
+				};
+			});
 
-            return {
-                type: chartType,
-                categories,
-                series,
-            };
-        }
-    }
+			return {
+				type: chartType,
+				categories,
+				series,
+			};
+		}
+	}
 
-    return { error: "Unknown chart type" };
+	return { error: "Unknown chart type" };
 }
 
 import { requireAuth } from "../middleware/auth";
 
 export const visualizationsRoutes = new Elysia({ prefix: "/api/surveys" })
-    .use(requireAuth)
+	.use(requireAuth)
 
-    // List all visualization configs for a survey
-    .get("/:id/visualizations", async ({ params }) => {
-        const rows = await db
-            .select()
-            .from(visualizationConfigs)
-            .where(eq(visualizationConfigs.surveyConfigId, params.id))
-            .orderBy(visualizationConfigs.sortOrder);
-        return rows;
-    })
+	// List all visualization configs for a survey
+	.get("/:id/visualizations", async ({ params }) => {
+		const rows = await db
+			.select()
+			.from(visualizationConfigs)
+			.where(eq(visualizationConfigs.surveyConfigId, params.id))
+			.orderBy(visualizationConfigs.sortOrder);
+		return rows;
+	})
 
-    // Get comprehensive schema for visualizations (assignments + labels)
-    .get("/:id/visualizations/schema", async ({ params }) => {
-        const columns = new Map<string, "dimension" | "measure">();
+	// Get comprehensive schema for visualizations (assignments + labels)
+	.get("/:id/visualizations/schema", async ({ params }) => {
+		const columns = new Map<string, "dimension" | "measure">();
 
-        // 1. Label schemas if exist
-        const [labelSchemaRow] = await db
-            .select()
-            .from(labelSchemas)
-            .where(eq(labelSchemas.surveyConfigId, params.id))
-            .limit(1);
+		// 1. Label schemas if exist
+		const [labelSchemaRow] = await db
+			.select()
+			.from(labelSchemas)
+			.where(eq(labelSchemas.surveyConfigId, params.id))
+			.limit(1);
 
-        if (labelSchemaRow && Array.isArray(labelSchemaRow.columns)) {
-            for (const col of labelSchemaRow.columns as any[]) {
-                columns.set(col.name, col.type);
-            }
-        }
+		if (labelSchemaRow && Array.isArray(labelSchemaRow.columns)) {
+			for (const col of labelSchemaRow.columns as any[]) {
+				columns.set(col.name, col.type);
+			}
+		}
 
-        // 2. Base assignment columns
-        columns.set("assignmentStatusAlias", "dimension");
-        columns.set("currentUserUsername", "dimension");
-        columns.set("dateModifiedRemote", "dimension");
-        columns.set("codeIdentity", "dimension");
-        columns.set("current_user_fullname", "dimension");
+		// 2. Base assignment columns
+		columns.set("assignmentStatusAlias", "dimension");
+		columns.set("currentUserUsername", "dimension");
+		columns.set("dateModifiedRemote", "dimension");
+		columns.set("codeIdentity", "dimension");
+		columns.set("current_user_fullname", "dimension");
 
-        // 3. Inspect assignments (flatData + sample dataJson for nested fields like photos)
-        const assignmentSamples = await db
-            .select({ flatData: assignments.flatData, dataJson: assignments.dataJson })
-            .from(assignments)
-            .where(eq(assignments.surveyConfigId, params.id))
-            .limit(100);
+		// 3. Inspect assignments (flatData + sample dataJson for nested fields like photos)
+		const assignmentSamples = await db
+			.select({ flatData: assignments.flatData, dataJson: assignments.dataJson })
+			.from(assignments)
+			.where(eq(assignments.surveyConfigId, params.id))
+			.limit(100);
 
-        const dataValues = new Map<string, any[]>();
-        for (const row of assignmentSamples) {
-            const flat = (row.flatData as Record<string, any>) || {};
-            const deep = extractVariables(row.dataJson);
-            const combined = { ...deep, ...flat };
+		const dataValues = new Map<string, any[]>();
+		for (const row of assignmentSamples) {
+			const flat = (row.flatData as Record<string, any>) || {};
+			const deep = extractVariables(row.dataJson);
+			const combined = { ...deep, ...flat };
 
-            for (const key in combined) {
-                if (!dataValues.has(key)) dataValues.set(key, []);
-                dataValues.get(key)!.push(combined[key]);
-            }
-        }
+			for (const key in combined) {
+				if (!dataValues.has(key)) dataValues.set(key, []);
+				dataValues.get(key)!.push(combined[key]);
+			}
+		}
 
-        // Collect sample value per column (first non-empty, non-array, non-object scalar)
-        const sampleValues = new Map<string, string>();
-        for (const [key, values] of dataValues.entries()) {
-            const sample = values.find(v =>
-                v !== null && v !== undefined &&
-                typeof v !== 'object' &&
-                String(v).trim() !== ''
-            );
-            if (sample !== undefined) sampleValues.set(key, String(sample));
-        }
+		// Collect sample value per column (first non-empty, non-array, non-object scalar)
+		const sampleValues = new Map<string, string>();
+		for (const [key, values] of dataValues.entries()) {
+			const sample = values.find(
+				(v) => v !== null && v !== undefined && typeof v !== "object" && String(v).trim() !== "",
+			);
+			if (sample !== undefined) sampleValues.set(key, String(sample));
+		}
 
-        for (const [key, values] of dataValues.entries()) {
-            if (columns.has(key)) continue;
+		for (const [key, values] of dataValues.entries()) {
+			if (columns.has(key)) continue;
 
-            const nonEmpty = values.filter(v => v !== null && v !== undefined && String(v).trim() !== "");
-            if (nonEmpty.length === 0) {
-                columns.set(key, "dimension");
-                continue;
-            }
-            const numericCount = nonEmpty.filter(v => typeof v === 'number' || (typeof v === 'string' && !isNaN(Number(v)))).length;
-            const type = numericCount / nonEmpty.length > 0.8 ? "measure" : "dimension";
-            columns.set(key, type);
-        }
+			const nonEmpty = values.filter(
+				(v) => v !== null && v !== undefined && String(v).trim() !== "",
+			);
+			if (nonEmpty.length === 0) {
+				columns.set(key, "dimension");
+				continue;
+			}
+			const numericCount = nonEmpty.filter(
+				(v) => typeof v === "number" || (typeof v === "string" && !isNaN(Number(v))),
+			).length;
+			const type = numericCount / nonEmpty.length > 0.8 ? "measure" : "dimension";
+			columns.set(key, type);
+		}
 
-        // Sort columns alphabetically
-        const sortedColumns = Array.from(columns.entries())
-            .map(([name, type]) => ({ name, type, sample: sampleValues.get(name) ?? null }))
-            .sort((a, b) => a.name.localeCompare(b.name));
+		// Sort columns alphabetically
+		const sortedColumns = Array.from(columns.entries())
+			.map(([name, type]) => ({ name, type, sample: sampleValues.get(name) ?? null }))
+			.sort((a, b) => a.name.localeCompare(b.name));
 
-        return { columns: sortedColumns };
-    })
+		return { columns: sortedColumns };
+	})
 
-    // Create a new visualization config
-    .post("/:id/visualizations", async ({ params, body, set }) => {
-        try {
-            const { name, chartType, config } = body as {
-                name: string;
-                chartType: string;
-                config: Record<string, any>;
-            };
+	// Create a new visualization config
+	.post("/:id/visualizations", async ({ params, body, set }) => {
+		try {
+			const { name, chartType, config } = body as {
+				name: string;
+				chartType: string;
+				config: Record<string, any>;
+			};
 
-            if (!name || !chartType || !config) {
-                set.status = 400;
-                return { error: "name, chartType, and config are required" };
-            }
+			if (!name || !chartType || !config) {
+				set.status = 400;
+				return { error: "name, chartType, and config are required" };
+			}
 
-            const validTypes = ["scorecard", "bar_vertical", "bar_horizontal", "data_table", "map_point"];
-            if (!validTypes.includes(chartType)) {
-                set.status = 400;
-                return { error: `chartType must be one of: ${validTypes.join(", ")}` };
-            }
+			const validTypes = ["scorecard", "bar_vertical", "bar_horizontal", "data_table", "map_point"];
+			if (!validTypes.includes(chartType)) {
+				set.status = 400;
+				return { error: `chartType must be one of: ${validTypes.join(", ")}` };
+			}
 
-            // Get next sort order
-            const [last] = await db
-                .select({ maxSort: sql<number>`COALESCE(MAX(${visualizationConfigs.sortOrder}), 0)` })
-                .from(visualizationConfigs)
-                .where(eq(visualizationConfigs.surveyConfigId, params.id));
+			// Get next sort order
+			const [last] = await db
+				.select({ maxSort: sql<number>`COALESCE(MAX(${visualizationConfigs.sortOrder}), 0)` })
+				.from(visualizationConfigs)
+				.where(eq(visualizationConfigs.surveyConfigId, params.id));
 
-            const [inserted] = await db.insert(visualizationConfigs).values({
-                surveyConfigId: params.id,
-                name,
-                chartType,
-                config,
-                sortOrder: (last?.maxSort || 0) + 1,
-            }).returning();
+			const [inserted] = await db
+				.insert(visualizationConfigs)
+				.values({
+					surveyConfigId: params.id,
+					name,
+					chartType,
+					config,
+					sortOrder: (last?.maxSort || 0) + 1,
+				})
+				.returning();
 
-            return inserted;
-        } catch (e: any) {
-            set.status = 500;
-            return { error: e.message };
-        }
-    })
+			return inserted;
+		} catch (e: any) {
+			set.status = 500;
+			return { error: e.message };
+		}
+	})
 
-    // Reorder visualizations
-    .put("/:id/visualizations/reorder", async ({ params, body, set }) => {
-        try {
-            const items = body as { id: number; sortOrder: number }[];
-            if (!Array.isArray(items)) {
-                set.status = 400;
-                return { error: "Expected an array of {id, sortOrder}" };
-            }
+	// Reorder visualizations
+	.put("/:id/visualizations/reorder", async ({ params, body, set }) => {
+		try {
+			const items = body as { id: number; sortOrder: number }[];
+			if (!Array.isArray(items)) {
+				set.status = 400;
+				return { error: "Expected an array of {id, sortOrder}" };
+			}
 
-            // Execute batch update within a transaction to guarantee consistency
-            await db.transaction(async (tx) => {
-                for (const item of items) {
-                    await tx
-                        .update(visualizationConfigs)
-                        .set({ sortOrder: item.sortOrder })
-                        .where(
-                            and(
-                                eq(visualizationConfigs.id, item.id),
-                                eq(visualizationConfigs.surveyConfigId, params.id)
-                            )
-                        );
-                }
-            });
+			// Execute batch update within a transaction to guarantee consistency
+			await db.transaction(async (tx) => {
+				for (const item of items) {
+					await tx
+						.update(visualizationConfigs)
+						.set({ sortOrder: item.sortOrder })
+						.where(
+							and(
+								eq(visualizationConfigs.id, item.id),
+								eq(visualizationConfigs.surveyConfigId, params.id),
+							),
+						);
+				}
+			});
 
-            return { success: true };
-        } catch (e: any) {
-            set.status = 500;
-            return { error: e.message };
-        }
-    })
+			return { success: true };
+		} catch (e: any) {
+			set.status = 500;
+			return { error: e.message };
+		}
+	})
 
-    // Update a visualization config
-    .put("/:id/visualizations/:vizId", async ({ params, body, set }) => {
-        try {
-            const vizId = Number(params.vizId);
-            const { name, chartType, config } = body as {
-                name?: string;
-                chartType?: string;
-                config?: Record<string, any>;
-            };
+	// Update a visualization config
+	.put("/:id/visualizations/:vizId", async ({ params, body, set }) => {
+		try {
+			const vizId = Number(params.vizId);
+			const { name, chartType, config } = body as {
+				name?: string;
+				chartType?: string;
+				config?: Record<string, any>;
+			};
 
-            const updates: Record<string, any> = {};
-            if (name) updates.name = name;
-            if (chartType) updates.chartType = chartType;
-            if (config) updates.config = config;
+			const updates: Record<string, any> = {};
+			if (name) updates.name = name;
+			if (chartType) updates.chartType = chartType;
+			if (config) updates.config = config;
 
-            const [updated] = await db
-                .update(visualizationConfigs)
-                .set(updates)
-                .where(
-                    and(
-                        eq(visualizationConfigs.id, vizId),
-                        eq(visualizationConfigs.surveyConfigId, params.id)
-                    )
-                )
-                .returning();
+			const [updated] = await db
+				.update(visualizationConfigs)
+				.set(updates)
+				.where(
+					and(
+						eq(visualizationConfigs.id, vizId),
+						eq(visualizationConfigs.surveyConfigId, params.id),
+					),
+				)
+				.returning();
 
-            if (!updated) {
-                set.status = 404;
-                return { error: "Visualization not found" };
-            }
+			if (!updated) {
+				set.status = 404;
+				return { error: "Visualization not found" };
+			}
 
-            return updated;
-        } catch (e: any) {
-            set.status = 500;
-            return { error: e.message };
-        }
-    })
+			return updated;
+		} catch (e: any) {
+			set.status = 500;
+			return { error: e.message };
+		}
+	})
 
-    // Generate preview data without saving
-    .post("/:id/visualizations/preview", async ({ params, body, set }) => {
-        try {
-            const { chartType, config } = body as {
-                chartType: string;
-                config: Record<string, any>;
-            };
+	// Generate preview data without saving
+	.post("/:id/visualizations/preview", async ({ params, body, set }) => {
+		try {
+			const { chartType, config } = body as {
+				chartType: string;
+				config: Record<string, any>;
+			};
 
-            if (!chartType || !config) {
-                set.status = 400;
-                return { error: "chartType and config are required" };
-            }
+			if (!chartType || !config) {
+				set.status = 400;
+				return { error: "chartType and config are required" };
+			}
 
-            return await buildAndExecuteChartQuery(chartType, config, params.id);
-        } catch (e: any) {
-            set.status = 500;
-            return { error: e.message };
-        }
-    })
+			return await buildAndExecuteChartQuery(chartType, config, params.id);
+		} catch (e: any) {
+			set.status = 500;
+			return { error: e.message };
+		}
+	})
 
-    // Delete a visualization config
-    .delete("/:id/visualizations/:vizId", async ({ params }) => {
-        const vizId = Number(params.vizId);
-        await db
-            .delete(visualizationConfigs)
-            .where(
-                and(
-                    eq(visualizationConfigs.id, vizId),
-                    eq(visualizationConfigs.surveyConfigId, params.id)
-                )
-            );
-        return { success: true };
-    })
+	// Delete a visualization config
+	.delete("/:id/visualizations/:vizId", async ({ params }) => {
+		const vizId = Number(params.vizId);
+		await db
+			.delete(visualizationConfigs)
+			.where(
+				and(eq(visualizationConfigs.id, vizId), eq(visualizationConfigs.surveyConfigId, params.id)),
+			);
+		return { success: true };
+	})
 
-    // Get aggregated data for a visualization
-    .get("/:id/visualizations/:vizId/data", async ({ params, set }) => {
-        const vizId = Number(params.vizId);
+	// Get aggregated data for a visualization
+	.get("/:id/visualizations/:vizId/data", async ({ params, set }) => {
+		const vizId = Number(params.vizId);
 
-        // Get the viz config
-        const [viz] = await db
-            .select()
-            .from(visualizationConfigs)
-            .where(
-                and(
-                    eq(visualizationConfigs.id, vizId),
-                    eq(visualizationConfigs.surveyConfigId, params.id)
-                )
-            );
+		// Get the viz config
+		const [viz] = await db
+			.select()
+			.from(visualizationConfigs)
+			.where(
+				and(eq(visualizationConfigs.id, vizId), eq(visualizationConfigs.surveyConfigId, params.id)),
+			);
 
-        if (!viz) {
-            set.status = 404;
-            return { error: "Visualization not found" };
-        }
+		if (!viz) {
+			set.status = 404;
+			return { error: "Visualization not found" };
+		}
 
-        const config = viz.config as Record<string, any>;
+		const config = viz.config as Record<string, any>;
 
-        return await buildAndExecuteChartQuery(viz.chartType, config, params.id);
-    })
+		return await buildAndExecuteChartQuery(viz.chartType, config, params.id);
+	})
 
-    // Generate an AI context prompt with schema and data samples
-    .get("/:id/visualizations/ai-context", async ({ params, set }) => {
-        try {
-            // 1. Get schema
-            const columns = new Map<string, string>();
+	// Generate an AI context prompt with schema and data samples
+	.get("/:id/visualizations/ai-context", async ({ params, set }) => {
+		try {
+			// 1. Get schema
+			const columns = new Map<string, string>();
 
-            const [labelSchemaRow] = await db
-                .select()
-                .from(labelSchemas)
-                .where(eq(labelSchemas.surveyConfigId, params.id))
-                .limit(1);
+			const [labelSchemaRow] = await db
+				.select()
+				.from(labelSchemas)
+				.where(eq(labelSchemas.surveyConfigId, params.id))
+				.limit(1);
 
-            if (labelSchemaRow && Array.isArray(labelSchemaRow.columns)) {
-                for (const col of labelSchemaRow.columns as any[]) {
-                    columns.set(col.name, col.type);
-                }
-            }
+			if (labelSchemaRow && Array.isArray(labelSchemaRow.columns)) {
+				for (const col of labelSchemaRow.columns as any[]) {
+					columns.set(col.name, col.type);
+				}
+			}
 
-            columns.set("assignmentStatusAlias", "dimension");
-            columns.set("currentUserUsername", "dimension");
-            columns.set("dateModifiedRemote", "dimension");
-            columns.set("codeIdentity", "dimension");
-            columns.set("current_user_fullname", "dimension");
+			columns.set("assignmentStatusAlias", "dimension");
+			columns.set("currentUserUsername", "dimension");
+			columns.set("dateModifiedRemote", "dimension");
+			columns.set("codeIdentity", "dimension");
+			columns.set("current_user_fullname", "dimension");
 
-            // 2. Get samples
-            const samples = await db
-                .select({
-                    assignmentStatusAlias: assignments.assignmentStatusAlias,
-                    currentUserUsername: assignments.currentUserUsername,
-                    dateModifiedRemote: assignments.dateModifiedRemote,
-                    codeIdentity: assignments.codeIdentity,
-                    flatData: assignments.flatData,
-                    data_json: assignments.dataJson,
-                    labelData: labelData.data
-                })
-                .from(assignments)
-                .leftJoin(labelData, and(
-                    eq(assignments.codeIdentity, labelData.codeIdentity),
-                    eq(assignments.surveyConfigId, labelData.surveyConfigId)
-                ))
-                .where(eq(assignments.surveyConfigId, params.id))
-                .limit(3);
+			// 2. Get samples
+			const samples = await db
+				.select({
+					assignmentStatusAlias: assignments.assignmentStatusAlias,
+					currentUserUsername: assignments.currentUserUsername,
+					dateModifiedRemote: assignments.dateModifiedRemote,
+					codeIdentity: assignments.codeIdentity,
+					flatData: assignments.flatData,
+					data_json: assignments.dataJson,
+					labelData: labelData.data,
+				})
+				.from(assignments)
+				.leftJoin(
+					labelData,
+					and(
+						eq(assignments.codeIdentity, labelData.codeIdentity),
+						eq(assignments.surveyConfigId, labelData.surveyConfigId),
+					),
+				)
+				.where(eq(assignments.surveyConfigId, params.id))
+				.limit(3);
 
-            const sampleRows = samples.map(s => {
-                let dataJsonObj: any = {};
-                try {
-                    dataJsonObj = (typeof s.data_json === 'string' ? JSON.parse(s.data_json) : s.data_json) || {};
-                } catch (e) { /* ignore invalid json string like 'Failed queued' */ }
-                const extractedFields = extractVariables(dataJsonObj);
+			const sampleRows = samples.map((s) => {
+				let dataJsonObj: any = {};
+				try {
+					dataJsonObj =
+						(typeof s.data_json === "string" ? JSON.parse(s.data_json) : s.data_json) || {};
+				} catch (e) {
+					/* ignore invalid json string like 'Failed queued' */
+				}
+				const extractedFields = extractVariables(dataJsonObj);
 
-                const row: any = {
-                    assignmentStatusAlias: s.assignmentStatusAlias,
-                    currentUserUsername: s.currentUserUsername,
-                    dateModifiedRemote: s.dateModifiedRemote,
-                    codeIdentity: s.codeIdentity,
-                    current_user_fullname: dataJsonObj?.current_user_fullname,
-                    ...extractedFields,
-                    ...((s.flatData as object) || {}),
-                    ...((s.labelData as object) || {})
-                };
-                return row;
-            });
+				const row: any = {
+					assignmentStatusAlias: s.assignmentStatusAlias,
+					currentUserUsername: s.currentUserUsername,
+					dateModifiedRemote: s.dateModifiedRemote,
+					codeIdentity: s.codeIdentity,
+					current_user_fullname: dataJsonObj?.current_user_fullname,
+					...extractedFields,
+					...((s.flatData as object) || {}),
+					...((s.labelData as object) || {}),
+				};
+				return row;
+			});
 
-            // Add dynamic columns found in sample rows
-            for (const row of sampleRows) {
-                for (const key of Object.keys(row)) {
-                    if (!columns.has(key) && key !== 'data_json') {
-                        columns.set(key, typeof row[key] === 'number' ? 'measure' : 'dimension');
-                    }
-                }
-            }
+			// Add dynamic columns found in sample rows
+			for (const row of sampleRows) {
+				for (const key of Object.keys(row)) {
+					if (!columns.has(key) && key !== "data_json") {
+						columns.set(key, typeof row[key] === "number" ? "measure" : "dimension");
+					}
+				}
+			}
 
-            const schemaDict = Array.from(columns.entries()).map(([k, v]) => `- \`${k}\`: ${v}`).join('\n');
+			const schemaDict = Array.from(columns.entries())
+				.map(([k, v]) => `- \`${k}\`: ${v}`)
+				.join("\n");
 
-            const markdown = `You are an expert Data Analyst & BI Developer. I need your help to configure a JSON object for a Custom Visualization dashboard using Quasar/Vue and ECharts.
+			const markdown = `You are an expert Data Analyst & BI Developer. I need your help to configure a JSON object for a Custom Visualization dashboard using Quasar/Vue and ECharts.
 
 ### Data Dictionary
 Available columns and their detected types:
@@ -791,10 +846,10 @@ Write a JSON configuration object that represents my request. The JSON must foll
 You can generate more than one visualization at a time by simply adding more objects to the root JSON Array.
 Please ask me what I want to visualize, then respond ONLY with the JSON code block that fulfills my request.`;
 
-            return { markdown };
-        } catch (e: any) {
-            console.error("AI Context Error:", e);
-            set.status = 500;
-            return { error: e.message, stack: e.stack };
-        }
-    });
+			return { markdown };
+		} catch (e: any) {
+			console.error("AI Context Error:", e);
+			set.status = 500;
+			return { error: e.message, stack: e.stack };
+		}
+	});

@@ -39,16 +39,14 @@
 </template>
 
 <script setup lang="ts">
-import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
+import { VueMonacoEditor } from "@guolao/vue-monaco-editor";
 
-const show = defineModel<boolean>('modelValue', { required: true })
-const jsonStr = defineModel<string>('jsonStr', { required: true })
+const show = defineModel<boolean>("modelValue", { required: true });
+const jsonStr = defineModel<string>("jsonStr", { required: true });
 
 defineProps<{
-  loading: boolean
-}>()
+	loading: boolean;
+}>();
 
-defineEmits<{
-  (e: 'submit'): void
-}>()
+defineEmits<(e: "submit") => void>();
 </script>

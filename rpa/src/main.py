@@ -16,14 +16,14 @@ Usage:
     python src/main.py --once           # Jalankan 1 cycle saja
     python src/main.py --test-login     # Test login saja
 """
+
 import argparse
 import asyncio
+import json
 import os
-import re
+import signal
 import sys
 import time
-import json
-import signal
 from datetime import datetime, timezone
 
 from playwright.async_api import async_playwright
@@ -35,13 +35,18 @@ for d in [current_dir, parent_dir]:
     if d not in sys.path:
         sys.path.insert(0, d)
 
-from config.settings import Settings
+from api_client import FasihApiClient, FasihAuthError
 from auth import auto_login, launch_stealth_browser, new_stealth_context
-from api_client import FasihApiClient
-from pages.detail_page import fetch_assignments_concurrent
-from db.connection import init_db, get_session
-from db.repository import upsert_assignment, log_sync_run, SyncStats, BatchUpserterBulk, get_existing_modifications_by_ids_batched
+from config.settings import Settings
 from connectivity import ensure_connected
+from db.connection import get_session, init_db
+from db.repository import (
+    BatchUpserterBulk,
+    SyncStats,
+    get_existing_modifications_by_ids_batched,
+    log_sync_run,
+)
+from pages.detail_page import fetch_assignments_concurrent
 
 
 async def run_sync_cycle(settings: Settings, dry_run: bool = False):
@@ -52,13 +57,13 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
     stats = SyncStats()
     timings = {}
     total_start = time.perf_counter()
-    
+
     # --- FASE 0: KONEKTIVITAS VPN ---
     print("\n--- FASE 0: Memastikan Konektivitas VPN ---")
     await ensure_connected()
-    
+
     print("\n" + "=" * 60)
-    print(f"🤖 FasihNexus Sync Engine — Cycle dimulai")
+    print("🤖 FasihNexus Sync Engine — Cycle dimulai")
     print(f"   Waktu: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"   Survey: {settings.survey_name}")
     print(f"   Rotasi: {settings.filter_rotation}")
@@ -69,11 +74,10 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
     print("\n--- FASE 1: Session Validation & Login ---")
     phase_start = time.perf_counter()
     cookies = {}
-    
+
     # Try CACHED cookies first
-    from db.connection import get_session
     from db.repository import get_system_setting, set_system_setting
-    
+
     db_session = get_session()
     cache_key = f"sso_cookies_{settings.sso_username}"
     cached_json = get_system_setting(db_session, cache_key)
@@ -88,12 +92,12 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
             # Mencoba fetch survey ID sebagai probe
             survey_id_probe = await api_test.get_survey_id(settings.survey_name)
             await api_test.close()
-            
+
             if survey_id_probe:
-                print(f"   ⚡ Sesi CACHE valid! Melewati login browser (Playwright skipped).")
+                print("   ⚡ Sesi CACHE valid! Melewati login browser (Playwright skipped).")
                 cookies = temp_cookies
             else:
-                print(f"   ⚠️ Sesi CACHE kadaluwarsa. Memerlukan login browser.")
+                print("   ⚠️ Sesi CACHE kadaluwarsa. Memerlukan login browser.")
         except Exception as e:
             print(f"   ⚠️ Gagal menggunakan cached cookies: {e}")
 
@@ -102,10 +106,7 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
         print("   🎭 Memulai Playwright browser untuk login SSO...")
         async with async_playwright() as p:
             browser = await launch_stealth_browser(p)
-            context = await new_stealth_context(
-                browser,
-                viewport={"width": 1280, "height": 800}
-            )
+            context = await new_stealth_context(browser, viewport={"width": 1280, "height": 800})
             page = await context.new_page()
 
             login_ok, cookies_dict, err_msg = await auto_login(page, settings.sso_username, settings.sso_password)
@@ -113,10 +114,10 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
                 print("❌ Login gagal atau cookies tidak didapatkan! Cycle dibatalkan.")
                 await browser.close()
                 return
-                
+
             cookies = cookies_dict
             await browser.close()
-        
+
         # Save fresh cookies to DB
         try:
             db_session = get_session()
@@ -142,56 +143,60 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
     if not period_id or not role_ids:
         return
 
-    prov_code, region_filter, region_full_code, region_group_id = await api.get_region_metadata(settings.filter_provinsi, settings.filter_kabupaten, survey_id)
+    prov_code, region_filter, region_full_code, region_group_id = await api.get_region_metadata(
+        settings.filter_provinsi, settings.filter_kabupaten, survey_id
+    )
     timings["metadata"] = int((time.perf_counter() - phase_start) * 1000)
-    
+
     # Init DB (Central PostgreSQL only)
     if not dry_run:
         init_db()
         session = get_session()
-        print(f"   📂 Using central PostgreSQL database")
+        print("   📂 Using central PostgreSQL database")
 
     # --- FASE 3: ROTASI & FETCH ASSIGNMENTS ---
     print("\n--- FASE 3: Extract Assignment Metadata ---")
-    
+
     pengawas_list, pencacah_list = await api.get_users_by_region(
         period_id, role_ids, region_filter or region_full_code or "", role_group_id
     )
-    
+
     # Tentukan strategi iterasi berdasarkan setelan config rotasi
     filters_to_run = []
     if settings.filter_rotation == "pencacah" and pencacah_list:
         for idx, user in enumerate(pencacah_list):
-            filters_to_run.append({
-                "label": f"[{idx+1}/{len(pencacah_list)}] Pencacah: {user['fullname']}",
-                "pengawas_id": None,
-                "pencacah_id": user['userId']
-            })
+            filters_to_run.append(
+                {
+                    "label": f"[{idx + 1}/{len(pencacah_list)}] Pencacah: {user['fullname']}",
+                    "pengawas_id": None,
+                    "pencacah_id": user["userId"],
+                }
+            )
     elif pengawas_list:
         for idx, user in enumerate(pengawas_list):
-            filters_to_run.append({
-                "label": f"[{idx+1}/{len(pengawas_list)}] Pengawas: {user['fullname']}",
-                "pengawas_id": user['userId'],
-                "pencacah_id": None
-            })
+            filters_to_run.append(
+                {
+                    "label": f"[{idx + 1}/{len(pengawas_list)}] Pengawas: {user['fullname']}",
+                    "pengawas_id": user["userId"],
+                    "pencacah_id": None,
+                }
+            )
     else:
-        filters_to_run.append({
-            "label": "[1/1] Wilayah Saja (Tanpa Pengawas/Pencacah)",
-            "pengawas_id": None,
-            "pencacah_id": None
-        })
+        filters_to_run.append(
+            {"label": "[1/1] Wilayah Saja (Tanpa Pengawas/Pencacah)", "pengawas_id": None, "pencacah_id": None}
+        )
 
     all_metadata_map = {}
-    
+
     async def fetch_user_metadata(f):
         print(f"🔄 {f['label']}")
         metadata = await api.get_assignments_metadata(
-            period_id, 
+            period_id,
             prov_uuid=prov_code,
             kab_uuid=region_filter if region_filter != prov_code else None,
-            pengawas_id=f['pengawas_id'], 
-            pencacah_id=f['pencacah_id'],
-            region_group_id=region_group_id
+            pengawas_id=f["pengawas_id"],
+            pencacah_id=f["pencacah_id"],
+            region_group_id=region_group_id,
         )
         print(f"   📊 Ditemukan {len(metadata)} entries ({f['label']}).")
         return metadata
@@ -200,13 +205,13 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
     metadata_results = await asyncio.gather(*(fetch_user_metadata(f) for f in filters_to_run))
     for metadata in metadata_results:
         for m in metadata:
-            all_metadata_map[m['id']] = m
+            all_metadata_map[m["id"]] = m
 
     unique_assignments = list(all_metadata_map.values())
-    print(f"\n--- FASE 4: Fetch Detailed Assignment Data ---")
+    print("\n--- FASE 4: Fetch Detailed Assignment Data ---")
     phase_start = time.perf_counter()
     print(f"   🔗 Total Assignment Unik: {len(unique_assignments)}")
-    
+
     if dry_run:
         stats.total_fetched = len(unique_assignments)
     else:
@@ -227,13 +232,17 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
                     to_fetch.append(m)
                 elif existing_dates[rec_id] != remote_date:
                     if not _debug_logged and existing_dates[rec_id] and remote_date:
-                        print(f"   🔬 [TIMESTAMP DEBUG] DB date: {repr(existing_dates[rec_id])} vs API date: {repr(remote_date)}")
+                        print(
+                            f"   🔬 [TIMESTAMP DEBUG] DB date: {existing_dates[rec_id]!r} vs API date: {remote_date!r}"
+                        )
                         _debug_logged = True
                     to_fetch.append(m)
             skipped_delta = len(unique_assignments) - len(to_fetch)
 
-            print(f"\n   🔄 Delta check: {len(to_fetch)} perlu di-fetch, "
-                  f"{skipped_delta} di-skip (tidak berubah sejak sync terakhir)")
+            print(
+                f"\n   🔄 Delta check: {len(to_fetch)} perlu di-fetch, "
+                f"{skipped_delta} di-skip (tidak berubah sejak sync terakhir)"
+            )
 
             # Jika semua sudah up-to-date, tidak perlu fetch apapun
             if not to_fetch:
@@ -249,7 +258,9 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
                 # Fetch secara concurrent — concurrency=100 optimal untuk VPN BPS
                 # (lebih tinggi berisiko 429, lebih rendah terlalu lambat)
                 try:
-                    results = await fetch_assignments_concurrent(cookies, urls_to_fetch, concurrency=settings.fetch_concurrency)
+                    results = await fetch_assignments_concurrent(
+                        cookies, urls_to_fetch, concurrency=settings.fetch_concurrency
+                    )
                     timings["fetch"] = int((time.perf_counter() - phase_start) * 1000)
 
                     # Upsert
@@ -274,7 +285,7 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
                         print("   🗑️ Cached cookies berhasil dihapus.")
                     except Exception as db_err:
                         print(f"   ⚠️ Gagal menghapus cached cookies: {db_err}")
-                    
+
                     if BatchUpserterBulk.active_instance:
                         print("   💾 Menjalankan emergency flush untuk data yang tersisa di buffer...")
                         try:
@@ -282,10 +293,10 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
                             print("   ✅ Emergency flush berhasil diselesaikan.")
                         except Exception as flush_err:
                             print(f"   ⚠️ Emergency flush gagal: {flush_err}")
-                    
+
                     # Raise agar scheduler/caller mendeteksi kegagalan otentikasi
                     raise
-            
+
             # (Note: BatchUpserterBulk handles commits internally or during finish)
         else:
             print("   ⚠️ Tidak ada assignment ditemukan untuk kriteria ini.")
@@ -295,15 +306,17 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
         # Logging
         timings["upsert"] = int((time.perf_counter() - phase_start) * 1000)
         timings["total"] = int((time.perf_counter() - total_start) * 1000)
-        
-        log = log_sync_run(session, started_at, stats, survey_config_id=getattr(settings, "id", "default"), timings=timings)
+
+        log = log_sync_run(
+            session, started_at, stats, survey_config_id=getattr(settings, "id", "default"), timings=timings
+        )
         session.close()
-        
+
     # Graceful shutdown of persistent API session
-    if 'api' in locals():
+    if "api" in locals():
         await api.close()
 
-    print(f"\n🎉 Cycle selesai!")
+    print("\n🎉 Cycle selesai!")
     print(f"   {stats}")
 
 
@@ -342,7 +355,7 @@ def run_scheduler(settings: Settings):
 
     print(f"⏰ Scheduler dimulai — interval: {settings.interval_minutes} menit")
     print(f"   Cycle pertama akan berjalan segera + setiap {settings.interval_minutes} menit setelahnya.")
-    print(f"   Tekan Ctrl+C untuk berhenti.\n")
+    print("   Tekan Ctrl+C untuk berhenti.\n")
 
     scheduler.start()
 
@@ -361,6 +374,7 @@ def run_scheduler(settings: Settings):
 def handle_sigterm(signum, frame):
     print(f"\n🚨 [SIGTERM] Menerima sinyal {signum}. Melakukan graceful shutdown...")
     from db.repository import BatchUpserterBulk
+
     if BatchUpserterBulk.active_instance:
         print("💾 [SIGTERM] Ditemukan active buffer di BatchUpserterBulk. Melakukan emergency flush...")
         try:
@@ -385,7 +399,7 @@ def main():
 
     settings = Settings.from_env()
     errors = settings.validate()
-    
+
     if errors and not args.dry_run:
         print("❌ Konfigurasi error:")
         for err in errors:
@@ -398,6 +412,7 @@ def main():
         asyncio.run(run_sync_cycle(settings, dry_run=args.dry_run))
     else:
         run_scheduler(settings)
+
 
 if __name__ == "__main__":
     main()
