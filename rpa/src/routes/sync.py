@@ -142,6 +142,7 @@ from connectivity import check_fasih_reachable, is_session_stale
 @router.get("/vpn/check")
 async def check_vpn():
     import os
+    logger.info("Received VPN status check request")
     try:
         # 1. Check application-level reachability (can we reach the FASIH server?)
         reachable, reason = await check_fasih_reachable()
@@ -158,14 +159,18 @@ async def check_vpn():
                 info = "VPN Connected (via ppp0)"
             else:
                 info = "VPN Connected (Transparently via Host)"
+            logger.info(f"VPN check outcome: reachable - {info}")
             return {"connected": True, "info": info}
             
+        err_msg = f"FASIH-SM unreachable: {reason} (Interface: {'tun0/ppp0 UP' if has_vpn else 'Missing'})"
+        logger.warning(f"VPN check outcome: unreachable - {err_msg}")
         return {
             "connected": False, 
-            "reason": f"FASIH-SM unreachable: {reason} (Interface: {'tun0/ppp0 UP' if has_vpn else 'Missing'})"
+            "reason": err_msg
         }
         
     except Exception as e:
+        logger.exception("Unexpected exception occurred in /vpn/check handler")
         return {"connected": False, "reason": f"Status check error: {str(e)}"}
 
 
@@ -176,6 +181,7 @@ async def auto_fetch_vpn(req: VpnCookieRequest):
     from auth import FETCH_LOCK, get_current_cookie, sync_cookie_to_db
 
     if FETCH_LOCK.locked():
+        logger.warning("VPN auto-fetch request rejected: Fetch lock is already held")
         return {"status": "already_fetching", "message": "Proses auto-fetch VPN sedang berjalan..."}
 
     if not req.sso_username or not req.sso_password:
@@ -186,6 +192,7 @@ async def auto_fetch_vpn(req: VpnCookieRequest):
         # Check if cookie already exists (maybe another trigger finished just now)
         existing = await get_current_cookie()
         if existing:
+            logger.info("VPN cookie already exists in database. Skipping duplicate fetch.")
             return {"status": "success", "message": "Cookie sudah ada di database, melewati fetch."}
 
         try:
@@ -195,10 +202,15 @@ async def auto_fetch_vpn(req: VpnCookieRequest):
             
             if cookie:
                 await sync_cookie_to_db(cookie)
+                logger.info("VPN cookie successfully synchronized to database")
                 return {"status": "success", "message": "VPN cookie berhasil diperbarui"}
             else:
+                logger.error("SSO authentication returned empty/invalid cookie")
                 raise HTTPException(status_code=400, detail="Gagal mendapatkan VPN cookie dari Keycloak SSO")
+        except HTTPException:
+            raise
         except Exception as e:
+            logger.exception("Unexpected error occurred during VPN cookie fetch execution")
             raise HTTPException(status_code=500, detail=f"Fetch error: {e}")
 
 

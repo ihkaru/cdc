@@ -3,6 +3,7 @@ import { db } from "../db";
 import { surveyConfigs, systemSettings } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { createHash, createDecipheriv } from "crypto";
+import { logger } from "../utils/logger";
 
 const RPA_URL = process.env.RPA_URL || "http://vpn:8000";
 const VPN_AUTH_URL = process.env.VPN_AUTH_URL || "http://vpn:8001";
@@ -19,13 +20,18 @@ function decryptPassword(ciphertext: string): string {
 }
 
 import { requireAuth } from "../middleware/auth";
+import { tracingMiddleware } from "../middleware/tracing";
 
 const lastLookup = new Map<string, number>();
 
 export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
+    .use(tracingMiddleware)
     .use(requireAuth)
     .post("/:id/sync", async (ctx: any) => {
-        const { params, set, traceId, traceparent, log } = ctx;
+        const { params, set } = ctx;
+        const traceId = ctx.traceId || "no-trace";
+        const traceparent = ctx.traceparent || "";
+        const log = ctx.log || logger.child({ traceId });
         const [survey] = await db
             .select()
             .from(surveyConfigs)
@@ -91,21 +97,46 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
     })
 
     // Get RPA sync status
-    .get("/sync/status", async () => {
+    .get("/sync/status", async (ctx: any) => {
+        const traceId = ctx.traceId || "no-trace";
+        const traceparent = ctx.traceparent || "";
+        const log = ctx.log || logger.child({ traceId });
         try {
-            const response = await fetch(`${RPA_URL}/status`, { signal: AbortSignal.timeout(15000) });
+            const response = await fetch(`${RPA_URL}/status`, { 
+                headers: {
+                    "X-Trace-ID": traceId,
+                    "traceparent": traceparent
+                },
+                signal: AbortSignal.timeout(15000) 
+            });
             return await response.json();
-        } catch {
-            return { is_running: false, error: "RPA service unavailable" };
+        } catch (e: any) {
+            log.error("Failed to fetch RPA sync status", { error: e.message, rpa_url: `${RPA_URL}/status` });
+            return { is_running: false, error: `RPA service unavailable: ${e.message}` };
         }
     })
 
     // Get VPN connection status from RPA
-    .get("/vpn/status", async () => {
+    .get("/vpn/status", async (ctx: any) => {
+        const traceId = ctx.traceId || "no-trace";
+        const traceparent = ctx.traceparent || "";
+        const log = ctx.log || logger.child({ traceId });
         try {
             const [checkRes, statusRes] = await Promise.all([
-                fetch(`${RPA_URL}/vpn/check`, { signal: AbortSignal.timeout(10000) }),
-                fetch(`${RPA_URL}/status`, { signal: AbortSignal.timeout(5000) })
+                fetch(`${RPA_URL}/vpn/check`, { 
+                    headers: {
+                        "X-Trace-ID": traceId,
+                        "traceparent": traceparent
+                    },
+                    signal: AbortSignal.timeout(10000) 
+                }),
+                fetch(`${RPA_URL}/status`, { 
+                    headers: {
+                        "X-Trace-ID": traceId,
+                        "traceparent": traceparent
+                    },
+                    signal: AbortSignal.timeout(5000) 
+                })
             ]);
             
             const vpnInfo = await checkRes.json() as any;
@@ -115,20 +146,30 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
                 ...vpnInfo, 
                 is_fetching: rpaInfo.is_vpn_fetching 
             };
-        } catch {
-            return { connected: false, error: "RPA service unavailable" };
+        } catch (e: any) {
+            log.error("Failed to fetch VPN status from RPA", { error: e.message, rpa_url: `${RPA_URL}/vpn/check` });
+            return { connected: false, error: `RPA service unavailable: ${e.message}` };
         }
     })
 
     // Cancel a queued sync job
-    .delete("/sync/:jobId", async ({ params }) => {
+    .delete("/sync/:jobId", async (ctx: any) => {
+        const { params } = ctx;
+        const traceId = ctx.traceId || "no-trace";
+        const traceparent = ctx.traceparent || "";
+        const log = ctx.log || logger.child({ traceId });
         try {
             const response = await fetch(`${RPA_URL}/sync/${params.jobId}`, {
                 method: "DELETE",
+                headers: {
+                    "X-Trace-ID": traceId,
+                    "traceparent": traceparent
+                }
             });
             return await response.json();
-        } catch {
-            return { error: "RPA service unavailable" };
+        } catch (e: any) {
+            log.error("Failed to cancel queued sync job", { error: e.message, jobId: params.jobId });
+            return { error: `RPA service unavailable: ${e.message}` };
         }
     })
 
@@ -257,8 +298,12 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
     })
     
     // Explicitly trigger VPN auto-fetch from UI
-    .post("/vpn/auto-fetch", async ({ set }) => {
-        console.log("👆 UI Manual Trigger: VPN Auto-Fix requested.");
+    .post("/vpn/auto-fetch", async (ctx: any) => {
+        const { set } = ctx;
+        const traceId = ctx.traceId || "no-trace";
+        const traceparent = ctx.traceparent || "";
+        const log = ctx.log || logger.child({ traceId });
+        log.info("UI Manual Trigger: VPN Auto-Fix requested");
         
         const [survey] = await db
             .select()
@@ -268,15 +313,24 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 
         if (!survey) {
             set.status = 404;
+            log.warn("VPN Auto-fetch failed: No active survey found to borrow credentials from");
             return { error: "No active survey to borrow credentials from" };
         }
 
         const password = decryptPassword(survey.ssoPasswordEncrypted);
         
         try {
+            log.info("Triggering VPN auto-fetch in vpn-auth service", {
+                vpn_auth_url: `${VPN_AUTH_URL}/vpn/auto-fetch`,
+                sso_username: survey.ssoUsername
+            });
             const fetchRes = await fetch(`${VPN_AUTH_URL}/vpn/auto-fetch`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { 
+                    "Content-Type": "application/json",
+                    "X-Trace-ID": traceId,
+                    "traceparent": traceparent
+                },
                 body: JSON.stringify({
                     sso_username: survey.ssoUsername,
                     sso_password: password
@@ -294,14 +348,15 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
                     if (text && text.length < 100) detail = text;
                 }
                 
-                console.error(`   ❌ VPN Auto-fetch failed: ${detail}`);
+                log.error(`VPN Auto-fetch failed: ${detail}`, { status: fetchRes.status });
                 set.status = fetchRes.status === 401 ? 401 : 400;
                 return { error: detail };
             }
 
+            log.info("VPN Auto-fetch triggered successfully");
             return await fetchRes.json();
         } catch (e: any) {
-            console.error(`   ❌ VPN Auto-fetch connection failed: ${e.message}`);
+            log.error(`VPN Auto-fetch connection failed: ${e.message}`, { error: e.message, stack: e.stack });
             set.status = 503;
             return { error: `Gagal menghubungi service VPN-Auth: ${e.message}` };
         }
@@ -312,14 +367,24 @@ const RPA_API_URL = RPA_URL;
 // ===== VPN Auto-Pilot Background Loop =====
 // Check VPN status periodically. If disconnected, trigger RPA to auto-fetch the cookie.
 const checkVpnAndFetchCookie = async () => {
+    // Generate a background trace ID for this run of the auto-pilot loop
+    const traceId = "autopilot-" + Math.random().toString(36).substring(2, 10);
+    const log = logger.child({ traceId });
+
     try {
-        console.log(`📡 [Auto-Pilot] Checking VPN status via: ${RPA_API_URL}/vpn/check`);
+        log.info("Checking VPN status", { rpa_url: `${RPA_API_URL}/vpn/check` });
         const statusRes = await fetch(`${RPA_API_URL}/vpn/check`, { 
+            headers: {
+                "X-Trace-ID": traceId
+            },
             signal: AbortSignal.timeout(20000) 
-        }).then(r => r.json()).catch(() => ({ connected: false })) as any;
+        }).then(r => r.json()).catch((err) => {
+            log.warn("VPN check request failed", { error: err.message });
+            return { connected: false };
+        }) as any;
 
         if (!statusRes.connected) {
-            console.log("⚠️ VPN Disconnected detected! Attempting auto-fetch...");
+            log.warn("VPN Disconnected detected! Attempting auto-fetch...", { vpn_info: statusRes });
             
             // 2. Identify an active survey to borrow credentials for auto-fetch
             let survey;
@@ -331,11 +396,11 @@ const checkVpnAndFetchCookie = async () => {
                     .limit(1);
             } catch (dbErr: any) {
                 if (dbErr.message?.includes('does not exist')) {
-                    console.log("   ⚠️ Table 'survey_configs' does not exist yet. Skipping auto-pilot.");
+                    log.warn("Table 'survey_configs' does not exist yet. Skipping auto-pilot.");
                 } else if (dbErr.message?.includes('uuid')) {
-                    console.error("   ❌ Database Schema Mismatch (UUID Cast Error). Please run manual migration.");
+                    log.error("Database Schema Mismatch (UUID Cast Error). Please run manual migration.", { error: dbErr.message });
                 } else {
-                    console.error("   ❌ Database error in VPN Auto-Pilot:", dbErr.message);
+                    log.error("Database error in VPN Auto-Pilot", { error: dbErr.message });
                 }
                 return;
             }
@@ -343,10 +408,13 @@ const checkVpnAndFetchCookie = async () => {
             if (!survey) {
                 // Fallback: Check if we have Master SSO credentials in .env
                 if (process.env.VPN_USER && process.env.VPN_PASS) {
-                    console.log("   🚀 No active survey found, but using Master SSO (VPN_USER) for bootstrap...");
+                    log.info("No active survey found, but using Master SSO (VPN_USER) for bootstrap...", { sso_username: process.env.VPN_USER });
                     const fetchRes = await fetch(`${RPA_API_URL}/vpn/auto-fetch`, {
                         method: "POST",
-                        headers: { "Content-Type": "application/json" },
+                        headers: { 
+                            "Content-Type": "application/json",
+                            "X-Trace-ID": traceId
+                        },
                         body: JSON.stringify({
                             sso_username: process.env.VPN_USER,
                             sso_password: process.env.VPN_PASS
@@ -355,23 +423,29 @@ const checkVpnAndFetchCookie = async () => {
                     });
                     
                     if (fetchRes.ok) {
-                        console.log("   ✅ VPN bootstrap triggered successfully!");
+                        log.info("VPN bootstrap triggered successfully!");
                     } else {
-                        console.log(`   ❌ Failed to trigger VPN bootstrap: ${fetchRes.status}`);
+                        log.error("Failed to trigger VPN bootstrap", { status: fetchRes.status });
                     }
                     return;
                 }
 
-                console.log("   ❌ No active survey found and no Master SSO (VPN_USER) configured. Cannot auto-pilot.");
+                log.warn("No active survey found and no Master SSO (VPN_USER) configured. Cannot auto-pilot.");
                 return;
             }
 
-            console.log(`   🔑 Borrowing credentials from: ${survey.ssoUsername} (Survey: ${survey.surveyName})`);
+            log.info("Borrowing credentials from active survey for auto-pilot", { 
+                sso_username: survey.ssoUsername, 
+                survey_name: survey.surveyName 
+            });
             const password = decryptPassword(survey.ssoPasswordEncrypted);
             
             const fetchRes = await fetch(`${RPA_API_URL}/vpn/auto-fetch`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { 
+                    "Content-Type": "application/json",
+                    "X-Trace-ID": traceId
+                },
                 body: JSON.stringify({
                     sso_username: survey.ssoUsername,
                     sso_password: password
@@ -380,13 +454,15 @@ const checkVpnAndFetchCookie = async () => {
             });
 
             if (fetchRes.ok) {
-                console.log("   ✅ VPN auto-fetch triggered successfully! RPA is grabbing the cookie.");
+                log.info("VPN auto-fetch triggered successfully! RPA is grabbing the cookie.");
             } else {
-                console.log(`   ❌ Failed to trigger RPA VPN auto-fetch: ${fetchRes.status}`);
+                log.error("Failed to trigger RPA VPN auto-fetch", { status: fetchRes.status });
             }
+        } else {
+            log.info("VPN is connected and stable", { info: statusRes.info });
         }
     } catch (err: any) {
-        console.error("❌ Fatal Error in VPN Auto-Pilot loop:", err.message);
+        log.error("Fatal Error in VPN Auto-Pilot loop", { error: err.message, stack: err.stack });
     }
 };
 

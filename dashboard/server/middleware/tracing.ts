@@ -32,8 +32,8 @@ function formatTraceparent(traceId: string): string {
     return `00-${cleanId}-${parentId}-01`;
 }
 
-export const tracingMiddleware = new Elysia({ name: "tracingMiddleware" })
-    .derive(({ request, set }) => {
+export const tracingMiddleware = new Elysia()
+    .derive({ as: "global" }, ({ request, set }) => {
         const traceId = parseTraceId(request);
         const traceparent = formatTraceparent(traceId);
 

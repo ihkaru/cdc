@@ -3,8 +3,6 @@
 
 services:
   dashboard:
-    ports:
-      - "3000:3000"
     volumes:
       - ./dashboard/server:/app/server
       - ./dashboard/entrypoint.sh:/app/entrypoint.sh
@@ -20,13 +18,6 @@ services:
   archiver:
     volumes:
       - ./rpa:/app
-
-  vpn:
-    # Exposed ports here are actually serving rpa (8000) and vpn-auth (8001)
-    # because they share the vpn container's network namespace.
-    ports:
-      - "8000:8000"
-      - "8001:8001"
 
   fasih-db:
     ports:

@@ -86,8 +86,8 @@ export const getAuthContext = async (request: Request) => {
     return { user: userRow, roles };
 };
 
-export const authMiddleware = new Elysia({ name: "authMiddlewareV2" })
-    .derive(async ({ request }) => {
+export const authMiddleware = new Elysia()
+    .derive({ as: "global" }, async ({ request }) => {
         return await getAuthContext(request);
     });
 

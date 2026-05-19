@@ -76,7 +76,7 @@ const app = new Elysia()
         return await getAuthContext(request);
     })
     // Global Security Gate & Headers
-    .onBeforeHandle(({ path, user, set, request, log }: any) => {
+    .onBeforeHandle(({ path, user, set, request }: any) => {
         // 1. Security Headers
         set.headers["X-Frame-Options"] = "DENY";
         set.headers["X-Content-Type-Options"] = "nosniff";
@@ -90,13 +90,13 @@ const app = new Elysia()
         const isProtectedApi = path.startsWith("/api/") || path.startsWith("/storage/");
 
         if (isProtectedApi && !isPublicAuth && !isPublicStatus && !user) {
-            log.warn(`[Security] 401 Unauthorized ${request.method} ${path} (User: ${user ? 'found' : 'null'})`);
+            logger.warn(`[Security] 401 Unauthorized ${request.method} ${path} (User: ${user ? 'found' : 'null'})`);
             set.status = 401;
             return { error: "Unauthorized" };
         }
         
         if (isProtectedApi) {
-            log.info(`[Security] 200 Authorized ${request.method} ${path} for user ${user?.email || 'unknown'}`);
+            logger.info(`[Security] 200 Authorized ${request.method} ${path} for user ${user?.email || 'unknown'}`);
         }
     })
     // Protected Routes

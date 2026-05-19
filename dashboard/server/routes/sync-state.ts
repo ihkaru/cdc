@@ -6,16 +6,32 @@ import { eq, and, desc, sql } from "drizzle-orm";
 const RPA_URL = process.env.RPA_URL || "http://vpn:8000";
 
 import { requireAuth } from "../middleware/auth";
+import { tracingMiddleware } from "../middleware/tracing";
+import { logger } from "../utils/logger";
 
 export const syncStateRoutes = new Elysia({ prefix: "/api/surveys" })
+    .use(tracingMiddleware)
     .use(requireAuth)
-    .get("/:id/sync-dashboard-state", async ({ params }) => {
+    .get("/:id/sync-dashboard-state", async (ctx: any) => {
+        const { params } = ctx;
+        const traceId = ctx.traceId || "no-trace";
+        const traceparent = ctx.traceparent || "";
+        const log = ctx.log || logger.child({ traceId });
         const surveyId = params.id;
 
         // 1. Fetch RPA Robot Status
-        const robotStatusPromise = fetch(`${RPA_URL}/status`)
+        const robotStatusPromise = fetch(`${RPA_URL}/status`, {
+            headers: {
+                "X-Trace-ID": traceId,
+                "traceparent": traceparent
+            },
+            signal: AbortSignal.timeout(10000)
+        })
             .then(res => res.json())
-            .catch(() => ({ is_running: false, error: "RPA service offline" }));
+            .catch((e: any) => {
+                log.error("Failed to fetch RPA robot status for dashboard state", { error: e.message, rpa_url: `${RPA_URL}/status` });
+                return { is_running: false, error: `RPA service offline: ${e.message}` };
+            });
 
         // 2. Fetch Mirroring Progress
         const mirroringProgressPromise = db

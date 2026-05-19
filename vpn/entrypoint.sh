@@ -188,7 +188,7 @@ apply_smart_routing() {
             log "📌 Pinned $TARGET_DOMAIN -> $TARGET_IP in /etc/hosts" "info"
 
             log "🔌 Prioritizing Docker DNS and injecting BPS Nameservers..." "info"
-            echo -e "nameserver 127.0.0.11\nnameserver 10.10.11.11\nnameserver 10.10.11.12\n$(grep -vE '127.0.0.11|10.10.11.11|10.10.11.12' /etc/resolv.conf)" > /etc/resolv.conf
+            printf "nameserver 127.0.0.11\nnameserver 10.10.11.11\nnameserver 10.10.11.12\n%s\n" "$(grep -vE '127.0.0.11|10.10.11.11|10.10.11.12' /etc/resolv.conf)" > /etc/resolv.conf
             
             if ! ip route get "$TARGET_IP" 2>/dev/null | grep -q "dev $VPN_IF"; then
                 log "🛠️  Forcing route for $TARGET_IP via $VPN_IF..." "info"
@@ -317,11 +317,40 @@ while true; do
         log "🔑 Cookie loaded from env var (Fallback)" "info"
     fi
 
-    # Determine servercert pin dynamically for OpenConnect
-    if [ -n "$VPN_TRUSTED_CERT" ]; then
-        OPENC_CERT="sha256:$VPN_TRUSTED_CERT"
+    # Dynamic SSL Pin Extraction
+    log "🔍 Dynamically extracting SSL fingerprints from $VPN_HOST..." "info"
+    PIN_RESOLVED=""
+    HEX_RESOLVED=""
+
+    for attempt in $(seq 1 3); do
+        CERT_DATA=$(openssl s_client -connect "${VPN_HOST}:${VPN_PORT:-443}" < /dev/null 2>/dev/null)
+        if [ -n "$CERT_DATA" ]; then
+            PIN_RESOLVED=$(echo "$CERT_DATA" | openssl x509 -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform der 2>/dev/null | openssl dgst -sha256 -binary 2>/dev/null | openssl enc -base64 2>/dev/null)
+            HEX_RESOLVED=$(echo "$CERT_DATA" | openssl x509 -outform der 2>/dev/null | openssl dgst -sha256 -hex 2>/dev/null | awk '{print $NF}')
+            if [ -n "$PIN_RESOLVED" ] && [ -n "$HEX_RESOLVED" ]; then
+                log "   ✅ Resolved GnuTLS Pin: pin-sha256:$PIN_RESOLVED" "info"
+                log "   ✅ Resolved OpenFortiVPN Hash: $HEX_RESOLVED" "info"
+                break
+            fi
+        fi
+        log "   ⚠️ Attempt $attempt/3 to extract SSL cert failed. Retrying..." "warn"
+        sleep 2
+    done
+
+    if [ -n "$PIN_RESOLVED" ]; then
+        OPENC_CERT="pin-sha256:$PIN_RESOLVED"
     else
-        OPENC_CERT="pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA="
+        if [ -n "$VPN_TRUSTED_CERT" ] && [ ${#VPN_TRUSTED_CERT} -ne 64 ]; then
+            OPENC_CERT="pin-sha256:$VPN_TRUSTED_CERT"
+        else
+            OPENC_CERT="pin-sha256:u5HMq39pIYRefHyrvy+wZgxcW/a+Oa5N0x65brFLNsA="
+        fi
+    fi
+
+    if [ -n "$HEX_RESOLVED" ]; then
+        FORTI_CERT="$HEX_RESOLVED"
+    else
+        FORTI_CERT="${VPN_TRUSTED_CERT:-de74481c56635274320d58e3267de977acbd6ea8cdbc5450042010d7e9544659}"
     fi
 
     if [ -n "$COOKIE" ]; then
@@ -356,14 +385,18 @@ EOF
         EXIT_STATUS=$?
         
         if [ $EXIT_STATUS -ne 0 ]; then
-            log "⚠️ OpenConnect failed to start or run (Status: $EXIT_STATUS). Falling back to openfortivpn..." "warn"
-            apply_smart_routing &
-            openfortivpn "${VPN_HOST}:${VPN_PORT:-443}" \
-                --cookie="$VAL" \
-                ${VPN_TRUSTED_CERT:+--trusted-cert "$VPN_TRUSTED_CERT"} \
-                --set-dns=1 \
-                --pppd-use-peerdns=1
-            EXIT_STATUS=$?
+            if [ $EXIT_STATUS -eq 2 ]; then
+                log "⚠️ OpenConnect cookie authentication failed (Status: 2). Skipping openfortivpn fallback to prevent stale loops." "warn"
+            else
+                log "⚠️ OpenConnect failed to start or run (Status: $EXIT_STATUS). Falling back to openfortivpn..." "warn"
+                apply_smart_routing &
+                openfortivpn "${VPN_HOST}:${VPN_PORT:-443}" \
+                    --cookie="$VAL" \
+                    --trusted-cert "$FORTI_CERT" \
+                    --set-dns=1 \
+                    --pppd-use-peerdns=1
+                EXIT_STATUS=$?
+            fi
         fi
     else
         log "👤 Using Username/Password Mode (OpenConnect)..." "info"
@@ -392,7 +425,7 @@ host = ${VPN_HOST}
 port = ${VPN_PORT:-443}
 username = ${VPN_USER}
 password = ${VPN_PASS}
-${VPN_TRUSTED_CERT:+trusted-cert = $VPN_TRUSTED_CERT}
+trusted-cert = $FORTI_CERT
 set-dns = 1
 pppd-use-peerdns = 1
 EOF
