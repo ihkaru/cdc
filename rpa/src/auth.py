@@ -153,40 +153,53 @@ async def auto_login(page, username, password):
         if not success:
             # 📸 Capture failure screenshot and trace
             try:
-                await page.screenshot(path="/app/traces/sso_error.png")
+                await page.screenshot(path="/app/traces/sso_error.png", timeout=5000)
                 await context.tracing.stop(path="/app/traces/sso_trace.zip")
                 print("📸 [Auth] Login failed. Error screenshot and trace saved to /app/traces/")
             except Exception as se:
                 print(f"⚠️ [Auth] Could not save failure trace/screenshot: {se}")
             return False, {}, err_msg
 
-        # 2. Wait for landing on the target app
-        print("   ⏳ [Auth] Waiting for redirect to FASIH-SM...")
-        try:
-            # Wait for elements that signify a successful login in FASIH-SM
-            await page.wait_for_selector(".main-sidebar, .user-panel, a[href*='logout'], .navbar", timeout=60000)
-            print("   ✅ [Auth] Dashboard detected!")
-        except Exception as e:
-            # 📸 Capture failure screenshot and trace on landing timeout
+        # 2. Poll for session cookies (max 30s) to bypass slow asset loads/rendering
+        print("   ⏳ [Auth] Polling for FASIH-SM session cookies (max 30s)...")
+        start_time = asyncio.get_event_loop().time()
+        cookies_dict = {}
+        has_session = False
+        while (asyncio.get_event_loop().time() - start_time) < 30:
+            cookies_list = await page.context.cookies()
+            cookies_dict = {c["name"]: c["value"] for c in cookies_list}
+            has_session = any(name in cookies_dict for name in ["XSRF-TOKEN", "laravel_session"])
+            if has_session:
+                print(f"   ✅ [Auth] Session captured early ({len(cookies_dict)} cookies) via polling.")
+                break
+            await asyncio.sleep(2)
+
+        # Fallback: if polling failed, wait for elements (but with a short 15s timeout)
+        if not has_session:
+            print("   ⏳ [Auth] Session cookies not found in polling. Waiting for landing element (max 15s)...")
             try:
-                await page.screenshot(path="/app/traces/sso_error.png")
-                await context.tracing.stop(path="/app/traces/sso_trace.zip")
-                print("📸 [Auth] Timeout waiting for Dashboard. Error screenshot and trace saved.")
-            except Exception as se:
-                print(f"⚠️ [Auth] Could not save timeout trace/screenshot: {se}")
+                await page.wait_for_selector(".main-sidebar, .user-panel, a[href*='logout'], .navbar", timeout=15000)
+                print("   ✅ [Auth] Dashboard detected!")
+                cookies_list = await page.context.cookies()
+                cookies_dict = {c["name"]: c["value"] for c in cookies_list}
+                has_session = any(name in cookies_dict for name in ["XSRF-TOKEN", "laravel_session"])
+            except Exception as e:
+                # 📸 Capture failure screenshot and trace with short timeout
+                try:
+                    await page.screenshot(path="/app/traces/sso_error.png", timeout=5000)
+                    await context.tracing.stop(path="/app/traces/sso_trace.zip")
+                    print("📸 [Auth] Timeout waiting for Dashboard. Error screenshot and trace saved.")
+                except Exception as se:
+                    print(f"⚠️ [Auth] Could not save timeout trace/screenshot: {se}")
 
-            # If not detected, check if we are at least on the domain
-            if "fasih-sm.bps.go.id" in page.url:
-                print("   ℹ️ [Auth] On target domain but sidebar missing. Proceeding.")
-            else:
-                return False, {}, f"Dashboard tidak terjangkau setelah SSO: {e!s}"
+                if "fasih-sm.bps.go.id" in page.url:
+                    print("   ℹ️ [Auth] On target domain but sidebar missing. Proceeding.")
+                    cookies_list = await page.context.cookies()
+                    cookies_dict = {c["name"]: c["value"] for c in cookies_list}
+                    has_session = any(name in cookies_dict for name in ["XSRF-TOKEN", "laravel_session"])
+                else:
+                    return False, {}, f"Dashboard tidak terjangkau setelah SSO: {e!s}"
 
-        # 3. Capture cookies
-        cookies_list = await page.context.cookies()
-        cookies_dict = {c["name"]: c["value"] for c in cookies_list}
-
-        # Check critical session cookies
-        has_session = any(name in cookies_dict for name in ["XSRF-TOKEN", "laravel_session"])
         if has_session:
             print(f"✅ [Auth] Session captured ({len(cookies_dict)} cookies).")
             # Clean up tracing on success without saving to save space
@@ -198,7 +211,7 @@ async def auto_login(page, username, password):
         else:
             # 📸 Capture screenshot on missing session cookies
             try:
-                await page.screenshot(path="/app/traces/sso_error.png")
+                await page.screenshot(path="/app/traces/sso_error.png", timeout=5000)
                 await context.tracing.stop(path="/app/traces/sso_trace.zip")
             except:
                 pass
@@ -207,7 +220,7 @@ async def auto_login(page, username, password):
     except Exception as e:
         print(f"❌ [Auth] auto_login failed: {e}")
         try:
-            await page.screenshot(path="/app/traces/sso_error.png")
+            await page.screenshot(path="/app/traces/sso_error.png", timeout=5000)
             await page.context.tracing.stop(path="/app/traces/sso_trace.zip")
         except:
             pass
@@ -237,7 +250,7 @@ async def fetch_vpn_cookie(username, password):
             if not success:
                 print(f"❌ [Auth] Failed to login to VPN portal: {err_msg}")
                 # 📸 Capture failure screenshot and trace
-                await page.screenshot(path="/app/traces/sso_error.png")
+                await page.screenshot(path="/app/traces/sso_error.png", timeout=5000)
                 await context.tracing.stop(path="/app/traces/sso_trace.zip")
                 print("📸 [Auth] Error screenshot and trace saved to /app/traces/")
                 await browser.close()
@@ -261,7 +274,7 @@ async def fetch_vpn_cookie(username, password):
                 await asyncio.sleep(2)
 
             # 📸 Capture screenshot on timeout
-            await page.screenshot(path="/app/traces/sso_error.png")
+            await page.screenshot(path="/app/traces/sso_error.png", timeout=5000)
             await context.tracing.stop(path="/app/traces/sso_trace.zip")
             print("📸 [Auth] Timeout. Error screenshot and trace saved to /app/traces/")
             await browser.close()
