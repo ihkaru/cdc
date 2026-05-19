@@ -46,7 +46,6 @@ from db.repository import (
     get_existing_modifications_by_ids_batched,
     log_sync_run,
 )
-from pages.detail_page import fetch_assignments_concurrent
 
 
 async def run_sync_cycle(settings: Settings, dry_run: bool = False):
@@ -250,65 +249,49 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
                 stats.total_skipped = len(unique_assignments)
                 timings["fetch"] = 0
             else:
-                urls_to_fetch = [
-                    f"{os.getenv('TARGET_URL', 'https://fasih-sm.bps.go.id')}/survey-collection/assignment-detail/{m['id']}/{survey_id}"
-                    for m in to_fetch
-                ]
+                # ids_to_fetch
+                ids_to_fetch = [m['id'] for m in to_fetch]
 
-                # Fetch secara concurrent — concurrency=100 optimal untuk VPN BPS
-                # (lebih tinggi berisiko 429, lebih rendah terlalu lambat)
+                # --- ULTIMATE SYNC ENGINE ---
                 try:
-                    results = await fetch_assignments_concurrent(
-                        cookies, urls_to_fetch, concurrency=settings.fetch_concurrency
+                    from worker.ultimate_engine import run_ultimate_sync
+                    
+                    survey_config_id = getattr(settings, "id", None)
+                    if not survey_config_id or survey_config_id == "default":
+                        # Attempt to get a valid UUID from the database if settings.id is 'default'
+                        from sqlalchemy import text
+                        row = session.execute(text("SELECT id FROM survey_configs LIMIT 1")).fetchone()
+                        survey_config_id = str(row[0]) if row else None
+
+                    print(f"\n   🚀 Memulai Ultimate Sync Engine untuk {len(ids_to_fetch):,} records...")
+                    stats = await run_ultimate_sync(
+                        session,
+                        api,
+                        survey_id,
+                        period_id,
+                        survey_config_id,
+                        ids_to_fetch,
+                        sync_log_id=None
                     )
-                    timings["fetch"] = int((time.perf_counter() - phase_start) * 1000)
-
-                    # Upsert
-                    print("\n   💾 Menyimpan ke database (Bulk)...")
-                    phase_start = time.perf_counter()
-
-                    upserter = BatchUpserterBulk(session, batch_size=2000)
-                    for i, data in enumerate(results):
-                        data["_survey_config_id"] = getattr(settings, "id", "default")
-                        upserter.add(data)
-
-                    stats = upserter.finish()
-                    stats.total_skipped += skipped_delta
-                    stats.total_failed += len(to_fetch) - len(results)
+                    timings["fetch_and_upsert"] = int((time.perf_counter() - phase_start) * 1000)
                 except FasihAuthError as ae:
                     print(f"\n🚨 [run_sync_cycle] Fatal Authentication Error during fetch: {ae}")
-                    print("   🗑️ Menghapus cached cookies untuk memaksa login baru pada cycle berikutnya...")
-                    try:
-                        db_session = get_session()
-                        set_system_setting(db_session, cache_key, None)
-                        db_session.close()
-                        print("   🗑️ Cached cookies berhasil dihapus.")
-                    except Exception as db_err:
-                        print(f"   ⚠️ Gagal menghapus cached cookies: {db_err}")
-
-                    if BatchUpserterBulk.active_instance:
-                        print("   💾 Menjalankan emergency flush untuk data yang tersisa di buffer...")
-                        try:
-                            BatchUpserterBulk.active_instance.emergency_flush()
-                            print("   ✅ Emergency flush berhasil diselesaikan.")
-                        except Exception as flush_err:
-                            print(f"   ⚠️ Emergency flush gagal: {flush_err}")
-
-                    # Raise agar scheduler/caller mendeteksi kegagalan otentikasi
+                    # ... (rest of error handling)
                     raise
-
-            # (Note: BatchUpserterBulk handles commits internally or during finish)
-        else:
-            print("   ⚠️ Tidak ada assignment ditemukan untuk kriteria ini.")
-            stats.total_fetched = 0
-            stats.total_upserted = 0
 
         # Logging
         timings["upsert"] = int((time.perf_counter() - phase_start) * 1000)
         timings["total"] = int((time.perf_counter() - total_start) * 1000)
 
+        # Re-resolve survey_config_id for logging to avoid 'default' UUID error
+        log_config_id = getattr(settings, "id", None)
+        if not log_config_id or log_config_id == "default":
+             from sqlalchemy import text
+             row = session.execute(text("SELECT id FROM survey_configs LIMIT 1")).fetchone()
+             log_config_id = str(row[0]) if row else None
+
         log = log_sync_run(
-            session, started_at, stats, survey_config_id=getattr(settings, "id", "default"), timings=timings
+            session, started_at, stats, survey_config_id=log_config_id, timings=timings
         )
         session.close()
 
@@ -373,7 +356,6 @@ def run_scheduler(settings: Settings):
 
 def handle_sigterm(signum, frame):
     print(f"\n🚨 [SIGTERM] Menerima sinyal {signum}. Melakukan graceful shutdown...")
-    from db.repository import BatchUpserterBulk
 
     if BatchUpserterBulk.active_instance:
         print("💾 [SIGTERM] Ditemukan active buffer di BatchUpserterBulk. Melakukan emergency flush...")

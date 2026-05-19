@@ -110,9 +110,9 @@ mtu_watchdog() {
         
         if [ -n "$VPN_IF" ]; then
             CURRENT_MTU=$(cat "/sys/class/net/$VPN_IF/mtu" 2>/dev/null)
-            if [ "$CURRENT_MTU" != "500" ]; then
-                log "🛡️ MTU Watchdog: Re-locking $VPN_IF MTU to 500 (was $CURRENT_MTU)..." "warn"
-                ip link set dev "$VPN_IF" mtu 500 2>/dev/null || true
+            if [ "$CURRENT_MTU" != "1000" ]; then
+                log "🛡️ MTU Watchdog: Re-locking $VPN_IF MTU to 1000 (was $CURRENT_MTU)..." "warn"
+                ip link set dev "$VPN_IF" mtu 1000 2>/dev/null || true
             fi
         fi
     done
@@ -200,12 +200,13 @@ apply_smart_routing() {
             ip route add 172.16.2.3/32 dev "$VPN_IF" 2>/dev/null || true
             ip route add 10.0.0.0/8 dev "$VPN_IF" 2>/dev/null || true
             
-            log "📉 Setting $VPN_IF MTU to 500..." "info"
-            ip link set dev "$VPN_IF" mtu 500 || true
+            log "📉 Setting $VPN_IF MTU to 1000..." "info"
+            ip link set dev "$VPN_IF" mtu 1000 || true
             
-            # 🛡️ MSS Clamping: Force TCP to use small packets to prevent "silent hangs"
-            iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 460
-            iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$VPN_IF" -j TCPMSS --set-mss 460
+            # 🛡️ MSS Clamping: Force TCP to use optimal packets to prevent "silent hangs"
+            # Formula: MSS = MTU - 40 (IP + TCP headers)
+            iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 960
+            iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$VPN_IF" -j TCPMSS --set-mss 960
             
             # 🌐 IP Masquerading (NAT): Allow other containers to route through VPN
             log "🌐 Enabling NAT IP Masquerading on $VPN_IF..." "info"

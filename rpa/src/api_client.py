@@ -421,25 +421,16 @@ class FasihApiClient:
         pencacah_id: str | None = None,
         region_group_id: str | None = None,
     ) -> list[dict]:
-        """Tarik Assignment Datatable hingga habis."""
+        """Tarik Assignment Datatable secara paralel."""
         path = "analytic/api/v2/assignment/datatable-all-user-survey-periode"
-        all_metadata = []
-        page_start = 0
         page_size = 1000
-        while True:
-            payload = {
-                "draw": (page_start // page_size) + 1,
-                "columns": [
-                    {
-                        "data": "id",
-                        "name": "",
-                        "searchable": True,
-                        "orderable": False,
-                        "search": {"value": "", "regex": False},
-                    }
-                ],
+
+        def _build_payload(start):
+            p = {
+                "draw": (start // page_size) + 1,
+                "columns": [{"data": "id", "searchable": True, "orderable": False, "search": {"value": "", "regex": False}}],
                 "order": [{"column": 0, "dir": "asc"}],
-                "start": page_start,
+                "start": start,
                 "length": page_size,
                 "search": {"value": "", "regex": False},
                 "assignmentExtraParam": {
@@ -454,47 +445,64 @@ class FasihApiClient:
                 },
             }
             if pencacah_id or pengawas_id:
-                payload["assignmentExtraParam"]["currentUserId"] = pencacah_id or pengawas_id
+                p["assignmentExtraParam"]["currentUserId"] = pencacah_id or pengawas_id
+            return p
 
-            body = await self._request("POST", path, json=payload)
-            if not body:
-                break
+        # 1. Fetch first page to get total
+        print("   📋 [API] Fetching metadata page 0...")
+        first_body = await self._request("POST", path, json=_build_payload(0))
+        if not first_body:
+            return []
 
+        total_records = first_body.get("recordsTotal", 0) or first_body.get("recordsFiltered", 0)
+        print(f"   📊 Total records to metadata-sync: {total_records}")
+        
+        all_metadata = []
+        
+        def _parse_data(body):
+            data_list = []
             search_data = body.get("data", body.get("searchData", []))
-            if not search_data:
-                break
-
             for item in search_data:
                 rec_id = item.get("id") or item.get("_id") or item.get("assignmentId")
                 remote_date_raw = (
-                    item.get("dateModified")
-                    or item.get("updatedAt")
-                    or item.get("dateModifiedRemote")
-                    or item.get("date_modified")
+                    item.get("dateModified") or item.get("updatedAt") or 
+                    item.get("dateModifiedRemote") or item.get("date_modified")
                 )
-
-                def _norm_date(d_raw):
-                    if not d_raw:
-                        return ""
-                    s = str(d_raw).strip()
-                    if s.isdigit() and len(s) == 14:
-                        return s
-                    from datetime import datetime, timedelta
-
-                    try:
-                        dt = datetime.strptime(s, "%b %d, %Y, %I:%M:%S %p")
-                        return (dt - timedelta(hours=7)).strftime("%Y%m%d%H%M%S")
-                    except:
-                        return re.sub(r"\D", "", s)[:14]
-
                 if rec_id:
-                    all_metadata.append({"id": rec_id, "dateModifiedRemote": _norm_date(remote_date_raw)})
+                    data_list.append({"id": rec_id, "dateModifiedRemote": self._norm_date(remote_date_raw)})
+            return data_list
 
-            if len(search_data) < page_size:
-                break
-            page_start += page_size
+        all_metadata.extend(_parse_data(first_body))
+
+        if total_records <= page_size:
+            return all_metadata
+
+        # 2. Fetch remaining pages in parallel
+        offsets = range(page_size, total_records, page_size)
+        print(f"   📡 Launching {len(offsets)} parallel metadata requests...")
+        
+        async def _fetch_page(offset):
+            body = await self._request("POST", path, json=_build_payload(offset))
+            return _parse_data(body) if body else []
+
+        results = await asyncio.gather(*(_fetch_page(o) for o in offsets))
+        for res in results:
+            all_metadata.extend(res)
 
         return all_metadata
+
+    def _norm_date(self, d_raw):
+        if not d_raw:
+            return ""
+        s = str(d_raw).strip()
+        if s.isdigit() and len(s) == 14:
+            return s
+        from datetime import datetime, timedelta
+        try:
+            dt = datetime.strptime(s, "%b %d, %Y, %I:%M:%S %p")
+            return (dt - timedelta(hours=7)).strftime("%Y%m%d%H%M%S")
+        except:
+            return re.sub(r"\D", "", s)[:14]
 
     @with_retry(retries=3, delay=2)
     async def get_assignment_detail(self, assignment_id: str) -> dict | None:

@@ -480,11 +480,22 @@ class BatchUpserterBulk:
         """Execute flush asynchronously in a background thread to prevent event loop blocking."""
         if not self._buffer:
             return
-        await asyncio.to_thread(self.flush, is_emergency)
+        # Create a copy of the buffer to flush so we can clear the main buffer immediately
+        buffer_to_flush = self._buffer.copy()
+        self._buffer.clear()
+        await asyncio.to_thread(self._flush_internal, buffer_to_flush, is_emergency)
 
     def flush(self, is_emergency: bool = False):
         """Execute a single INSERT ... ON CONFLICT DO UPDATE for the entire batch."""
         if not self._buffer:
+            return
+        buffer_to_flush = self._buffer.copy()
+        self._buffer.clear()
+        self._flush_internal(buffer_to_flush, is_emergency)
+
+    def _flush_internal(self, buffer: list[dict], is_emergency: bool = False):
+        """Internal flush logic that actually executes the SQL."""
+        if not buffer:
             return
 
         from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -492,7 +503,7 @@ class BatchUpserterBulk:
         prefix = "🚨 [EMERGENCY FLUSH]" if is_emergency else "💾 [BULK FLUSH]"
 
         try:
-            stmt = pg_insert(Assignment).values(self._buffer)
+            stmt = pg_insert(Assignment).values(buffer)
 
             update_cols = {
                 col: stmt.excluded[col]
@@ -525,17 +536,17 @@ class BatchUpserterBulk:
             result = self.session.execute(upsert_stmt)
             self.session.commit()
 
-            inserted_or_updated = result.rowcount if result.rowcount >= 0 else len(self._buffer)
-            skipped = len(self._buffer) - inserted_or_updated
+            inserted_or_updated = result.rowcount if result.rowcount >= 0 else len(buffer)
+            skipped = len(buffer) - inserted_or_updated
             self.stats.total_new += inserted_or_updated
             self.stats.total_skipped += max(0, skipped)
 
-            print(f"   {prefix} {len(self._buffer)} rows → {inserted_or_updated} upserted, {skipped} skipped")
+            print(f"   {prefix} {len(buffer)} rows → {inserted_or_updated} upserted, {skipped} skipped")
 
         except Exception as e:
             print(f"   ⚠️ {prefix} failed ({e}), falling back to per-row ORM...")
             self.session.rollback()
-            for row_data in self._buffer:
+            for row_data in buffer:
                 try:
                     # Construct Assignment model directly from processed db_row dict
                     existing = self.session.get(Assignment, row_data["id"])
@@ -551,8 +562,6 @@ class BatchUpserterBulk:
                 except Exception as row_err:
                     print(f"      ❌ Fatal error on single row fallback: {row_err}")
             self.session.commit()
-
-        self._buffer.clear()
 
     def emergency_flush(self):
         """Called by signal handlers to save data before shutdown."""
