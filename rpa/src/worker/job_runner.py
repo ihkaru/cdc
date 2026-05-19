@@ -54,164 +54,156 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
     stats = SyncStats()
 
     try:
-        # Global timeout to prevent infinite hang (e.g. DNS or asyncio deadlock)
-        async with asyncio.timeout(1200):  # 20 minutes
-            async with async_playwright() as p:
-                browser = await launch_stealth_browser(p)
-                context = await new_stealth_context(browser, viewport={"width": 1280, "height": 800})
+        # Global timeout removed to support large-scale sync (300k+ records)
+        async with async_playwright() as p:
+            browser = await launch_stealth_browser(p)
+            context = await new_stealth_context(browser, viewport={"width": 1280, "height": 800})
 
+            try:
+                page = await context.new_page()
+
+                # Login
+                _progress("login", "🔐 Login SSO BPS via Playwright...")
+                login_ok, cookie_dict, err_msg = await auto_login(page, req.sso_username, req.sso_password)
+                if not login_ok:
+                    raise Exception(f"Login gagal: {err_msg}")
+
+                # Close browser right after login!
+                await browser.close()
+                browser = None  # To avoid closing twice in finally
+
+                # Save cookies to DB for self-healing archiver (Multi-survey support)
                 try:
-                    page = await context.new_page()
+                    import json
 
-                    # Login
-                    _progress("login", "🔐 Login SSO BPS via Playwright...")
-                    login_ok, cookie_dict, err_msg = await auto_login(page, req.sso_username, req.sso_password)
-                    if not login_ok:
-                        raise Exception(f"Login gagal: {err_msg}")
+                    db_session = get_session()
+                    setting = db_session.query(SystemSettings).filter_by(key="sso_cookies").first()
+                    if setting:
+                        setting.value = json.dumps(cookie_dict)
+                        setting.updated_at = datetime.now(timezone.utc)
+                    else:
+                        setting = SystemSettings(key="sso_cookies", value=json.dumps(cookie_dict))
+                        db_session.add(setting)
+                    db_session.commit()
+                    db_session.close()
+                    print("   💾 SSO cookies saved to DB (Ready for multi-survey self-healing).")
+                except Exception as db_e:
+                    print(f"   ⚠️ Warning: Failed to save SSO cookies to DB: {db_e}")
 
-                    # Close browser right after login!
-                    await browser.close()
-                    browser = None  # To avoid closing twice in finally
+                async with FasihApiClient(cookie_dict) as api:
+                    print("\n--- FASE 2: Resolving API Metadata ---")
+                    _progress("resolve_survey", f"🔍 Mencari survey: {req.survey_name}...")
+                    survey_id = await api.get_survey_id(req.survey_name)
+                    if not survey_id:
+                        raise Exception(f"Survey '{req.survey_name}' tidak ditemukan")
 
-                    # Save cookies to DB for self-healing archiver (Multi-survey support)
-                    try:
-                        import json
+                    _progress("resolve_survey", "📅 Mengambil periode dan role...")
+                    period_id, role_ids, survey_role_group_id = await api.get_survey_period_and_roles(survey_id)
+                    if not period_id or not role_ids:
+                        raise Exception(f"Period/Role tidak ditemukan untuk survey {survey_id}")
 
-                        db_session = get_session()
-                        setting = db_session.query(SystemSettings).filter_by(key="sso_cookies").first()
-                        if setting:
-                            setting.value = json.dumps(cookie_dict)
-                            setting.updated_at = datetime.now(timezone.utc)
-                        else:
-                            setting = SystemSettings(key="sso_cookies", value=json.dumps(cookie_dict))
-                            db_session.add(setting)
-                        db_session.commit()
-                        db_session.close()
-                        print("   💾 SSO cookies saved to DB (Ready for multi-survey self-healing).")
-                    except Exception as db_e:
-                        print(f"   ⚠️ Warning: Failed to save SSO cookies to DB: {db_e}")
+                    _progress("resolve_survey", "🗺️ Mengambil metadata region...")
+                    prov_uuid, region_filter, kab_full_code, region_group_id = await api.get_region_metadata(
+                        req.filter_provinsi, req.filter_kabupaten, survey_id
+                    )
 
-                    async with FasihApiClient(cookie_dict) as api:
-                        print("\n--- FASE 2: Resolving API Metadata ---")
-                        _progress("resolve_survey", f"🔍 Mencari survey: {req.survey_name}...")
-                        survey_id = await api.get_survey_id(req.survey_name)
-                        if not survey_id:
-                            raise Exception(f"Survey '{req.survey_name}' tidak ditemukan")
-
-                        _progress("resolve_survey", "📅 Mengambil periode dan role...")
-                        period_id, role_ids, survey_role_group_id = await api.get_survey_period_and_roles(survey_id)
-                        if not period_id or not role_ids:
-                            raise Exception(f"Period/Role tidak ditemukan untuk survey {survey_id}")
-
-                        _progress("resolve_survey", "🗺️ Mengambil metadata region...")
-                        prov_uuid, region_filter, kab_full_code, region_group_id = await api.get_region_metadata(
-                            req.filter_provinsi, req.filter_kabupaten, survey_id
+                    # Safety Gate: Jika provinsi diisi tapi tidak ketemu di API, jangan lanjut.
+                    if req.filter_provinsi and not prov_uuid:
+                        raise Exception(
+                            f"Gagal memetakan wilayah: '{req.filter_provinsi}' tidak ditemukan di API FASIH"
                         )
 
-                        # Safety Gate: Jika provinsi diisi tapi tidak ketemu di API, jangan lanjut.
-                        # Ini mencegah robot menarik data se-Indonesia/se-Provinsi secara tidak sengaja yang memicu timeout.
-                        if req.filter_provinsi and not prov_uuid:
-                            raise Exception(
-                                f"Gagal memetakan wilayah: '{req.filter_provinsi}' tidak ditemukan di API FASIH"
-                            )
-
-                        if req.filter_kabupaten and not kab_full_code:
-                            print(
-                                f"   ⚠️ Warning: Kabupaten '{req.filter_kabupaten}' tidak ter-resolve, fallback ke Provinsi"
-                            )
-
-                        # --- MODE: USER SLICING (DIRECT) ---
-                        # Looping langsung per Petugas (Pencacah/Pengawas).
-                        # Strategi ini lebih cepat karena jumlah switch filter lebih sedikit.
-
-                        filters_to_run = []
-
-                        _progress("fetch_users", "👥 Mengambil daftar petugas...")
-                        pengawas_list, pencacah_list = await api.get_users_by_region(
-                            period_id, role_ids, kab_full_code, survey_role_group_id
+                    if req.filter_kabupaten and not kab_full_code:
+                        print(
+                            f"   ⚠️ Warning: Kabupaten '{req.filter_kabupaten}' tidak ter-resolve, fallback ke Provinsi"
                         )
 
-                        if req.filter_rotation == "pencacah" and pencacah_list:
-                            for idx, user in enumerate(pencacah_list):
-                                filters_to_run.append(
-                                    {
-                                        "label": f"[{idx + 1}/{len(pencacah_list)}] Pencacah: {user['fullname']}",
-                                        "pengawas_id": None,
-                                        "pencacah_id": user["userId"],
-                                    }
-                                )
-                            for idx, user in enumerate(pengawas_list):
-                                filters_to_run.append(
-                                    {
-                                        "label": f"[{len(pencacah_list) + idx + 1}/{len(pencacah_list) + len(pengawas_list)}] Pengawas: {user['fullname']}",
-                                        "pencacah_id": None,
-                                    }
-                                )
-                        else:
-                            for idx, user in enumerate(pengawas_list):
-                                filters_to_run.append(
-                                    {
-                                        "label": f"[{idx + 1}/{len(pengawas_list)}] Pengawas: {user['fullname']}",
-                                        "pengawas_id": user["userId"],
-                                        "pencacah_id": None,
-                                    }
-                                )
+                    # --- MODE: USER SLICING (DIRECT) ---
+                    filters_to_run = []
 
-                        # Fallback if no users found: fetch region-wide
-                        if not filters_to_run:
+                    _progress("fetch_users", "👥 Mengambil daftar petugas...")
+                    pengawas_list, pencacah_list = await api.get_users_by_region(
+                        period_id, role_ids, kab_full_code, survey_role_group_id
+                    )
+
+                    if req.filter_rotation == "pencacah" and pencacah_list:
+                        for idx, user in enumerate(pencacah_list):
                             filters_to_run.append(
                                 {
-                                    "label": "[1/1] Wilayah Saja (Tanpa Pengawas/Pencacah)",
+                                    "label": f"[{idx + 1}/{len(pencacah_list)}] Pencacah: {user['fullname']}",
                                     "pengawas_id": None,
+                                    "pencacah_id": user["userId"],
+                                }
+                            )
+                        for idx, user in enumerate(pengawas_list):
+                            filters_to_run.append(
+                                {
+                                    "label": f"[{len(pencacah_list) + idx + 1}/{len(pencacah_list) + len(pengawas_list)}] Pengawas: {user['fullname']}",
+                                    "pencacah_id": None,
+                                }
+                            )
+                    else:
+                        for idx, user in enumerate(pengawas_list):
+                            filters_to_run.append(
+                                {
+                                    "label": f"[{idx + 1}/{len(pengawas_list)}] Pengawas: {user['fullname']}",
+                                    "pengawas_id": user["userId"],
                                     "pencacah_id": None,
                                 }
                             )
 
-                        users_count = len(filters_to_run)
-                        _progress(
-                            "fetch_assignments",
-                            f"⚡ Memulai fetch {users_count} petugas secara concurrent...",
-                            users_total=users_count,
-                            users_done=0,
+                    if not filters_to_run:
+                        filters_to_run.append(
+                            {
+                                "label": "[1/1] Wilayah Saja (Tanpa Pengawas/Pencacah)",
+                                "pengawas_id": None,
+                                "pencacah_id": None,
+                            }
                         )
 
-                        if SKIP_DETAIL_FETCH:
-                            # Fast sync stats
-                            run_stats = await run_fast_sync(
-                                session=session,
-                                api_client=api,
-                                survey_id=survey_id,
-                                period_id=period_id,
-                                survey_config_id=req.survey_config_id,
-                                prov_code=prov_uuid,
-                                region_filter=region_filter,
-                                region_full_code=kab_full_code,
-                                region_group_id=region_group_id,
-                                filters_to_run=filters_to_run,
-                                sync_log_id=sync_log.id,
-                            )
-                        else:
-                            # Full sync stats (Full results are in run_stats.total_fetched)
-                            run_stats = await run_full_sync(
-                                session=session,
-                                api_client=api,
-                                cookie_dict=cookie_dict,
-                                survey_id=survey_id,
-                                period_id=period_id,
-                                survey_config_id=req.survey_config_id,
-                                prov_code=prov_uuid,
-                                region_filter=region_filter,
-                                region_full_code=kab_full_code,
-                                region_group_id=region_group_id,
-                                filters_to_run=filters_to_run,
-                                sync_log_id=sync_log.id,
-                            )
+                    users_count = len(filters_to_run)
+                    _progress(
+                        "fetch_assignments",
+                        f"⚡ Memulai fetch {users_count} petugas secara concurrent...",
+                        users_total=users_count,
+                        users_done=0,
+                    )
 
-                        stats = run_stats
+                    if SKIP_DETAIL_FETCH:
+                        run_stats = await run_fast_sync(
+                            session=session,
+                            api_client=api,
+                            survey_id=survey_id,
+                            period_id=period_id,
+                            survey_config_id=req.survey_config_id,
+                            prov_code=prov_uuid,
+                            region_filter=region_filter,
+                            region_full_code=kab_full_code,
+                            region_group_id=region_group_id,
+                            filters_to_run=filters_to_run,
+                            sync_log_id=sync_log.id,
+                        )
+                    else:
+                        run_stats = await run_full_sync(
+                            session=session,
+                            api_client=api,
+                            cookie_dict=cookie_dict,
+                            survey_id=survey_id,
+                            period_id=period_id,
+                            survey_config_id=req.survey_config_id,
+                            prov_code=prov_uuid,
+                            region_filter=region_filter,
+                            region_full_code=kab_full_code,
+                            region_group_id=region_group_id,
+                            filters_to_run=filters_to_run,
+                            sync_log_id=sync_log.id,
+                        )
 
-                finally:
-                    if "browser" in locals() and browser:
-                        await browser.close()
+                    stats = run_stats
+
+            finally:
+                if "browser" in locals() and browser:
+                    await browser.close()
 
         # Calculate total images found in this run
         total_images_in_run = 0
@@ -284,19 +276,19 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
             "error": str(e),
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
-    except TimeoutError:
-        print(f"❌ Job Timeout: Sync for {req.survey_name} took longer than 20 minutes.")
+    except TimeoutError as te:
+        print(f"❌ Timeout encountered: {te}")
         log = session.query(SyncLog).get(sync_log.id)
         log.finished_at = datetime.now(timezone.utc)
         log.status = "failed"
-        log.notes = "Killed by global timeout (20 mins)"
+        log.notes = f"Timeout Error: {te!s}"
         session.commit()
 
         sync_state.last_result = {
             "status": "failed",
             "survey": req.survey_name,
             "job_id": sync_log.id,
-            "error": "Global timeout exceeded (20 mins)",
+            "error": "Timeout exceeded",
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }
     except asyncio.CancelledError:
