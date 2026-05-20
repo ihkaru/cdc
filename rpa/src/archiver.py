@@ -449,10 +449,47 @@ def touch_heartbeat():
         logger.debug(f"Failed to write heartbeat: {e}")
 
 
+def run_one_time_bypass_correction(db):
+    try:
+        from sqlalchemy import text
+
+        logger.info("🔧 [Archiver Startup] Checking for bypassed assignments with unmirrored BPS images...")
+        sql_query = """
+            UPDATE assignments 
+            SET local_image_mirrored = false, local_image_paths = '{}'
+            WHERE local_image_mirrored = true 
+              AND (local_image_paths = '{}' OR local_image_paths IS NULL)
+              AND (data_json::text LIKE '%bps.go.id%')
+              AND (data_json::text LIKE '%.jpg%' OR data_json::text LIKE '%.png%' OR data_json::text LIKE '%.jpeg%' OR data_json::text LIKE '%.webp%' OR data_json::text LIKE '%foto%' OR data_json::text LIKE '%image%');
+        """
+        result = db.execute(text(sql_query))
+        db.commit()
+        if result.rowcount > 0:
+            logger.info(
+                f"✨ [Archiver Startup] Successfully recovered and reset {result.rowcount} bypassed assignments for mirroring!"
+            )
+        else:
+            logger.info("✅ [Archiver Startup] No bypassed assignments found. Database is healthy.")
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.error(f"❌ [Archiver Startup] Failed to run bypass correction: {e}")
+
+
 async def archiver_worker():
     """Main worker loop to process pending images."""
     logger.info("🚀 CDC Image Archiver Worker Started")
     touch_heartbeat()
+
+    # One-time self-healing DB correction for bypassed assignments
+    try:
+        db = get_session()
+        run_one_time_bypass_correction(db)
+        db.close()
+    except Exception as e:
+        logger.error(f"❌ [Archiver Startup] Failed to initialize DB for bypass correction: {e}")
 
     # Run the storage audit on startup to fix any wiped/reset SeaweedFS state
     await audit_and_heal_storage()
@@ -474,8 +511,7 @@ async def archiver_worker():
             # Filter at SQL level using LIKE on data_json text to avoid loading
             # thousands of image-free records into Python (2165 → ~147 instantly).
             IMAGE_DOMAINS = [
-                "%bucket1.cloud.bps.go.id%",
-                "%fasih-sm.bps.go.id%",
+                "%bps.go.id%",
             ]
             has_image_url = or_(*[cast(Assignment.data_json, Text).like(domain) for domain in IMAGE_DOMAINS])
 

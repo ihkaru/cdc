@@ -118,6 +118,8 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
 				localImageMirrored: assignments.localImageMirrored,
 				localImagePaths: assignments.localImagePaths,
 				labelData: labelData.data,
+				// Preserve microsecond-precision in ISO format directly from PostgreSQL to prevent cursor skipping
+				dateSyncedPrecision: sql<string>`to_char(${assignments.dateSynced}, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
 			})
 			.from(assignments)
 			.leftJoin(
@@ -142,11 +144,11 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
 			};
 		});
 
-		// Build next cursor from last row
+		// Build next cursor from last row using the microsecond-precision ISO timestamp
 		let nextCursor: string | null = null;
 		if (hasMore && records.length > 0) {
 			const lastRow = rows[limit - 1]!;
-			nextCursor = `${lastRow.dateSynced ? new Date(lastRow.dateSynced).toISOString() : ""}|${lastRow.id}`;
+			nextCursor = `${lastRow.dateSyncedPrecision || ""}|${lastRow.id}`;
 		}
 
 		const countQuery = db.select({ count: sql`count(*)::int` }).from(assignments);
