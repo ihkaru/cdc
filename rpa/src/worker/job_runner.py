@@ -226,7 +226,14 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
         )
 
         for a in upserted_assignments:
-            data = json.loads(a.data_json)
+            data = a.data_json
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except Exception:
+                    continue
+            if not isinstance(data, dict):
+                continue
             vars_map = extract_variables_from_json(data)
             for k, v in vars_map.items():
                 if isinstance(v, str) and v.startswith("http"):
