@@ -39,7 +39,7 @@ export const tracingMiddleware = new Elysia()
 
 		// Propagate trace headers in the response
 		set.headers["X-Trace-ID"] = traceId;
-		set.headers["traceparent"] = traceparent;
+		set.headers.traceparent = traceparent;
 
 		const requestLogger = logger.child({ traceId });
 		const startTime = performance.now();

@@ -1,7 +1,7 @@
 import { and, count, desc, eq, lt, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import * as XLSX from "xlsx";
-import { db } from "../db";
+import { client, db } from "../db";
 import { assignments, labelData } from "../db/schema";
 
 function extractVariables(dataJson: any): Record<string, any> {
@@ -179,80 +179,40 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
 		};
 	})
 
-	// Export assignments to Excel
+	// Export assignments to CSV (Streaming)
 	.get("/:id/assignments/export", async ({ params, query, request, set }) => {
 		const q = query.q as string | undefined;
 
 		// Resolve the public base URL for vault image links in the exported file.
-		// Priority: PUBLIC_BASE_URL env var → request Origin header → relative path
 		const baseUrl =
 			process.env.PUBLIC_BASE_URL?.replace(/\/$/, "") ?? (request.headers.get("origin") || "");
 
-		// 1. Build base WHERE clause
-		let baseWhere = eq(assignments.surveyConfigId, params.id);
-		if (q) {
-			const searchStr = `%${q}%`;
-			baseWhere = and(
-				baseWhere,
-				sql`(${assignments.codeIdentity} ILIKE ${searchStr} OR 
-                         ${assignments.currentUserUsername} ILIKE ${searchStr} OR 
-                         ${assignments.assignmentStatusAlias} ILIKE ${searchStr} OR 
-                         ${assignments.dataJson}::text ILIKE ${searchStr} OR 
-                         ${assignments.flatData}::text ILIKE ${searchStr} OR 
-                         ${labelData.data}::text ILIKE ${searchStr})`,
-			)!;
+		// 1. Discover dynamic keys via SQL JSONB key extraction (Avoids loading all rows to search keys)
+		let dynamicKeys: string[] = [];
+		let labelKeys: string[] = [];
+		try {
+			const assignRes = await client<{ key: string }[]>`
+				SELECT DISTINCT jsonb_object_keys(flat_data) as key 
+				FROM assignments 
+				WHERE survey_config_id = ${params.id}::uuid
+			`;
+			dynamicKeys = assignRes.map((r) => r.key).sort();
+		} catch (err) {
+			console.error("Error discovering assignment keys:", err);
 		}
 
-		// 2. Fetch all assignments for this survey (no limit for export)
-		const rows = await db
-			.select({
-				id: assignments.id,
-				codeIdentity: assignments.codeIdentity,
-				surveyPeriodId: assignments.surveyPeriodId,
-				assignmentStatusAlias: assignments.assignmentStatusAlias,
-				currentUserUsername: assignments.currentUserUsername,
-				flatData: assignments.flatData,
-				dataJson: assignments.dataJson,
-				dateModifiedRemote: assignments.dateModifiedRemote,
-				dateSynced: assignments.dateSynced,
-				labelData: labelData.data,
-				localImagePaths: assignments.localImagePaths,
-			})
-			.from(assignments)
-			.leftJoin(
-				labelData,
-				and(
-					eq(assignments.surveyConfigId, labelData.surveyConfigId),
-					eq(assignments.codeIdentity, labelData.codeIdentity),
-				),
-			)
-			.where(baseWhere)
-			.orderBy(desc(assignments.dateSynced));
-
-		if (!rows.length) {
-			set.status = 404;
-			return { error: "No data to export" };
+		try {
+			const labelRes = await client<{ key: string }[]>`
+				SELECT DISTINCT jsonb_object_keys(data) as key 
+				FROM label_data 
+				WHERE survey_config_id = ${params.id}::uuid
+			`;
+			labelKeys = labelRes.map((r) => r.key).sort();
+		} catch (err) {
+			console.error("Error discovering label keys:", err);
 		}
 
-		// 3. Dynamic Header Discovery
-		const dynamicKeys = new Set<string>();
-		const labelKeys = new Set<string>();
-
-		rows.forEach((row) => {
-			const deep = extractVariables(row.dataJson);
-			const flat = { ...deep, ...((row.flatData as object) || {}) };
-			if (flat && typeof flat === "object") {
-				Object.keys(flat).forEach((k) => dynamicKeys.add(k));
-			}
-			if (row.labelData && typeof row.labelData === "object") {
-				Object.keys(row.labelData).forEach((k) => labelKeys.add(k));
-			}
-		});
-
-		const sortedDynamicKeys = Array.from(dynamicKeys).sort();
-		const sortedLabelKeys = Array.from(labelKeys).sort();
-
-		// 4. Construct Headers
+		// 2. Construct Headers
 		const baseHeaders = [
 			"ID",
 			"Code Identity",
@@ -261,61 +221,112 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
 			"Date Modified (Remote)",
 			"Date Synced",
 		];
-		const headers = [
-			...baseHeaders,
-			...sortedDynamicKeys,
-			...sortedLabelKeys.map((k) => `[Label] ${k}`),
-		];
+		const headers = [...baseHeaders, ...dynamicKeys, ...labelKeys.map((k) => `[Label] ${k}`)];
 
-		// 5. Build Data Rows
-		const wsData = [headers];
+		// Helper function for CSV escaping
+		const escapeCSV = (val: any): string => {
+			if (val === null || val === undefined) return "";
+			const str = typeof val === "object" ? JSON.stringify(val) : String(val);
+			if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+				return `"${str.replace(/"/g, '""')}"`;
+			}
+			return str;
+		};
 
-		rows.forEach((row) => {
-			const deep = extractVariables(row.dataJson);
-			const flat = { ...deep, ...((row.flatData as object) || {}) } as Record<string, any>;
-			const labels = (row.labelData || {}) as Record<string, any>;
-			// localImagePaths: { columnName -> "survey-images/{id}/{col}.jpg" }
-			const vaultPaths = (row.localImagePaths || {}) as Record<string, string>;
+		// 3. Initialize server-side cursor for fetching matching rows
+		let cursor;
+		if (q) {
+			const searchStr = `%${q}%`;
+			cursor = client`
+				SELECT 
+					a.id, a.code_identity, a.assignment_status_alias, a.current_user_username,
+					a.date_modified_remote, a.date_synced, a.flat_data, a.data_json, a.local_image_paths,
+					l.data as label_data
+				FROM assignments a
+				LEFT JOIN label_data l ON a.code_identity = l.code_identity AND a.survey_config_id = l.survey_config_id
+				WHERE a.survey_config_id = ${params.id}::uuid
+				  AND (
+					a.code_identity ILIKE ${searchStr} OR 
+					a.current_user_username ILIKE ${searchStr} OR 
+					a.assignment_status_alias ILIKE ${searchStr} OR 
+					a.data_json::text ILIKE ${searchStr} OR 
+					a.flat_data::text ILIKE ${searchStr} OR 
+					l.data::text ILIKE ${searchStr}
+				  )
+				ORDER BY a.date_synced DESC
+			`.cursor(2000);
+		} else {
+			cursor = client`
+				SELECT 
+					a.id, a.code_identity, a.assignment_status_alias, a.current_user_username,
+					a.date_modified_remote, a.date_synced, a.flat_data, a.data_json, a.local_image_paths,
+					l.data as label_data
+				FROM assignments a
+				LEFT JOIN label_data l ON a.code_identity = l.code_identity AND a.survey_config_id = l.survey_config_id
+				WHERE a.survey_config_id = ${params.id}::uuid
+				ORDER BY a.date_synced DESC
+			`.cursor(2000);
+		}
 
-			const rowValues = [
-				row.id,
-				row.codeIdentity,
-				row.assignmentStatusAlias,
-				row.currentUserUsername,
-				row.dateModifiedRemote,
-				row.dateSynced ? new Date(row.dateSynced).toLocaleString("id-ID") : "",
-				...sortedDynamicKeys.map((k) => {
-					// Replace image column value with permanent vault URL if available
-					if (vaultPaths[k]) {
-						return `${baseUrl}/storage/view/${vaultPaths[k]}`;
+		// 4. Create Web ReadableStream to stream CSV chunk-by-chunk
+		const stream = new ReadableStream({
+			async start(controller) {
+				try {
+					// Enqueue header row first
+					const headerLine = `${headers.map(escapeCSV).join(",")}\n`;
+					controller.enqueue(new TextEncoder().encode(headerLine));
+
+					// Fetch and process rows in batches from database
+					for await (const rows of cursor) {
+						let chunk = "";
+						for (const row of rows) {
+							const deep = extractVariables(row.data_json);
+							const flat = { ...deep, ...((row.flat_data as object) || {}) } as Record<string, any>;
+							const labels = (row.label_data || {}) as Record<string, any>;
+							const vaultPaths = (row.local_image_paths || {}) as Record<string, string>;
+
+							const rowValues = [
+								row.id,
+								row.code_identity,
+								row.assignment_status_alias,
+								row.current_user_username,
+								row.date_modified_remote,
+								row.date_synced ? new Date(row.date_synced).toLocaleString("id-ID") : "",
+								...dynamicKeys.map((k) => {
+									if (vaultPaths[k]) {
+										return `${baseUrl}/storage/view/${vaultPaths[k]}`;
+									}
+									const val = flat[k];
+									return typeof val === "object" ? JSON.stringify(val) : (val ?? "");
+								}),
+								...labelKeys.map((k) => {
+									const val = labels[k];
+									return typeof val === "object" ? JSON.stringify(val) : (val ?? "");
+								}),
+							];
+
+							chunk += `${rowValues.map(escapeCSV).join(",")}\n`;
+						}
+						// Enqueue CSV chunk to HTTP stream
+						controller.enqueue(new TextEncoder().encode(chunk));
 					}
-					const val = flat[k];
-					return typeof val === "object" ? JSON.stringify(val) : (val ?? "");
-				}),
-				...sortedLabelKeys.map((k) => {
-					const val = labels[k];
-					return typeof val === "object" ? JSON.stringify(val) : (val ?? "");
-				}),
-			];
-			wsData.push(rowValues);
+					controller.close();
+				} catch (err) {
+					console.error("Error in CSV export stream:", err);
+					controller.error(err);
+				}
+			},
 		});
 
-		// 6. Generate Excel
-		const wb = XLSX.utils.book_new();
-		const ws = XLSX.utils.aoa_to_sheet(wsData);
+		const filename = `export_survey_${params.id.substring(0, 8)}_${new Date().toISOString().split("T")[0]}.csv`;
 
-		// Auto-width adjustment (basic)
-		ws["!cols"] = headers.map((h) => ({ wch: Math.max(h.length, 12) }));
-
-		XLSX.utils.book_append_sheet(wb, ws, "Assignments");
-		const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-
-		const filename = `export_survey_${params.id.substring(0, 8)}_${new Date().toISOString().split("T")[0]}.xlsx`;
-
-		return new Response(buffer, {
+		return new Response(stream, {
 			headers: {
-				"Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+				"Content-Type": "text/csv; charset=utf-8",
 				"Content-Disposition": `attachment; filename="${filename}"`,
+				"Transfer-Encoding": "chunked",
+				"Cache-Control": "no-cache",
+				Connection: "keep-alive",
 			},
 		});
 	})

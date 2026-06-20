@@ -35,12 +35,14 @@
         <q-btn
           color="green-7"
           icon="file_download"
-          label="Export Excel"
+          label="Export CSV"
           @click="exportToExcel"
           :loading="exporting"
           unelevated
           no-caps
-        />
+        >
+          <q-tooltip>Ekspor data ke format CSV (cepat & mendukung 350k+ baris)</q-tooltip>
+        </q-btn>
         <q-btn
           color="primary"
           icon="upload_file"
@@ -703,14 +705,21 @@ async function exportToExcel() {
 	exporting.value = true;
 	try {
 		const searchParam = searchQuery.value ? `?q=${encodeURIComponent(searchQuery.value)}` : "";
-		// Directly trigger download via window.location.href to handle Buffer response
+		$q.notify({
+			type: "info",
+			message: "Ekspor CSV dimulai di latar belakang. Silakan tunggu...",
+			timeout: 5000,
+			position: "top",
+		});
+		// Directly trigger download via window.location.href to handle stream response
 		window.location.href = `/api/surveys/${surveyId}/assignments/export${searchParam}`;
 	} catch {
 		$q.notify({ type: "negative", message: "Gagal export data" });
 	} finally {
+		// Keep loading state for 10s to prevent spam clicks during large file generation
 		setTimeout(() => {
 			exporting.value = false;
-		}, 2000);
+		}, 10000);
 	}
 }
 

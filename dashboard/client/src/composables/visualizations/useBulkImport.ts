@@ -74,7 +74,7 @@ export function useBulkImport(
 				showBulkDialog.value = false;
 			}
 		} catch (e: any) {
-			$q.notify({ type: "negative", message: "JSON Parse Error: " + e.message });
+			$q.notify({ type: "negative", message: `JSON Parse Error: ${e.message}` });
 		} finally {
 			importingBulk.value = false;
 		}

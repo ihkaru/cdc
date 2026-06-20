@@ -4,7 +4,7 @@ import { api } from "src/boot/axios";
 
 // Better Auth Client Initialization
 const authClient = createAuthClient({
-	baseURL: window.location.origin + "/api/auth",
+	baseURL: `${window.location.origin}/api/auth`,
 	advanced: {
 		cookiePrefix: "cdc_auth",
 	},

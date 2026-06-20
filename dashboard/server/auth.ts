@@ -19,7 +19,7 @@ export const auth = betterAuth({
 		autoSignIn: true,
 		minPasswordLength: 3,
 	},
-	baseURL: (process.env.BETTER_AUTH_URL || "http://localhost:3000") + "/api/auth",
+	baseURL: `${process.env.BETTER_AUTH_URL || "http://localhost:3000"}/api/auth`,
 	secret: process.env.BETTER_AUTH_SECRET || "fallback-secret-for-dev-only",
 	session: {
 		// Extend session to 30 days to prevent frequent logouts.

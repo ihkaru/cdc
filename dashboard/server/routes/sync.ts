@@ -377,7 +377,7 @@ const RPA_API_URL = RPA_URL;
 // Check VPN status periodically. If disconnected, trigger RPA to auto-fetch the cookie.
 const checkVpnAndFetchCookie = async () => {
 	// Generate a background trace ID for this run of the auto-pilot loop
-	const traceId = "autopilot-" + Math.random().toString(36).substring(2, 10);
+	const traceId = `autopilot-${Math.random().toString(36).substring(2, 10)}`;
 	const log = logger.child({ traceId });
 
 	try {

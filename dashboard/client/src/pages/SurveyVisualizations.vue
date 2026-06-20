@@ -182,7 +182,7 @@ async function copyAIContext() {
 			}, 2000);
 		}
 	} catch (e: any) {
-		$q.notify({ type: "negative", message: "Gagal menyalin context: " + e.message });
+		$q.notify({ type: "negative", message: `Gagal menyalin context: ${e.message}` });
 	} finally {
 		copyingAI.value = false;
 	}

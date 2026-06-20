@@ -19,7 +19,7 @@ function encryptPassword(plaintext: string): string {
 	const iv = randomBytes(16);
 	const cipher = createCipheriv("aes-256-cbc", key, iv);
 	const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-	return iv.toString("hex") + ":" + encrypted.toString("hex");
+	return `${iv.toString("hex")}:${encrypted.toString("hex")}`;
 }
 
 function decryptPassword(ciphertext: string): string {

@@ -56,6 +56,7 @@ fi
 # Fallback: kill by process name (handles crashes where PID file was lost)
 pkill -f "bun run dev" 2>/dev/null && warn "Killed orphan 'bun run dev' process" || true
 pkill -f "quasar dev"  2>/dev/null && warn "Killed orphan 'quasar dev' process"  || true
+rm -f "$LOCK_FILE"
 sleep 0.5
 
 # Free local ports if still occupied

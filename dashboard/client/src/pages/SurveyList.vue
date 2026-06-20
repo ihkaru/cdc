@@ -232,7 +232,7 @@ async function triggerSync(id: string) {
 			e.response?.data?.detail ||
 			e.message ||
 			"Failed to trigger sync";
-		$q.notify({ type: "negative", message: "Error: " + msg });
+		$q.notify({ type: "negative", message: `Error: ${msg}` });
 	} finally {
 		syncingId.value = null;
 	}

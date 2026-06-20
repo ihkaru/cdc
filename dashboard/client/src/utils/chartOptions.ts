@@ -66,7 +66,7 @@ export function getChartOption(viz: any, data: any) {
 							(typeof val === "number" && val > 0 && val <= 100 && val % 1 !== 0) ||
 							s.name.toLowerCase().includes("%")
 						) {
-							return new Intl.NumberFormat("id-ID", { maximumFractionDigits: 1 }).format(val) + "%";
+							return `${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 1 }).format(val)}%`;
 						}
 						// Large numbers grouping
 						if (val >= 1000) {

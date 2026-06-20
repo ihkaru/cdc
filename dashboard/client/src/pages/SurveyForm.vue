@@ -432,7 +432,7 @@ async function save() {
 		router.push("/");
 	} catch (e: any) {
 		const msg = e.response?.data?.message || e.message || "Network error";
-		$q.notify({ type: "negative", message: "Error: " + msg });
+		$q.notify({ type: "negative", message: `Error: ${msg}` });
 	} finally {
 		saving.value = false;
 	}
