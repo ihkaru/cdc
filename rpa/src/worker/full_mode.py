@@ -55,6 +55,8 @@ async def run_full_sync(
     region_group_id: str,
     filters_to_run: list[dict[str, Any]],
     sync_log_id: int = None,
+    sso_username: str = "",
+    sso_password: str = "",
 ) -> SyncStats:
     """
     Full sync:
@@ -208,7 +210,12 @@ async def run_full_sync(
                 await upserter.add_async(data_json)
 
         await fetch_assignments_concurrent(
-            cookie_dict, to_fetch_links, concurrency=DETAIL_CONCURRENCY, on_progress=on_progress
+            cookie_dict,
+            to_fetch_links,
+            concurrency=DETAIL_CONCURRENCY,
+            on_progress=on_progress,
+            sso_username=sso_username,
+            sso_password=sso_password,
         )
     except asyncio.CancelledError:
         print("🛑 [FULL] Interrupted during streaming sync. Emergency flushing...")

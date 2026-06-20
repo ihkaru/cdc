@@ -1,8 +1,10 @@
 #!/bin/bash
+# Set working directory to project root
+cd "$(dirname "$0")/.."
 # dump_project.sh - Highly Optimized Snapshot (Architecture & Core Logic Only)
 # This version avoids bloating the context with repetitive or non-essential code.
 
-OUTPUT_FILE="project_snapshot.md"
+OUTPUT_FILE="tmp/project_snapshot.md"
 TARGET_DIR="."
 
 # Strict exclusion pattern

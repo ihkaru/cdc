@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Set working directory to project root
+cd "$(dirname "$0")/.."
 # ======================================================================
 #            FasihNexus — Concurrency Performance Experiment            
 # ======================================================================

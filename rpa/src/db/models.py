@@ -29,6 +29,7 @@ class SurveyConfig(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, comment="UUID")
     survey_name = Column(String, nullable=False, comment="Nama survey di FASIH")
+    bps_survey_id = Column(String, nullable=True, comment="BPS Survey ID (UUID)")
     sso_username = Column(String, nullable=False)
     sso_password_encrypted = Column(String, nullable=False, comment="AES-encrypted")
     filter_provinsi = Column(String, default="")

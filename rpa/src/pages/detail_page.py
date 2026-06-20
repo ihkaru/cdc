@@ -141,6 +141,15 @@ async def _fetch_one(
                             continue
                         return None
 
+                    # Guard: BPS returns HTTP 200 + HTML (login page) when cookie expires mid-fetch.
+                    content_type = resp.headers.get("content-type", "")
+                    if "text/html" in content_type:
+                        body_text = await resp.text()
+                        if "login" in body_text[:500].lower() or "<html" in body_text[:200].lower():
+                            raise FasihAuthError("Session expired mid-fetch: returned HTML login page")
+                        print(f"   ❌ {assignment_id[:8]}... Unexpected HTML response (not login page).")
+                        return None
+
                     try:
                         import orjson
 
@@ -175,11 +184,43 @@ async def _fetch_one(
     return None
 
 
+async def _relogin_headless(username: str, password: str) -> dict | None:
+    """
+    Lakukan headless re-login via Playwright dan kembalikan cookie dict baru.
+    Dipanggil saat session expired mid-fetch untuk resume operasi.
+    """
+    try:
+        from playwright.async_api import async_playwright
+
+        from auth import auto_login, launch_stealth_browser, new_stealth_context
+
+        print("   🔄 [ReLogin] Session expired mid-fetch. Memulai headless re-login...")
+        async with async_playwright() as p:
+            browser = await launch_stealth_browser(p)
+            context = await new_stealth_context(browser)
+            try:
+                page = await context.new_page()
+                ok, new_cookies, err = await auto_login(page, username, password)
+                if ok and new_cookies:
+                    print(f"   ✅ [ReLogin] Re-login berhasil ({len(new_cookies)} cookies). Melanjutkan fetch...")
+                    return new_cookies
+                else:
+                    print(f"   ❌ [ReLogin] Re-login gagal: {err}")
+                    return None
+            finally:
+                await browser.close()
+    except Exception as e:
+        print(f"   ❌ [ReLogin] Exception saat re-login: {e}")
+        return None
+
+
 async def fetch_assignments_concurrent(
     cookie_dict: dict,
     urls: list[str],
     concurrency: int = 5,
     on_progress=None,
+    sso_username: str = "",
+    sso_password: str = "",
 ) -> list[dict]:
     """
     Fetch multiple assignment details concurrently using aiohttp with a true
@@ -248,7 +289,7 @@ async def fetch_assignments_concurrent(
 
     # 2. Concurrently validate which sessions are active/valid (timeout 5s per validation)
     async def validate_session(c_dict) -> bool:
-        probe_url = f"{TARGET_URL}/app/api/assignment-general/api/assignment/get-by-assignment-id"
+        probe_url = f"{TARGET_URL}/survey/api/v1/users/myinfo"
         headers = {
             "Accept": "application/json, text/plain, */*",
             "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36",
@@ -262,7 +303,21 @@ async def fetch_assignments_concurrent(
                     # Expired session will redirect to Keycloak/SSO
                     if "oauth_login" in str(test_resp.url) or "sso.bps.go.id" in str(test_resp.url):
                         return False
-                    return test_resp.status in (200, 400, 403, 404)
+
+                    # BPS Fortinet returns HTTP 200 with HTML body (login page) on expired cookies.
+                    content_type = test_resp.headers.get("content-type", "")
+                    body_text = await test_resp.text()
+                    is_html_response = (
+                        "text/html" in content_type
+                        or body_text.lstrip().startswith("<!")
+                        or ("login" in body_text.lower() and "<html" in body_text.lower())
+                    )
+                    if test_resp.status == 200 and not is_html_response:
+                        return True
+                    else:
+                        if is_html_response:
+                            print("   ⚠️ Session rejected: returned HTML login page (cookie expired).")
+                        return False
         except Exception:
             return False
 
@@ -305,86 +360,184 @@ async def fetch_assignments_concurrent(
     print(f"   🚀 Fetching {len(id_map)} assignments with concurrency={concurrency} (Overlap Pipeline)...")
 
     semaphore = asyncio.Semaphore(concurrency)
-    queue = asyncio.Queue(maxsize=concurrency * 2)
     results = []
     total = len(id_map)
+    completed_count = 0
 
-    async def producer_task(client_session, aid, headers_dict):
-        try:
-            data = await _fetch_one(client_session, aid, semaphore, headers=headers_dict)
-            await queue.put(data)
-            return True
-        except FasihAuthError:
-            await queue.put(FasihAuthError("Session expired"))
-            raise
-        except Exception as e:
-            print(f"   ⚠️ Producer Error for {aid[:8]}: {e}")
-            await queue.put(None)
-            return False
+    # ---------------------------------------------------------------
+    # Resilient Batch Runner
+    # Runs assignments in batches. Jika session expired mid-batch,
+    # re-login dilakukan dan sisa assignment dilanjutkan dengan
+    # session baru. Tidak ada early-abort.
+    # ---------------------------------------------------------------
+    MAX_RELOGIN_ATTEMPTS = 3
 
-    async def consumer_task():
-        completed = 0
-        while True:
-            data = await queue.get()
-            if data is False:  # Sentinel for completion
+    async def _run_batch(current_pool: list, batch_ids: list[str]) -> tuple[list[str], bool]:
+        """
+        Jalankan satu batch. Returns (failed_ids, had_auth_error).
+        failed_ids berisi ID yang belum sempat diproses karena auth error.
+        """
+        nonlocal completed_count
+
+        queue = asyncio.Queue(maxsize=concurrency * 2)
+        failed_ids = []
+        had_auth_error = False
+        auth_error_aid = None
+
+        async def producer_task(client_session, aid, headers_dict):
+            try:
+                data = await _fetch_one(client_session, aid, semaphore, headers=headers_dict)
+                await queue.put((aid, data))
+                return True
+            except FasihAuthError:
+                await queue.put((aid, FasihAuthError("Session expired")))
+                raise
+            except Exception as e:
+                print(f"   ⚠️ Producer Error for {aid[:8]}: {e}")
+                await queue.put((aid, None))
+                return False
+
+        async def consumer_task():
+            nonlocal completed_count, had_auth_error, auth_error_aid
+            while True:
+                item = await queue.get()
+                if item is None:  # Sentinel for completion
+                    queue.task_done()
+                    break
+
+                aid, data = item
+
+                if isinstance(data, FasihAuthError):
+                    # Auth error detected — stop consuming, remainder will be tracked
+                    had_auth_error = True
+                    auth_error_aid = aid
+                    queue.task_done()
+                    break
+
+                completed_count += 1
+
+                if not on_progress and data:
+                    results.append(data)
+
+                if on_progress:
+                    try:
+                        if asyncio.iscoroutinefunction(on_progress):
+                            await on_progress(completed_count, total, data)
+                        else:
+                            on_progress(completed_count, total, data)
+                    except Exception as cb_err:
+                        print(f"   ⚠️ Callback Error: {cb_err}")
+
+                if not on_progress and (completed_count % 100 == 0 or completed_count == total):
+                    print(f"   📊 Progress: {completed_count}/{total}")
+
                 queue.task_done()
-                break
 
-            completed += 1
-            if isinstance(data, FasihAuthError):
-                queue.task_done()
-                break
-
-            if not on_progress and data:
-                results.append(data)
-
-            if on_progress:
-                try:
-                    if asyncio.iscoroutinefunction(on_progress):
-                        await on_progress(completed, total, data)
-                    else:
-                        on_progress(completed, total, data)
-                except Exception as cb_err:
-                    print(f"   ⚠️ Callback Error: {cb_err}")
-
-            if not on_progress and (completed % 100 == 0 or completed == total):
-                print(f"   📊 Progress: {completed}/{total}")
-
-            queue.task_done()
-
-    # Open all sessions inside context block
-    async def run_pipeline():
         c_task = asyncio.create_task(consumer_task())
 
-        # Start Producers distributing across active client sessions round-robin
         p_tasks = []
-        for idx, aid in enumerate(id_map):
-            # Select client session in a round-robin fashion
-            client_instance = clients_pool[idx % len(clients_pool)]
+        for idx, aid in enumerate(batch_ids):
+            client_instance = current_pool[idx % len(current_pool)]
             session = client_instance.session
             headers = client_instance._get_headers()
-
             p_tasks.append(asyncio.create_task(producer_task(session, aid, headers)))
 
+        cancelled_ids = []
         try:
             await asyncio.gather(*p_tasks)
         except FasihAuthError:
-            print("   🚨 [Early-Abort] Ditemukan FasihAuthError (session expired)! Menghentikan semua sisa request...")
-            for t in p_tasks:
+            # Auth error raised — cancel all remaining producers and collect unstarted IDs
+            still_pending = []
+            for idx, t in enumerate(p_tasks):
                 if not t.done():
                     t.cancel()
+                    still_pending.append(batch_ids[idx])
+            cancelled_ids = still_pending
+            print(
+                f"   ⚠️ [Resilient] Auth error detected. {len(cancelled_ids)} sisa assignment akan di-resume setelah re-login."
+            )
         finally:
-            # Signal consumer to terminate
-            await queue.put(False)
+            await queue.put(None)  # Signal consumer
             await c_task
 
-    # Establish async with block for each client
+        # Collect all IDs that were not successfully fetched
+        if had_auth_error:
+            failed_ids = cancelled_ids
+            # Also include the ID that triggered the auth error if it wasn't fetched
+            if auth_error_aid and auth_error_aid not in failed_ids:
+                failed_ids.insert(0, auth_error_aid)
+
+        return failed_ids, had_auth_error
+
+    async def run_pipeline():
+        remaining_ids = list(id_map)
+        current_pool = list(clients_pool)
+        relogin_attempts = 0
+
+        while remaining_ids:
+            failed_ids, had_auth_error = await _run_batch(current_pool, remaining_ids)
+
+            if not had_auth_error:
+                # Semua berhasil (atau gagal bukan karena auth)
+                break
+
+            # Auth error → coba re-login jika credentials tersedia
+            if not sso_username or not sso_password:
+                print(
+                    "   ❌ [Resilient] Session expired tapi credentials tidak tersedia untuk re-login. "
+                    f"{len(failed_ids)} assignment tidak terambil."
+                )
+                break
+
+            relogin_attempts += 1
+            if relogin_attempts > MAX_RELOGIN_ATTEMPTS:
+                print(
+                    f"   ❌ [Resilient] Sudah {MAX_RELOGIN_ATTEMPTS}x re-login tapi session terus expired. "
+                    f"Menghentikan. {len(failed_ids)} assignment tidak terambil."
+                )
+                break
+
+            print(f"   🔄 [Resilient] Re-login attempt {relogin_attempts}/{MAX_RELOGIN_ATTEMPTS}...")
+            new_cookies = await _relogin_headless(sso_username, sso_password)
+            if not new_cookies:
+                print(f"   ❌ [Resilient] Re-login gagal. {len(failed_ids)} assignment tidak terambil.")
+                break
+
+            # Rebuild client pool dengan session baru
+            # Tutup pool lama terlebih dahulu
+            for old_client in current_pool:
+                try:
+                    if old_client._session and not old_client._session.closed:
+                        await old_client._session.close()
+                except Exception:
+                    pass
+
+            new_client = FasihApiClient(new_cookies)
+            new_client.ssl_ctx = ssl_ctx
+            connector = aiohttp.TCPConnector(
+                ssl=ssl_ctx,
+                limit=concurrency + 10,
+                limit_per_host=concurrency,
+                keepalive_timeout=120,
+                force_close=False,
+            )
+            new_client._session = aiohttp.ClientSession(
+                cookie_jar=new_client.jar,
+                headers=new_client._get_headers(),
+                connector=connector,
+                timeout=aiohttp.ClientTimeout(total=45, connect=15),
+            )
+            # Enter context manually
+            await new_client.__aenter__()
+            current_pool = [new_client]
+            remaining_ids = failed_ids
+            print(f"   ✅ [Resilient] Session baru aktif. Melanjutkan {len(remaining_ids)} assignment...")
+
+    # Enter context for all initially-validated clients, then run pipeline
     async def enter_client_context(index):
         if index >= len(clients_pool):
-            # We reached the end, execute the pipeline
             await run_pipeline()
             return
-
         async with clients_pool[index] as _:
             await enter_client_context(index + 1)
 

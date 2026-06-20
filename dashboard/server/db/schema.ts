@@ -16,6 +16,7 @@ import {
 export const surveyConfigs = pgTable("survey_configs", {
 	id: uuid("id").primaryKey().defaultRandom(),
 	surveyName: text("survey_name").notNull(),
+	bpsSurveyId: text("bps_survey_id"),
 	ssoUsername: text("sso_username").notNull(),
 	ssoPasswordEncrypted: text("sso_password_encrypted").notNull(),
 	filterProvinsi: text("filter_provinsi").default(""),

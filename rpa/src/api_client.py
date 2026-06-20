@@ -217,6 +217,7 @@ class FasihApiClient:
         path = "survey/api/v1/surveys/datatable?surveyType=Pencacahan"
         target_clean = re.sub(r"[^a-z0-9]", "", survey_name.lower())
 
+        all_surveys = []
         page = 0
         while True:
             payload = {
@@ -229,19 +230,13 @@ class FasihApiClient:
 
             body = await self._request("POST", path, json=payload)
             if not body or not body.get("success"):
-                return None
+                break
 
             data = body.get("data", {}).get("content", [])
             if not data:
                 break
 
-            for survey in data:
-                s_name = survey.get("name", "")
-                s_clean = re.sub(r"[^a-z0-9]", "", s_name.lower())
-                if target_clean and (target_clean in s_clean or s_clean in target_clean):
-                    s_id = survey.get("id")
-                    print(f"   ✅ [API] Ditemukan: '{s_name}' → ID: {s_id}")
-                    return s_id
+            all_surveys.extend(data)
 
             total_pages = body.get("data", {}).get("totalPage", 1)
             if page >= total_pages - 1:
@@ -249,7 +244,16 @@ class FasihApiClient:
 
             page += 1
 
-        print(f"   ❌ [API] Survey '{survey_name}' tidak ditemukan dari seluruh halaman.")
+        # Exact Match (normalized alphanumeric and lowercase)
+        for survey in all_surveys:
+            s_name = survey.get("name", "")
+            s_clean = re.sub(r"[^a-z0-9]", "", s_name.lower())
+            if target_clean == s_clean:
+                s_id = survey.get("id")
+                print(f"   ✅ [API] Ditemukan (Exact Match): '{s_name}' → ID: {s_id}")
+                return s_id
+
+        print(f"   ❌ [API] Survey '{survey_name}' tidak ditemukan dari seluruh halaman (Exact Match required).")
         return None
 
     @with_retry()
@@ -423,12 +427,15 @@ class FasihApiClient:
     ) -> list[dict]:
         """Tarik Assignment Datatable secara paralel."""
         path = "analytic/api/v2/assignment/datatable-all-user-survey-periode"
-        page_size = 1000
+        # Tune page size to avoid BPS 504 Gateway Time-out on large datasets (e.g. Sensus Ekonomi)
+        page_size = int(os.getenv("FASIH_PAGE_SIZE", "200"))
 
         def _build_payload(start):
             p = {
                 "draw": (start // page_size) + 1,
-                "columns": [{"data": "id", "searchable": True, "orderable": False, "search": {"value": "", "regex": False}}],
+                "columns": [
+                    {"data": "id", "searchable": True, "orderable": False, "search": {"value": "", "regex": False}}
+                ],
                 "order": [{"column": 0, "dir": "asc"}],
                 "start": start,
                 "length": page_size,
@@ -440,7 +447,7 @@ class FasihApiClient:
                     "region4Id": desa_uuid,
                     "surveyPeriodId": period_id,
                     "assignmentErrorStatusType": -1,
-                    "filterTargetType": "ALL" if not (pencacah_id or pengawas_id) else "TARGET_ONLY",
+                    "filterTargetType": os.getenv("FASIH_FILTER_TARGET_TYPE", "TARGET_ONLY"),
                     "regionGroupId": region_group_id,
                 },
             }
@@ -454,19 +461,23 @@ class FasihApiClient:
         if not first_body:
             return []
 
-        total_records = first_body.get("recordsTotal", 0) or first_body.get("recordsFiltered", 0)
+        total_records = (
+            first_body.get("recordsTotal", 0) or first_body.get("recordsFiltered", 0) or first_body.get("totalHit", 0)
+        )
         print(f"   📊 Total records to metadata-sync: {total_records}")
-        
+
         all_metadata = []
-        
+
         def _parse_data(body):
             data_list = []
             search_data = body.get("data", body.get("searchData", []))
             for item in search_data:
                 rec_id = item.get("id") or item.get("_id") or item.get("assignmentId")
                 remote_date_raw = (
-                    item.get("dateModified") or item.get("updatedAt") or 
-                    item.get("dateModifiedRemote") or item.get("date_modified")
+                    item.get("dateModified")
+                    or item.get("updatedAt")
+                    or item.get("dateModifiedRemote")
+                    or item.get("date_modified")
                 )
                 if rec_id:
                     data_list.append({"id": rec_id, "dateModifiedRemote": self._norm_date(remote_date_raw)})
@@ -480,7 +491,7 @@ class FasihApiClient:
         # 2. Fetch remaining pages in parallel
         offsets = range(page_size, total_records, page_size)
         print(f"   📡 Launching {len(offsets)} parallel metadata requests...")
-        
+
         async def _fetch_page(offset):
             body = await self._request("POST", path, json=_build_payload(offset))
             return _parse_data(body) if body else []
@@ -498,6 +509,7 @@ class FasihApiClient:
         if s.isdigit() and len(s) == 14:
             return s
         from datetime import datetime, timedelta
+
         try:
             dt = datetime.strptime(s, "%b %d, %Y, %I:%M:%S %p")
             return (dt - timedelta(hours=7)).strftime("%Y%m%d%H%M%S")
@@ -507,6 +519,8 @@ class FasihApiClient:
     @with_retry(retries=3, delay=2)
     async def get_assignment_detail(self, assignment_id: str) -> dict | None:
         """Fetch the latest assignment detail JSON (includes fresh S3 links)."""
+        # Correct path: /app/api/assignment-general/api/assignment/get-by-assignment-id
+        # Note: ultimate_engine.py builds its own URL — this method is used by archiver/other callers.
         url = (
             f"{TARGET_URL}/app/api/assignment-general/api/assignment/get-by-assignment-id?assignmentId={assignment_id}"
         )
@@ -519,7 +533,23 @@ class FasihApiClient:
                     print(f"   ❌ [API] Failed to fetch detail (HTTP {resp.status}): {text[:200]}")
                     return None
 
-                body = await resp.json()
+                # Guard: BPS Fortinet returns HTTP 200 with HTML login page when session is expired.
+                content_type = resp.headers.get("Content-Type", "")
+                if "text/html" in content_type:
+                    text = await resp.text()
+                    if "login" in text.lower() or "sso" in text.lower():
+                        print("   🚨 [API] get_assignment_detail: Received HTML login page (session expired)!")
+                        raise FasihAuthError("Session expired: returned HTML login page on assignment detail fetch")
+                    print("   ⚠️ [API] get_assignment_detail: Received unexpected HTML response.")
+                    return None
+
+                try:
+                    body = await resp.json(content_type=None)
+                except Exception as json_err:
+                    text = await resp.text()
+                    print(f"   ❌ [API] JSON parse failed for detail: {json_err}. Body[:200]: {text[:200]}")
+                    return None
+
                 if body and body.get("success"):
                     data = body.get("data")
                     if data:

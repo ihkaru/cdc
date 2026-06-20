@@ -2,12 +2,17 @@ import os
 from sqlalchemy import create_engine, text
 
 # Read cookie from file
-with open("new_vpn_cookie.txt", "r") as f:
+cookie_path = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../tmp/new_vpn_cookie.txt")
+)
+with open(cookie_path, "r") as f:
     cookie_str = f.read().strip()
 
 # Extract SVPNCOOKIE part if needed, or store full string
 # Dashboard sync.ts stores cookie.trim() directly
-db_url = os.getenv("DATABASE_URL", "postgresql://fasih:fasih123@127.0.0.1:5432/fasih_dashboard")
+db_url = os.getenv(
+    "DATABASE_URL", "postgresql://fasih:fasih123@127.0.0.1:5432/fasih_dashboard"
+)
 engine = create_engine(db_url)
 
 with engine.connect() as conn:
@@ -20,4 +25,4 @@ with engine.connect() as conn:
     conn.execute(query, {"val": cookie_str})
     conn.commit()
 
-print("✅ Successfully injected fresh VPN cookie from new_vpn_cookie.txt into database.")
+print(f"✅ Successfully injected fresh VPN cookie from {cookie_path} into database.")

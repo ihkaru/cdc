@@ -101,7 +101,7 @@ trap cleanup INT TERM
 
 # 🛡️ MTU Watchdog: Permanently locks VPN MTU to prevent resets
 mtu_watchdog() {
-    log "🛡️ MTU Watchdog started (Target: 500)" "info"
+    log "🛡️ MTU Watchdog started (Target: 1000)" "info"
     while true; do
         sleep 10
         VPN_IF=""
@@ -377,7 +377,8 @@ while true; do
             --useragent="$ANDROID_UA" \
             --os=android \
             --no-dtls \
-            --reconnect-timeout 60 \
+            --force-dpd=30 \
+            --reconnect-timeout=60 \
             --passwd-on-stdin \
             --servercert "$OPENC_CERT" <<EOF
 $VAL
@@ -412,6 +413,7 @@ EOF
             --useragent="$ANDROID_UA" \
             --os=android \
             --no-dtls \
+            --mtu 576 \
             --passwd-on-stdin \
             --servercert "$OPENC_CERT" <<EOF
 $VPN_PASS

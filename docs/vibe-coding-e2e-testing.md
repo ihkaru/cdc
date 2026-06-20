@@ -57,7 +57,7 @@ wait # Tunggu seluruh request paralel selesai
 
 ## 📝 Template E2E Test Suite Murni (FasihNexus API Flow)
 
-Berikut adalah template pengujian E2E siap pakai (`e2e-test.sh`) yang mensimulasikan alur pengguna penuh:
+Berikut adalah template pengujian E2E siap pakai (`scripts/e2e-test.sh`) yang mensimulasikan alur pengguna penuh:
 1. **Otentikasi Admin** (Mendapatkan session token dan menyimpannya di cookie jar).
 2. **Membuat Survei Baru** (Mengirim konfigurasi survei dan memvalidasi respons).
 3. **Memicu Sinkronisasi** (Memulai sinkronisasi via RPA).

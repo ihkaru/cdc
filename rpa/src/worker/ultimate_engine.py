@@ -69,14 +69,28 @@ class UltimateSyncEngine:
             s.cookies.update(c_dict)
             try:
                 resp = await s.get(f"{self.target_url}/survey/api/v1/users/myinfo", timeout=5)
-                if resp.status_code == 200:
+                # BPS Fortinet returns HTTP 200 with HTML body (login redirect) on expired sessions.
+                # Must check content to confirm it's a real JSON API response, not an SSO page.
+                content_type = resp.headers.get("content-type", "")
+                body_text = resp.text[:500] if hasattr(resp, "text") else ""
+                is_html_response = (
+                    "text/html" in content_type
+                    or body_text.lstrip().startswith("<!")
+                    or ("login" in body_text.lower() and "<html" in body_text.lower())
+                )
+                if resp.status_code == 200 and not is_html_response:
                     self.sessions_pool.append(s)
+                    print("   ✅ Session validated (JSON response, HTTP 200).")
                 else:
+                    reason = "HTML redirect" if is_html_response else f"HTTP {resp.status_code}"
+                    print(f"   ⚠️ Session rejected: {reason} — SSO cookie likely expired.")
                     await s.close()
-            except:
+            except Exception as e:
+                print(f"   ⚠️ Session validation failed: {e}")
                 await s.close()
 
         if not self.sessions_pool:
+            print("   🚨 No valid sessions found! Forcing primary cookies (may fail if also expired).")
             s = AsyncSession(impersonate="chrome120", verify=False)
             s.cookies.update(self.primary_cookies)
             self.sessions_pool.append(s)
@@ -102,11 +116,32 @@ class UltimateSyncEngine:
                 try:
                     resp = await session.get(url, timeout=25)
                     if resp.status_code == 200:
-                        data = orjson.loads(resp.content)
+                        # Guard: BPS returns HTTP 200 with HTML body on expired sessions.
+                        content_type = resp.headers.get("content-type", "")
+                        if "text/html" in content_type or resp.content[:50].lstrip().startswith(b"<!"):
+                            print(
+                                f"   🚨 [{assignment_id[:8]}] Session returned HTML (login redirect). "
+                                f"Blacklisting session and retrying..."
+                            )
+                            self.bad_sessions.add(session)
+                            await asyncio.sleep(0.5 * (attempt + 1))
+                            continue
+
+                        try:
+                            data = orjson.loads(resp.content)
+                        except Exception as parse_err:
+                            print(
+                                f"   ❌ [{assignment_id[:8]}] JSON parse failed: {parse_err}. Body: {resp.text[:100]}"
+                            )
+                            await asyncio.sleep(0.5 * (attempt + 1))
+                            continue
+
                         if data.get("success"):
                             await self.queue.put(data.get("data"))
                             self.stats.total_fetched += 1
                             return
+                        else:
+                            print(f"   ⚠️ [{assignment_id[:8]}] API success=False. Body: {str(data)[:100]}")
                     elif resp.status_code in (401, 403):
                         print(f"   ⚠️ Session {id(session)} blacklisted (HTTP {resp.status_code})")
                         self.bad_sessions.add(session)

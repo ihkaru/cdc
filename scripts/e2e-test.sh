@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Set working directory to project root
+cd "$(dirname "$0")/.."
 # ==============================================================================
 # 🚀 FasihNexus - Production-Grade End-to-End API Test Suite (May 2026)
 # ==============================================================================
@@ -26,7 +28,7 @@ echo -e "${CYAN}             FasihNexus — End-to-End API Test Suite           
 echo -e "${CYAN}======================================================================${NC}"
 
 # --- 1. LOAD ENV & PREPARATION ---
-ENV_FILE="/home/ihza/projects/cdc/.env"
+ENV_FILE="./.env"
 if [ ! -f "$ENV_FILE" ]; then
     log_fail "File konfigurasi .env tidak ditemukan di $ENV_FILE!"
 fi

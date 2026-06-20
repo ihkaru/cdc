@@ -1,4 +1,6 @@
 #!/bin/bash
+# Set working directory to project root
+cd "$(dirname "$0")/.."
 
 # Array direktori yang akan di-exclude, disatukan jadi pipe untuk tree dan find
 TARGET_DIR="."

@@ -225,9 +225,9 @@ Untuk memastikan pengujian lokal di laptop Anda sebanding dengan performa di Coo
 
 ---
 
-## 🚀 Alat Pengujian Otomatis: `benchmark.sh`
+## 🚀 Alat Pengujian Otomatis: `scripts/benchmark.sh`
 
-Untuk menyederhanakan dan mengotomatiskan pengujian 6 skenario di atas, telah disediakan sebuah skrip interaktif interaktif di root proyek bernama `benchmark.sh`.
+Untuk menyederhanakan dan mengotomatiskan pengujian 6 skenario di atas, telah disediakan sebuah skrip interaktif di folder `scripts/` proyek bernama `benchmark.sh`.
 
 ### Fitur Utama `benchmark.sh`:
 1.  **Automated RTO Measurement**: Mengukur waktu pemulihan secara riil menggunakan stopwatch terintegrasi (untuk Skenario 2 dan 4).
@@ -238,6 +238,6 @@ Untuk menyederhanakan dan mengotomatiskan pengujian 6 skenario di atas, telah di
 ### Cara Penggunaan:
 Jalankan perintah berikut di terminal root proyek Anda:
 ```bash
-./benchmark.sh
+./scripts/benchmark.sh
 ```
 Pilih opsi skenario (1-6) yang ingin Anda simulasikan dan amati hasil pengujian beserta pemenuhan KPI stabilitasnya secara real-time!

@@ -68,7 +68,22 @@ const app = new Elysia()
 	.use(
 		cors({
 			credentials: true,
-			origin: process.env.PUBLIC_BASE_URL || "http://127.0.0.1:3000",
+			// Accept both localhost and 127.0.0.1 variants to prevent session
+			// invalidation from hostname mismatches (a common Better Auth gotcha).
+			origin: (request) => {
+				const origin = request.headers.get("origin") || "";
+				const publicBase = process.env.PUBLIC_BASE_URL || "http://localhost:9009";
+				const allowed = [
+					publicBase,
+					publicBase.replace("127.0.0.1", "localhost"),
+					publicBase.replace("localhost", "127.0.0.1"),
+					"http://localhost:9009",
+					"http://127.0.0.1:9009",
+					"http://localhost:9010",
+					"http://127.0.0.1:9010",
+				];
+				return allowed.includes(origin);
+			},
 			allowedHeaders: ["Content-Type", "Authorization"],
 			methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 		}),

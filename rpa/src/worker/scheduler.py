@@ -138,6 +138,7 @@ async def routine_sync_loop():
                         request_payload = {
                             "survey_config_id": str(survey.id),
                             "survey_name": survey.survey_name,
+                            "bps_survey_id": survey.bps_survey_id or "",
                             "sso_username": survey.sso_username,
                             "sso_password": raw_password,
                             "filter_provinsi": survey.filter_provinsi or "",

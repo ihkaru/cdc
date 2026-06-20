@@ -57,7 +57,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
         # Global timeout removed to support large-scale sync (300k+ records)
         async with async_playwright() as p:
             browser = await launch_stealth_browser(p)
-            context = await new_stealth_context(browser, viewport={"width": 1280, "height": 800})
+            context = await new_stealth_context(browser)
 
             try:
                 page = await context.new_page()
@@ -92,8 +92,14 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
 
                 async with FasihApiClient(cookie_dict) as api:
                     print("\n--- FASE 2: Resolving API Metadata ---")
-                    _progress("resolve_survey", f"🔍 Mencari survey: {req.survey_name}...")
-                    survey_id = await api.get_survey_id(req.survey_name)
+                    bps_survey_id = getattr(req, "bps_survey_id", None)
+                    if bps_survey_id:
+                        print(f"   ✓ [API] Using pre-configured BPS Survey ID: {bps_survey_id}")
+                        survey_id = bps_survey_id
+                    else:
+                        print("   ⚠️ [API] BPS Survey ID missing. Falling back to dynamic name-lookup...")
+                        _progress("resolve_survey", f"🔍 Mencari survey: {req.survey_name}...")
+                        survey_id = await api.get_survey_id(req.survey_name)
                     if not survey_id:
                         raise Exception(f"Survey '{req.survey_name}' tidak ditemukan")
 
@@ -197,6 +203,8 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                             region_group_id=region_group_id,
                             filters_to_run=filters_to_run,
                             sync_log_id=sync_log.id,
+                            sso_username=req.sso_username,
+                            sso_password=req.sso_password,
                         )
 
                     stats = run_stats

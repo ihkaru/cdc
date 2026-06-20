@@ -4,6 +4,7 @@ from pydantic import BaseModel
 class SyncRequest(BaseModel):
     survey_config_id: str
     survey_name: str
+    bps_survey_id: str = ""
     sso_username: str
     sso_password: str  # Already decrypted by dashboard
     filter_provinsi: str = ""

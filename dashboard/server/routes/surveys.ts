@@ -1,9 +1,12 @@
 // Simple AES encryption matching Python's crypto.py
+
+import { DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 import { eq, ilike, or } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../db";
-import { surveyConfigs } from "../db/schema";
+import { assignments, surveyConfigs } from "../db/schema";
+import { s3Client } from "./storage";
 
 function getEncryptionKey(): Buffer {
 	const key = process.env.ENCRYPTION_KEY || "";
@@ -74,6 +77,7 @@ export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
 				.insert(surveyConfigs)
 				.values({
 					surveyName: body.surveyName,
+					bpsSurveyId: body.bpsSurveyId || "",
 					ssoUsername: body.ssoUsername,
 					ssoPasswordEncrypted: encrypted,
 					filterProvinsi: body.filterProvinsi || "",
@@ -88,6 +92,7 @@ export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
 		{
 			body: t.Object({
 				surveyName: t.String(),
+				bpsSurveyId: t.Optional(t.String()),
 				ssoUsername: t.String(),
 				ssoPassword: t.String(),
 				filterProvinsi: t.Optional(t.String()),
@@ -113,6 +118,9 @@ export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
 				isActive: body.isActive,
 				updatedAt: new Date(),
 			};
+			if (body.bpsSurveyId !== undefined) {
+				updates.bpsSurveyId = body.bpsSurveyId;
+			}
 			// Only re-encrypt if password provided
 			if (body.ssoPassword) {
 				updates.ssoPasswordEncrypted = encryptPassword(body.ssoPassword);
@@ -129,6 +137,7 @@ export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
 		{
 			body: t.Object({
 				surveyName: t.Optional(t.String()),
+				bpsSurveyId: t.Optional(t.String()),
 				ssoUsername: t.Optional(t.String()),
 				ssoPassword: t.Optional(t.String()),
 				filterProvinsi: t.Optional(t.String()),
@@ -143,6 +152,47 @@ export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
 	// Delete survey
 	.use(requireAdmin)
 	.delete("/:id", async ({ params }) => {
+		// 1. Fetch all associated assignments to get local image paths
+		const assocAssignments = await db
+			.select({ id: assignments.id, localImagePaths: assignments.localImagePaths })
+			.from(assignments)
+			.where(eq(assignments.surveyConfigId, params.id));
+
+		const s3KeysToDelete: { Key: string }[] = [];
+		const bucket = process.env.S3_BUCKET || "survey-images";
+
+		for (const a of assocAssignments) {
+			const paths = (a.localImagePaths as Record<string, string>) || {};
+			for (const path of Object.values(paths)) {
+				// path is like "survey-images/uuid/photo_key.jpg"
+				const key = path.replace(`${bucket}/`, "");
+				if (key) {
+					s3KeysToDelete.push({ Key: key });
+				}
+			}
+		}
+
+		// 2. Delete from SeaweedFS in chunks of 1000 (S3 API limit)
+		if (s3KeysToDelete.length > 0) {
+			try {
+				const CHUNK_SIZE = 1000;
+				for (let i = 0; i < s3KeysToDelete.length; i += CHUNK_SIZE) {
+					const chunk = s3KeysToDelete.slice(i, i + CHUNK_SIZE);
+					const deleteCommand = new DeleteObjectsCommand({
+						Bucket: bucket,
+						Delete: { Objects: chunk },
+					});
+					await s3Client.send(deleteCommand);
+				}
+				console.log(
+					`🧹 [S3 Cleanup] Deleted ${s3KeysToDelete.length} mirrored images for survey ${params.id}`,
+				);
+			} catch (err) {
+				console.error("Failed to delete mirrored images from SeaweedFS:", err);
+			}
+		}
+
+		// 3. Delete from DB (cascade deletes assignments, sync_logs, labels)
 		await db.delete(surveyConfigs).where(eq(surveyConfigs.id, params.id));
 		return { success: true };
 	});

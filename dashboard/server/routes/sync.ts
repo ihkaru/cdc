@@ -77,6 +77,7 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 			body: JSON.stringify({
 				survey_config_id: survey.id,
 				survey_name: survey.surveyName,
+				bps_survey_id: survey.bpsSurveyId || "",
 				sso_username: survey.ssoUsername,
 				sso_password: password,
 				filter_provinsi: survey.filterProvinsi || "",

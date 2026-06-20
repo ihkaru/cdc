@@ -336,10 +336,10 @@ async def sync_cookie_to_db(cookie):
 async def new_stealth_context(browser, **kwargs):
     """Legacy wrapper for creating a stealth context with merged options."""
     defaults = {
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "viewport": {"width": 1280, "height": 800},
-        "is_mobile": False,
-        "has_touch": False,
+        "user_agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+        "viewport": {"width": 360, "height": 640},
+        "is_mobile": True,
+        "has_touch": True,
         "locale": "en-US",
         "timezone_id": "Asia/Jakarta",
     }

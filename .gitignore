@@ -9,25 +9,9 @@ venv/
 
 # Security
 **/.env
-new_vpn_cookie.txt
-
-# Debug & temp scripts (root level)
-archiver_logs.txt
-rpa_logs_debug.txt
-data_dump.txt
-full_data_dump.txt
-failed_ids.txt
-successfully_mirrored_ids.txt
-test.jpg
-test_copy.txt
-find_8.py
-find_8_host.py
-fix_db_paths.py
-get_failed_8.py
-get_the_8.py
-parse_host.py
-query_*.py
-verify_fix.py
+# Temporary files and directories
+tmp/
+!tmp/routes.txt
 
 # Debug scripts inside RPA
 rpa/debug_metadata.py

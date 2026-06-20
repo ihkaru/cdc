@@ -32,14 +32,15 @@ export default configure((/* ctx */) => ({
 		htmlVariables: {},
 	},
 	devServer: {
+		port: process.env.FRONTEND_PORT || 9000,
 		open: false,
 		proxy: {
 			"/api": {
-				target: "http://127.0.0.1:3000",
+				target: `http://127.0.0.1:${process.env.PORT || 3000}`,
 				changeOrigin: true,
 			},
 			"/storage": {
-				target: "http://127.0.0.1:3000",
+				target: `http://127.0.0.1:${process.env.PORT || 3000}`,
 				changeOrigin: true,
 			},
 		},

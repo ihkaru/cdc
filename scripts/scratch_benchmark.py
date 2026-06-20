@@ -1,12 +1,8 @@
 import requests
 import time
-import json
 
 url = "http://127.0.0.1:8000/lookup/metadata"
-payload = {
-    "sso_username": "ihzakarunia@bps.go.id",
-    "sso_password": "Fikrizaki2!"
-}
+payload = {"sso_username": "ihzakarunia@bps.go.id", "sso_password": "Fikrizaki2!"}
 
 print("--- STARTING BENCHMARK ---")
 

@@ -87,15 +87,13 @@
               <div>
                 <div class="text-subtitle2 text-grey-5 q-mb-xs">Survey FASIH</div>
                 <q-select
-                  v-model="form.surveyName"
+                  v-model="selectedSurvey"
                   :options="surveyOptions"
                   dark filled
                   option-label="name"
-                  option-value="name"
-                  emit-value
-                  map-options
                   use-input
                   @filter="filterSurveys"
+                  @update:model-value="onSurveyChange"
                   hint="Pilih survei untuk disinkronkan"
                 >
                   <template v-slot:no-option>
@@ -217,6 +215,7 @@ const saving = ref(false);
 const connecting = ref(false);
 const loadingKabupaten = ref(false);
 const step = ref(1);
+const selectedSurvey = ref<any>(null);
 
 // --- FASIH Data State ---
 const rawSurveys = ref<any[]>([]);
@@ -239,6 +238,7 @@ const rotationOptions = [
 
 const form = ref({
 	surveyName: "",
+	bpsSurveyId: "",
 	ssoUsername: "",
 	ssoPassword: "",
 	filterProvinsi: "",
@@ -248,6 +248,11 @@ const form = ref({
 	isActive: true,
 });
 
+function onSurveyChange(val: any) {
+	form.value.surveyName = val ? val.name : "";
+	form.value.bpsSurveyId = val ? val.id : "";
+}
+
 async function loadData() {
 	if (!isEdit.value) return;
 	loading.value = true;
@@ -256,6 +261,7 @@ async function loadData() {
 		const data = res.data;
 		// Populate form
 		form.value = { ...data, ssoPassword: "" };
+		selectedSurvey.value = { name: form.value.surveyName, id: form.value.bpsSurveyId || "" };
 
 		// In edit mode, if we have filter values but no API context yet,
 		// we make synthetic objects so they display nicely.
@@ -273,7 +279,7 @@ async function loadData() {
 		}
 
 		// Set survey option manually (so it shows directly)
-		rawSurveys.value = [{ name: form.value.surveyName }];
+		rawSurveys.value = [selectedSurvey.value];
 		surveyOptions.value = rawSurveys.value;
 
 		// Skip directly to config step 3 on edit by default

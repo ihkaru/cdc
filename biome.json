@@ -15,10 +15,6 @@
 			"!!tmp",
 			"!!venv",
 			"!!rpa/traces",
-			"!api_exploration.log",
-			"!full_payload_dump.log",
-			"!failed_ids.txt",
-			"!successfully_mirrored_ids.txt",
 			"!dashboard/client/quasar.config.js.temporary.compiled.*.mjs",
 			"!dashboard/client/index.html"
 		]

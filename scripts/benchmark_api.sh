@@ -1,4 +1,6 @@
 #!/bin/bash
+# Set working directory to project root
+cd "$(dirname "$0")/.."
 
 # ==========================================================
 # FasihNexus API Benchmark Tool

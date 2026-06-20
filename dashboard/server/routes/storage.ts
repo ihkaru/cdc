@@ -1,7 +1,7 @@
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Elysia, t } from "elysia";
 
-const s3Client = new S3Client({
+export const s3Client = new S3Client({
 	endpoint: process.env.S3_ENDPOINT || "http://s3:8333",
 	region: "us-east-1",
 	credentials: {

@@ -1,4 +1,6 @@
 #!/bin/bash
+# Set working directory to project root
+cd "$(dirname "$0")/.."
 
 # RPA berbagi network dengan container VPN (network_mode: service:vpn)
 # Port 8000 tidak di-expose ke host — akses lewat IP VPN container di Docker bridge network

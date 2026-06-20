@@ -1,4 +1,6 @@
 #!/bin/bash
+# Set working directory to project root
+cd "$(dirname "$0")/.."
 # test-routine-sync.sh
 # Script to verify the Routine Sync Scheduler functionality.
 
