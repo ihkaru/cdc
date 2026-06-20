@@ -2,7 +2,7 @@
 
 import { DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
-import { eq, ilike, or } from "drizzle-orm";
+import { eq, ilike, inArray, or } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../db";
 import { assignments, surveyConfigs } from "../db/schema";
@@ -54,10 +54,12 @@ export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
 		}
 
 		const rows = await dbQuery;
-		return rows.map((r) => ({
-			...r,
-			ssoPasswordEncrypted: undefined, // Never expose password
-		}));
+		return rows
+			.filter((r) => !r.surveyName.startsWith("[DELETING]"))
+			.map((r) => ({
+				...r,
+				ssoPasswordEncrypted: undefined, // Never expose password
+			}));
 	})
 
 	// Get single survey
@@ -149,50 +151,108 @@ export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
 		},
 	)
 
-	// Delete survey
+	// Delete survey (Asynchronous Background Job with Batch Deletion)
 	.use(requireAdmin)
-	.delete("/:id", async ({ params }) => {
-		// 1. Fetch all associated assignments to get local image paths
-		const assocAssignments = await db
-			.select({ id: assignments.id, localImagePaths: assignments.localImagePaths })
-			.from(assignments)
-			.where(eq(assignments.surveyConfigId, params.id));
+	.delete("/:id", async ({ params, set }) => {
+		const surveyId = params.id;
 
-		const s3KeysToDelete: { Key: string }[] = [];
-		const bucket = process.env.S3_BUCKET || "survey-images";
+		// 1. Fetch the survey first to verify it exists and get its name
+		const [survey] = await db
+			.select()
+			.from(surveyConfigs)
+			.where(eq(surveyConfigs.id, surveyId))
+			.limit(1);
 
-		for (const a of assocAssignments) {
-			const paths = (a.localImagePaths as Record<string, string>) || {};
-			for (const path of Object.values(paths)) {
-				// path is like "survey-images/uuid/photo_key.jpg"
-				const key = path.replace(`${bucket}/`, "");
-				if (key) {
-					s3KeysToDelete.push({ Key: key });
-				}
-			}
+		if (!survey) {
+			set.status = 404;
+			return { error: "Survey not found" };
 		}
 
-		// 2. Delete from SeaweedFS in chunks of 1000 (S3 API limit)
-		if (s3KeysToDelete.length > 0) {
+		// 2. Mark as deleting and inactive so it gets hidden from list immediately
+		// and ignored by scheduler
+		const originalName = survey.surveyName;
+		await db
+			.update(surveyConfigs)
+			.set({
+				surveyName: `[DELETING] ${originalName}`,
+				isActive: false,
+			})
+			.where(eq(surveyConfigs.id, surveyId));
+
+		// 3. Start background batch deletion task (Do NOT await!)
+		(async () => {
+			console.log(
+				`🧹 [Background Cleanup] Starting asynchronous deletion for survey "${originalName}" (${surveyId})...`,
+			);
+			const bucket = process.env.S3_BUCKET || "survey-images";
+			let totalImagesDeleted = 0;
+			let totalAssignmentsDeleted = 0;
+
 			try {
-				const CHUNK_SIZE = 1000;
-				for (let i = 0; i < s3KeysToDelete.length; i += CHUNK_SIZE) {
-					const chunk = s3KeysToDelete.slice(i, i + CHUNK_SIZE);
-					const deleteCommand = new DeleteObjectsCommand({
-						Bucket: bucket,
-						Delete: { Objects: chunk },
-					});
-					await s3Client.send(deleteCommand);
+				while (true) {
+					// Fetch a batch of 5000 assignments to process
+					const batch = await db
+						.select({ id: assignments.id, localImagePaths: assignments.localImagePaths })
+						.from(assignments)
+						.where(eq(assignments.surveyConfigId, surveyId))
+						.limit(5000);
+
+					if (batch.length === 0) {
+						break;
+					}
+
+					// Collect S3 keys to delete in this batch
+					const s3KeysToDelete: { Key: string }[] = [];
+					for (const a of batch) {
+						const paths = (a.localImagePaths as Record<string, string>) || {};
+						for (const path of Object.values(paths)) {
+							const key = path.replace(`${bucket}/`, "");
+							if (key) {
+								s3KeysToDelete.push({ Key: key });
+							}
+						}
+					}
+
+					// Delete objects from SeaweedFS in chunks of 1000
+					if (s3KeysToDelete.length > 0) {
+						const CHUNK_SIZE = 1000;
+						for (let i = 0; i < s3KeysToDelete.length; i += CHUNK_SIZE) {
+							const chunk = s3KeysToDelete.slice(i, i + CHUNK_SIZE);
+							const deleteCommand = new DeleteObjectsCommand({
+								Bucket: bucket,
+								Delete: { Objects: chunk },
+							});
+							await s3Client.send(deleteCommand).catch((err) => {
+								console.error("Failed to delete mirrored images chunk from SeaweedFS:", err);
+							});
+						}
+						totalImagesDeleted += s3KeysToDelete.length;
+					}
+
+					// Delete assignments batch from database
+					const batchIds = batch.map((a) => a.id);
+					await db.delete(assignments).where(inArray(assignments.id, batchIds));
+					totalAssignmentsDeleted += batch.length;
+
+					console.log(
+						`🧹 [Background Cleanup] Processed batch: deleted ${batch.length} assignments and ${s3KeysToDelete.length} images.`,
+					);
 				}
+
+				// 4. Finally delete the parent survey config (cascades remaining logs, schemas, etc.)
+				await db.delete(surveyConfigs).where(eq(surveyConfigs.id, surveyId));
 				console.log(
-					`🧹 [S3 Cleanup] Deleted ${s3KeysToDelete.length} mirrored images for survey ${params.id}`,
+					`✅ [Background Cleanup] Successfully deleted survey "${originalName}" (${surveyId}). ` +
+						`Total assignments: ${totalAssignmentsDeleted}, Total images: ${totalImagesDeleted}.`,
 				);
 			} catch (err) {
-				console.error("Failed to delete mirrored images from SeaweedFS:", err);
+				console.error(`❌ [Background Cleanup] Error deleting survey "${originalName}":`, err);
 			}
-		}
+		})();
 
-		// 3. Delete from DB (cascade deletes assignments, sync_logs, labels)
-		await db.delete(surveyConfigs).where(eq(surveyConfigs.id, params.id));
-		return { success: true };
+		// 5. Return success instantly to client
+		return {
+			success: true,
+			message: "Proses penghapusan survey sedang berjalan di latar belakang.",
+		};
 	});

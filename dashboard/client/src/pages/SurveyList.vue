@@ -258,7 +258,13 @@ function deleteSurvey(id: string) {
 	}).onOk(async () => {
 		try {
 			await api.delete(`/surveys/${id}`);
-			$q.notify({ type: "info", message: "Survey deleted" });
+			$q.notify({
+				type: "info",
+				message:
+					"Survey sedang dihapus di latar belakang. Semua data dan media terkait akan segera dibersihkan.",
+				timeout: 5000,
+				position: "top",
+			});
 			loadData();
 		} catch (e) {
 			$q.notify({ type: "negative", message: "Failed to delete" });
