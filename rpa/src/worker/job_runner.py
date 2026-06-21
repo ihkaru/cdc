@@ -116,12 +116,14 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
 
                     # Fetch initial total remote target count
                     total_target_remote = 0
+                    bps_progress_data = None
                     try:
-                        total_target_remote = await api.get_analytic_assignment_count(
+                        total_target_remote, bps_progress_data = await api.get_analytic_assignment_count(
                             period_id, prov_uuid, region_filter
                         )
                         log = session.query(SyncLog).get(sync_log.id)
                         log.total_target_remote = total_target_remote
+                        log.bps_progress = bps_progress_data
                         session.commit()
 
                         if total_target_remote > 0:
@@ -227,8 +229,9 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
 
                     # Fetch final total remote target count before closing API client
                     final_target_remote = 0
+                    final_bps_progress = None
                     try:
-                        final_target_remote = await api.get_analytic_assignment_count(
+                        final_target_remote, final_bps_progress = await api.get_analytic_assignment_count(
                             period_id, prov_uuid, region_filter
                         )
                     except Exception as count_e:
@@ -289,11 +292,15 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
 
         # Assign final remote target count (fallback to initial if final failed)
         final_target = 0
+        final_progress = None
         if "final_target_remote" in locals() and final_target_remote > 0:
             final_target = final_target_remote
+            final_progress = final_bps_progress
         elif "total_target_remote" in locals() and total_target_remote > 0:
             final_target = total_target_remote
+            final_progress = bps_progress_data
         log.total_target_remote = final_target
+        log.bps_progress = final_progress
 
         if sync_state.stop_requested:
             if stats.total_fetched > 0:

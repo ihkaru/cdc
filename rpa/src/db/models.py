@@ -101,6 +101,7 @@ class SyncLog(Base):
     status = Column(String, default="running")
     notes = Column(Text)
     timings = Column(JSON, comment="Phase durations in ms")
+    bps_progress = Column(JSON, comment="BPS Progress analytic snapshot JSON")
 
     def __repr__(self):
         return f"<SyncLog(id={self.id}, status={self.status})>"

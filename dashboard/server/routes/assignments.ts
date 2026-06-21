@@ -374,9 +374,12 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
 				}
 			}
 
-			// Retrieve the latest totalTargetRemote
+			// Retrieve the latest totalTargetRemote and bpsProgress snapshot
 			const [latestLog] = await db
-				.select({ totalTargetRemote: syncLogs.totalTargetRemote })
+				.select({
+					totalTargetRemote: syncLogs.totalTargetRemote,
+					bpsProgress: syncLogs.bpsProgress,
+				})
 				.from(syncLogs)
 				.where(eq(syncLogs.surveyConfigId, params.id))
 				.orderBy(desc(syncLogs.startedAt))
@@ -389,6 +392,7 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
 				rejected,
 				breakdown,
 				totalTargetRemote: latestLog ? Number(latestLog.totalTargetRemote || 0) : 0,
+				bpsProgress: latestLog ? (latestLog.bpsProgress as any) : null,
 			};
 		} catch (error) {
 			console.error(`Error fetching stats for survey ${params.id}:`, error);

@@ -77,6 +77,7 @@ export const syncLogs = pgTable(
 		status: text("status").default("running"),
 		notes: text("notes"),
 		timings: jsonb("timings"),
+		bpsProgress: jsonb("bps_progress"),
 	},
 	(table) => [
 		index("idx_sync_logs_survey").on(table.surveyConfigId),

@@ -54,6 +54,19 @@
       </div>
     </div>
 
+    <!-- Integrity Warning Banner -->
+    <q-banner
+      v-if="stats && stats.totalTargetRemote > 0 && stats.total < stats.totalTargetRemote"
+      class="bg-warning text-dark q-mb-lg rounded-borders text-weight-medium"
+      style="border: 1px solid #f2c037; border-radius: 8px;"
+    >
+      <template v-slot:avatar>
+        <q-icon name="warning" color="dark" />
+      </template>
+      Sinkronisasi data lokal belum lengkap. Baru menyinkronkan {{ stats.total.toLocaleString('id-ID') }} dari total {{ stats.totalTargetRemote.toLocaleString('id-ID') }} assignments di remote BPS ({{ ((stats.total / stats.totalTargetRemote) * 100).toFixed(1) }}%).
+      Beberapa data mungkin berbeda atau belum muncul di tabel bawah.
+    </q-banner>
+
     <!-- Stats Banner -->
     <div class="row q-col-gutter-md q-mb-lg" v-if="stats">
       <!-- Submission Progress Card -->
@@ -76,12 +89,25 @@
             Persentase assignment selain OPEN dan DRAFT
           </div>
           
-          <div class="row items-baseline q-gutter-x-sm q-mb-sm">
-            <span class="text-h3 text-weight-bolder text-amber-5">{{ submittedPercent }}%</span>
+          <div class="row items-baseline q-gutter-x-sm q-mb-xs">
+            <template v-if="stats.bpsProgress && stats.bpsProgress.length > 0">
+              <span class="text-h3 text-weight-bolder text-amber-5">{{ bpsSubmittedPercent }}%</span>
+              <span class="text-caption text-grey-5">Remote BPS</span>
+            </template>
+            <template v-else>
+              <span class="text-h3 text-weight-bolder text-amber-5">{{ submittedPercent }}%</span>
+            </template>
           </div>
           
-          <div class="text-caption text-grey-4 q-mb-lg">
-            {{ stats.total.toLocaleString('id-ID') }} Total Assignment
+          <div class="row items-center q-gutter-x-xs text-caption text-grey-4 q-mb-lg">
+            <template v-if="stats.bpsProgress && stats.bpsProgress.length > 0">
+              <span>Lokal: <b>{{ submittedPercent }}%</b></span>
+              <span class="text-grey-6">•</span>
+              <span>{{ stats.total.toLocaleString('id-ID') }} / {{ stats.totalTargetRemote.toLocaleString('id-ID') }} Data</span>
+            </template>
+            <template v-else>
+              <span>{{ stats.total.toLocaleString('id-ID') }} Total Assignment</span>
+            </template>
           </div>
           
           <q-btn 
@@ -422,7 +448,7 @@
 
     <!-- Breakdown Dialog -->
     <q-dialog v-model="showBreakdownDialog">
-      <q-card style="min-width: 450px; background: #0f1624; border: 1px solid #1e3a5f;" class="text-white border-card" flat bordered>
+      <q-card style="min-width: 500px; background: #0f1624; border: 1px solid #1e3a5f;" class="text-white border-card" flat bordered>
         <q-card-section class="row items-center q-pb-none">
           <div class="text-h6 text-weight-bold">Rincian Status Assignment</div>
           <q-space />
@@ -431,24 +457,52 @@
 
         <q-card-section class="q-pt-md">
           <div class="text-caption text-grey-5 q-mb-md">
-            Distribusi status dan persentase dari total seluruh assignments di database lokal.
+            Distribusi status dan persentase perbandingan data lokal vs data remote di BPS.
           </div>
           
           <q-list dark separator class="border-card rounded-borders overflow-hidden">
-            <q-item v-for="item in sortedBreakdown" :key="item.status" class="q-py-md">
+            <q-item v-for="item in combinedBreakdown" :key="String(item.status)" class="q-py-md">
               <q-item-section>
                 <div class="row justify-between items-center q-mb-xs">
-                  <q-badge :color="badgeColor(item.status)" class="text-weight-bold q-px-sm q-py-xs">
-                    {{ item.status }}
+                  <q-badge :color="badgeColor(String(item.status))" class="text-weight-bold q-px-sm q-py-xs">
+                    {{ String(item.status) }}
                   </q-badge>
-                  <div class="row items-baseline q-gutter-x-xs">
-                    <span class="text-weight-bold text-white">{{ item.count.toLocaleString('id-ID') }}</span>
-                    <span class="text-caption text-grey-5" style="font-size: 11px">({{ getPercentOfTotal(item.count) }}%)</span>
+                  
+                  <div class="row items-center q-gutter-x-md">
+                    <!-- Local Count -->
+                    <div class="text-right">
+                      <span class="text-caption text-grey-5 block" style="font-size: 9px; line-height: 1;">Lokal</span>
+                      <span class="text-weight-bold text-white">{{ Number(item.localCount).toLocaleString("id-ID") }}</span>
+                      <span class="text-caption text-grey-6" style="font-size: 9px;"> ({{ getPercentOfTotalLocal(Number(item.localCount)) }}%)</span>
+                    </div>
+
+                    <!-- Separator -->
+                    <div v-if="stats.bpsProgress && stats.bpsProgress.length > 0" style="width: 1px; height: 20px; background: #333"></div>
+
+                    <!-- BPS Count -->
+                    <div v-if="stats.bpsProgress && stats.bpsProgress.length > 0" class="text-right">
+                      <span class="text-caption text-amber-5 block" style="font-size: 9px; line-height: 1;">Remote BPS</span>
+                      <span class="text-weight-bold text-amber-3">{{ Number(item.bpsCount).toLocaleString("id-ID") }}</span>
+                      <span class="text-caption text-grey-6" style="font-size: 9px;"> ({{ getPercentOfTotalBps(Number(item.bpsCount)) }}%)</span>
+                    </div>
                   </div>
                 </div>
+                
+                <!-- Progress bar -->
                 <q-linear-progress
-                  :value="stats.total > 0 ? item.count / stats.total : 0"
-                  :color="badgeColor(item.status)"
+                  v-if="stats.bpsProgress && stats.bpsProgress.length > 0"
+                  :value="Number(item.bpsCount) > 0 ? Math.min(1, Number(item.localCount) / Number(item.bpsCount)) : 0"
+                  :color="Number(item.localCount) >= Number(item.bpsCount) ? 'positive' : 'warning'"
+                  track-color="grey-10"
+                  rounded
+                  size="4px"
+                >
+                  <q-tooltip>Tersinkronisasi: {{ Number(item.localCount) }} dari {{ Number(item.bpsCount) }} data ({{ (Number(item.bpsCount) > 0 ? (Number(item.localCount) / Number(item.bpsCount)) * 100 : 0).toFixed(1) }}%)</q-tooltip>
+                </q-linear-progress>
+                <q-linear-progress
+                  v-else
+                  :value="Number(stats.total) > 0 ? Number(item.localCount) / Number(stats.total) : 0"
+                  :color="badgeColor(String(item.status))"
                   track-color="grey-10"
                   rounded
                   size="4px"
@@ -491,6 +545,12 @@ const labelSchema = ref<any>(null);
 const showUploadDialog = ref(false);
 const showBreakdownDialog = ref(false);
 
+interface StatusBreakdownItem {
+	status: string;
+	localCount: number;
+	bpsCount: number;
+}
+
 const submittedPercent = computed(() => {
 	if (!stats.value || stats.value.total === 0) return 0;
 	const nonSubmitted = stats.value.breakdown
@@ -506,14 +566,66 @@ const submittedPercent = computed(() => {
 	return Number(((submitted / stats.value.total) * 100).toFixed(2));
 });
 
-const sortedBreakdown = computed(() => {
-	if (!stats.value || !stats.value.breakdown) return [];
-	return [...stats.value.breakdown].sort((a: any, b: any) => b.count - a.count);
+const bpsSubmittedPercent = computed(() => {
+	if (!stats.value || !stats.value.bpsProgress) return 0;
+	const bpsProgressList = stats.value.bpsProgress || [];
+	const totalItem = bpsProgressList.find((item: any) => item.label === "total");
+	const bpsTotal = totalItem ? Number(totalItem.value || 0) : 0;
+	if (bpsTotal === 0) return 0;
+
+	const nonSubmitted = bpsProgressList
+		.filter((item: any) => {
+			const label = item.label.toLowerCase();
+			return label === "open" || label === "draft";
+		})
+		.reduce((sum: number, item: any) => sum + Number(item.value || 0), 0);
+
+	const submitted = bpsTotal - nonSubmitted;
+	return Number(((submitted / bpsTotal) * 100).toFixed(2));
 });
 
-function getPercentOfTotal(count: number): string {
+const combinedBreakdown = computed<StatusBreakdownItem[]>(() => {
+	if (!stats.value) return [];
+	const localMap = new Map<string, number>(
+		stats.value.breakdown?.map((item: any) => [
+			String(item.status).toUpperCase(),
+			Number(item.count || 0),
+		]) || [],
+	);
+
+	const bpsProgressList = (stats.value.bpsProgress as any[]) || [];
+	const bpsMap = new Map<string, number>(
+		bpsProgressList
+			.filter((item: any) => item.label !== "total")
+			.map((item: any) => [String(item.label).toUpperCase(), Number(item.value || 0)]),
+	);
+
+	const allKeys = new Set<string>([...localMap.keys(), ...bpsMap.keys()]);
+	const result = Array.from(allKeys).map((key) => {
+		const localCount = localMap.get(key) || 0;
+		const bpsCount = bpsMap.get(key) || 0;
+		return {
+			status: key,
+			localCount,
+			bpsCount,
+		};
+	});
+
+	return result.sort((a, b) => b.bpsCount - a.bpsCount || b.localCount - a.localCount);
+});
+
+function getPercentOfTotalLocal(count: number): string {
 	if (!stats.value || stats.value.total === 0) return "0";
-	return ((count / stats.value.total) * 100).toFixed(2);
+	return ((count / stats.value.total) * 100).toFixed(1);
+}
+
+function getPercentOfTotalBps(count: number): string {
+	if (!stats.value || !stats.value.bpsProgress) return "0";
+	const bpsProgressList = stats.value.bpsProgress || [];
+	const totalItem = bpsProgressList.find((item: any) => item.label === "total");
+	const bpsTotal = totalItem ? Number(totalItem.value || 0) : 0;
+	if (bpsTotal === 0) return "0";
+	return ((count / bpsTotal) * 100).toFixed(1);
 }
 const uploadFile = ref<File | null>(null);
 const uploading = ref(false);

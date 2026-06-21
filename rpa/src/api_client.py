@@ -3,6 +3,7 @@ import os
 import re
 import ssl
 from functools import wraps
+from typing import Any
 
 import aiohttp
 
@@ -294,8 +295,8 @@ class FasihApiClient:
     @with_retry()
     async def get_analytic_assignment_count(
         self, period_id: str, region1_id: str | None = None, region2_id: str | None = None
-    ) -> int:
-        """Mendapatkan total assignments yang ditargetkan di remote FASIH-SM."""
+    ) -> tuple[int, list[dict[str, Any]]]:
+        """Mendapatkan total target dan breakdown status assignments di remote BPS."""
         print(f"   📊 [API] Menghitung total target assignment di remote (Period: {period_id[:8]}...)...")
         path = "analytic/api/v2/assignment/report-progress-assignment"
         payload = {
@@ -322,15 +323,15 @@ class FasihApiClient:
         try:
             if body and isinstance(body, list) and len(body) > 0:
                 values = body[0].get("values", [])
+                count = 0
                 for val in values:
                     if val.get("label") == "total":
                         count = int(val.get("value", 0))
-                        print(f"   ✅ [API] Remote Target Count: {count}")
-                        return count
+                print(f"   ✅ [API] Remote Target Count: {count}, Breakdown: {len(values)} items")
+                return count, values
         except Exception as e:
             print(f"   ⚠️ [API] Gagal mengurai jumlah analytic count: {e}")
-        return 0
-        return None, [], None
+        return 0, []
 
     @with_retry()
     async def get_region_metadata(
