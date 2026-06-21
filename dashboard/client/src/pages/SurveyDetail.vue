@@ -56,29 +56,75 @@
 
     <!-- Stats Banner -->
     <div class="row q-col-gutter-md q-mb-lg" v-if="stats">
-      <div class="col-6 col-sm-3">
-        <q-card class="bg-dark border-card text-center q-pa-md" flat bordered>
-          <div class="text-grey-5 text-uppercase text-caption">Total Assignments</div>
-          <div class="text-h4 text-weight-bold text-white">{{ stats.total }}</div>
+      <!-- Submission Progress Card -->
+      <div class="col-12 col-md-4">
+        <q-card 
+          class="bg-dark border-card text-white q-pa-md relative-position overflow-hidden" 
+          flat 
+          bordered 
+          style="background: linear-gradient(135deg, #111a2e 0%, #0d121f 100%) !important; border-color: rgba(59, 130, 246, 0.25);"
+        >
+          <q-icon 
+            name="analytics" 
+            size="8rem" 
+            class="absolute-right q-mr-sm opacity-10" 
+            style="bottom: -10px; pointer-events: none;"
+          />
+          
+          <div class="text-subtitle2 text-grey-4 text-weight-medium q-mb-xs">Assignment Tersubmit</div>
+          <div class="text-caption text-grey-5 q-mb-md">
+            Persentase assignment selain OPEN dan DRAFT
+          </div>
+          
+          <div class="row items-baseline q-gutter-x-sm q-mb-sm">
+            <span class="text-h3 text-weight-bolder text-amber-5">{{ submittedPercent }}%</span>
+          </div>
+          
+          <div class="text-caption text-grey-4 q-mb-lg">
+            {{ stats.total.toLocaleString('id-ID') }} Total Assignment
+          </div>
+          
+          <q-btn 
+            flat 
+            dense 
+            no-caps 
+            color="amber-5" 
+            label="Lihat rincian status" 
+            icon-right="arrow_forward" 
+            class="q-px-none text-weight-bold"
+            @click="showBreakdownDialog = true"
+          />
         </q-card>
       </div>
-      <div class="col-6 col-sm-3">
-        <q-card class="bg-dark border-card text-center q-pa-md" flat bordered>
-          <div class="text-grey-5 text-uppercase text-caption">Open / Draft</div>
-          <div class="text-h4 text-weight-bold text-warning">{{ stats.open }}</div>
-        </q-card>
-      </div>
-      <div class="col-6 col-sm-3">
-        <q-card class="bg-dark border-card text-center q-pa-md" flat bordered>
-          <div class="text-grey-5 text-uppercase text-caption">Submitted</div>
-          <div class="text-h4 text-weight-bold text-positive">{{ stats.submitted }}</div>
-        </q-card>
-      </div>
-      <div class="col-6 col-sm-3">
-        <q-card class="bg-dark border-card text-center q-pa-md" flat bordered>
-          <div class="text-grey-5 text-uppercase text-caption">Rejected / Error</div>
-          <div class="text-h4 text-weight-bold text-negative">{{ stats.rejected }}</div>
-        </q-card>
+
+      <!-- Metric Cards Grid -->
+      <div class="col-12 col-md-8">
+        <div class="row q-col-gutter-md">
+          <div class="col-6 col-sm-6">
+            <q-card class="bg-dark border-card text-center q-pa-md" flat bordered>
+              <div class="text-grey-5 text-uppercase text-caption">Total Assignments</div>
+              <div class="text-h4 text-weight-bold text-white">{{ stats.total.toLocaleString('id-ID') }}</div>
+            </q-card>
+          </div>
+          <div class="col-6 col-sm-6">
+            <q-card class="bg-dark border-card text-center q-pa-md" flat bordered>
+              <div class="text-grey-5 text-uppercase text-caption">Open / Draft</div>
+              <div class="text-h4 text-weight-bold text-warning">{{ stats.open.toLocaleString('id-ID') }}</div>
+            </q-card>
+          </div>
+          <div class="col-6 col-sm-6">
+            <q-card class="bg-dark border-card text-center q-pa-md" flat bordered>
+              <div class="text-grey-5 text-uppercase text-caption">Submitted</div>
+              <div class="text-h4 text-weight-bold text-positive">{{ stats.submitted.toLocaleString('id-ID') }}</div>
+            </q-card>
+          </div>
+          <div class="col-6 col-sm-6">
+            <q-card class="bg-dark border-card text-center q-pa-md" flat bordered>
+              <div class="text-grey-5 text-uppercase text-caption">Rejected / Error</div>
+              <div class="text-h4 text-weight-bold text-negative">{{ stats.rejected.toLocaleString('id-ID') }}</div>
+            </q-card>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -373,6 +419,46 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- Breakdown Dialog -->
+    <q-dialog v-model="showBreakdownDialog">
+      <q-card style="min-width: 450px; background: #0f1624; border: 1px solid #1e3a5f;" class="text-white border-card" flat bordered>
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6 text-weight-bold">Rincian Status Assignment</div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+
+        <q-card-section class="q-pt-md">
+          <div class="text-caption text-grey-5 q-mb-md">
+            Distribusi status dan persentase dari total seluruh assignments di database lokal.
+          </div>
+          
+          <q-list dark separator class="border-card rounded-borders overflow-hidden">
+            <q-item v-for="item in sortedBreakdown" :key="item.status" class="q-py-md">
+              <q-item-section>
+                <div class="row justify-between items-center q-mb-xs">
+                  <q-badge :color="badgeColor(item.status)" class="text-weight-bold q-px-sm q-py-xs">
+                    {{ item.status }}
+                  </q-badge>
+                  <div class="row items-baseline q-gutter-x-xs">
+                    <span class="text-weight-bold text-white">{{ item.count.toLocaleString('id-ID') }}</span>
+                    <span class="text-caption text-grey-5" style="font-size: 11px">({{ getPercentOfTotal(item.count) }}%)</span>
+                  </div>
+                </div>
+                <q-linear-progress
+                  :value="stats.total > 0 ? item.count / stats.total : 0"
+                  :color="badgeColor(item.status)"
+                  track-color="grey-10"
+                  rounded
+                  size="4px"
+                />
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -403,6 +489,32 @@ const labelSchema = ref<any>(null);
 
 // Upload state
 const showUploadDialog = ref(false);
+const showBreakdownDialog = ref(false);
+
+const submittedPercent = computed(() => {
+	if (!stats.value || stats.value.total === 0) return 0;
+	const nonSubmitted = stats.value.breakdown
+		? stats.value.breakdown
+				.filter((item: any) => {
+					const s = item.status.toLowerCase();
+					return s.includes("open") || s.includes("draft");
+				})
+				.reduce((sum: number, item: any) => sum + item.count, 0)
+		: stats.value.open || 0;
+
+	const submitted = stats.value.total - nonSubmitted;
+	return Number(((submitted / stats.value.total) * 100).toFixed(2));
+});
+
+const sortedBreakdown = computed(() => {
+	if (!stats.value || !stats.value.breakdown) return [];
+	return [...stats.value.breakdown].sort((a: any, b: any) => b.count - a.count);
+});
+
+function getPercentOfTotal(count: number): string {
+	if (!stats.value || stats.value.total === 0) return "0";
+	return ((count / stats.value.total) * 100).toFixed(2);
+}
 const uploadFile = ref<File | null>(null);
 const uploading = ref(false);
 const uploadError = ref("");
@@ -551,8 +663,24 @@ const workloadCols = [
 ];
 
 function badgeColor(status: string) {
-	if (status.includes("COMPLETED") || status.includes("UPLOADED")) return "positive";
-	if (status.includes("IN_PROGRESS") || status.includes("DRAFT")) return "warning";
+	if (!status) return "grey-8";
+	const s = status.toUpperCase();
+	if (
+		s.includes("APPROVED") ||
+		s.includes("COMPLETED") ||
+		s.includes("UPLOADED") ||
+		s.includes("SUCCESS")
+	)
+		return "positive";
+	if (s.includes("SUBMITTED")) return "info";
+	if (s.includes("DRAFT") || s.includes("IN_PROGRESS") || s.includes("OPEN")) return "warning";
+	if (
+		s.includes("REJECTED") ||
+		s.includes("ERROR") ||
+		s.includes("REVOKED") ||
+		s.includes("FAILED")
+	)
+		return "negative";
 	return "grey-8";
 }
 

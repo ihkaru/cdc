@@ -2,7 +2,7 @@ import { and, count, desc, eq, lt, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import * as XLSX from "xlsx";
 import { client, db } from "../db";
-import { assignments, labelData } from "../db/schema";
+import { assignments, labelData, syncLogs } from "../db/schema";
 
 function extractVariables(dataJson: any): Record<string, any> {
 	if (!dataJson) return {};
@@ -332,37 +332,67 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
 	})
 
 	// Get stats for a survey
-	.get("/:id/stats", async ({ params, set }) => {
+	.get("/:id/stats", async ({ params }) => {
 		try {
-			const result = await db
+			// Query assignments counts grouped by status alias
+			const rows = await db
 				.select({
-					total: count(),
-					open: count(
-						sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%open%' THEN 1 END`,
-					),
-					submitted: count(
-						sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%submitted%' THEN 1 END`,
-					),
-					rejected: count(
-						sql`CASE WHEN ${assignments.assignmentStatusAlias} ILIKE '%rejected%' THEN 1 END`,
-					),
+					status: assignments.assignmentStatusAlias,
+					count: count(),
 				})
 				.from(assignments)
-				.where(eq(assignments.surveyConfigId, params.id));
+				.where(eq(assignments.surveyConfigId, params.id))
+				.groupBy(assignments.assignmentStatusAlias);
 
-			const stats = result[0] || { total: 0, open: 0, submitted: 0, rejected: 0 };
+			const breakdown = rows.map((r) => ({
+				status: r.status || "UNKNOWN",
+				count: Number(r.count || 0),
+			}));
 
-			// Ensure all values are numbers (DB might return strings for count)
+			const total = breakdown.reduce((sum, item) => sum + item.count, 0);
+
+			// Map and classify for backwards compatibility
+			let open = 0;
+			let submitted = 0;
+			let rejected = 0;
+
+			for (const item of breakdown) {
+				const s = item.status.toLowerCase();
+				if (s.includes("open") || s.includes("draft")) {
+					open += item.count;
+				} else if (
+					s.includes("submitted") ||
+					s.includes("approved") ||
+					s.includes("uploaded") ||
+					s.includes("completed")
+				) {
+					submitted += item.count;
+				} else if (s.includes("rejected") || s.includes("error") || s.includes("revoked")) {
+					rejected += item.count;
+				} else {
+					open += item.count;
+				}
+			}
+
+			// Retrieve the latest totalTargetRemote
+			const [latestLog] = await db
+				.select({ totalTargetRemote: syncLogs.totalTargetRemote })
+				.from(syncLogs)
+				.where(eq(syncLogs.surveyConfigId, params.id))
+				.orderBy(desc(syncLogs.startedAt))
+				.limit(1);
+
 			return {
-				total: Number(stats.total || 0),
-				open: Number(stats.open || 0),
-				submitted: Number(stats.submitted || 0),
-				rejected: Number(stats.rejected || 0),
+				total,
+				open,
+				submitted,
+				rejected,
+				breakdown,
+				totalTargetRemote: latestLog ? Number(latestLog.totalTargetRemote || 0) : 0,
 			};
 		} catch (error) {
 			console.error(`Error fetching stats for survey ${params.id}:`, error);
-			// Fallback to empty stats instead of 500
-			return { total: 0, open: 0, submitted: 0, rejected: 0 };
+			return { total: 0, open: 0, submitted: 0, rejected: 0, breakdown: [], totalTargetRemote: 0 };
 		}
 	})
 
