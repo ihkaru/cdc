@@ -119,7 +119,18 @@
           <q-spinner-rings color="primary" size="1.5em" class="q-mr-sm" />
           <span class="text-weight-bold text-primary">Sync Berjalan</span>
           <q-space />
-          <span class="text-caption text-grey-5">{{ elapsedLabel }}</span>
+          <span class="text-caption text-grey-5 q-mr-md">{{ elapsedLabel }}</span>
+          <q-btn
+            color="negative"
+            :label="liveStatus.job_status === 'stopping' ? 'Stopping...' : 'Stop Sync'"
+            icon="stop"
+            unelevated
+            size="sm"
+            style="border-radius: 4px;"
+            :loading="stoppingJobId === liveStatus.current_job_id"
+            :disable="liveStatus.job_status === 'stopping'"
+            @click="confirmStopSync(liveStatus.current_job_id, liveStatus.current_survey)"
+          />
         </div>
 
         <div class="text-h6 text-white q-mb-xs">{{ liveStatus.current_survey }}</div>
@@ -207,6 +218,8 @@
               {{ formatDate(log.startedAt) }}
               <q-badge v-if="log.status === 'running'" color="primary" class="q-ml-sm">Running</q-badge>
               <q-badge v-if="log.status === 'queued'" color="grey" class="q-ml-sm">Queued</q-badge>
+              <q-badge v-if="log.status === 'partial'" color="warning" text-color="dark" class="q-ml-sm text-weight-bold">Partial</q-badge>
+              <q-badge v-if="log.status === 'cancelled'" color="orange-8" class="q-ml-sm">Cancelled</q-badge>
             </q-item-label>
             <q-item-label caption class="text-grey-4">
               Duration: {{ calculateDuration(log.startedAt, log.finishedAt) }}
@@ -242,7 +255,7 @@
             </div>
           </q-item-section>
           
-          <q-item-section side v-if="log.status === 'success' || log.status === 'running'">
+          <q-item-section side v-if="log.status === 'success' || log.status === 'running' || log.status === 'partial'">
             <div class="row q-gutter-x-md no-wrap items-center">
               <div class="row q-gutter-x-sm text-center">
                 <div>
@@ -301,6 +314,7 @@
 
 <script setup lang="ts">
 import { copyToClipboard, useQuasar } from "quasar";
+import { api } from "src/boot/axios";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 
@@ -312,7 +326,42 @@ const exporting = ref(false);
 const liveStatus = ref<any>(null);
 const mirroringStatus = ref<any>(null);
 const showSkippedDialog = ref(false);
+const stoppingJobId = ref<number | null>(null);
 let pollTimer: any = null;
+
+function confirmStopSync(jobId: number, surveyName: string) {
+	$q.dialog({
+		title: "Konfirmasi Penghentian",
+		message: `Apakah Anda yakin ingin menghentikan sinkronisasi untuk survey "${surveyName}"? Data yang sudah diunduh akan tetap disimpan.`,
+		persistent: true,
+		dark: true,
+		ok: {
+			label: "Stop",
+			color: "negative",
+			unelevated: true,
+		},
+		cancel: {
+			label: "Batal",
+			flat: true,
+			color: "white",
+		},
+	}).onOk(async () => {
+		stoppingJobId.value = jobId;
+		try {
+			const res = await api.delete(`/surveys/sync/${jobId}`);
+			$q.notify({
+				type: "info",
+				message: res.data.message || `Proses penghentian dikirim`,
+			});
+			fetchDashboardState();
+		} catch (e: any) {
+			const msg = e.response?.data?.detail || e.message || "Gagal menghentikan sinkronisasi";
+			$q.notify({ type: "negative", message: `Error: ${msg}` });
+		} finally {
+			stoppingJobId.value = null;
+		}
+	});
+}
 
 const phases = [
 	{ key: "login", icon: "lock", label: "Login SSO" },
@@ -325,8 +374,11 @@ const phases = [
 const phaseOrder = phases.map((p) => p.key);
 
 function getPhaseColor(phaseKey: string) {
-	const current = liveStatus.value?.progress?.phase;
+	let current = liveStatus.value?.progress?.phase;
 	if (!current) return "grey-8";
+	if (current === "resolve_survey") current = "resolve";
+	if (current === "streaming_sync") current = "fetch_assignments";
+
 	const currentIdx = phaseOrder.indexOf(current);
 	const thisIdx = phaseOrder.indexOf(phaseKey);
 	if (thisIdx < currentIdx) return "positive";
@@ -373,23 +425,21 @@ function calculateDuration(start: string, end: string) {
 }
 
 function statusIcon(status: string) {
-	return status === "success"
-		? "check_circle"
-		: status === "running"
-			? "sync"
-			: status === "queued"
-				? "hourglass_empty"
-				: "error";
+	if (status === "success") return "check_circle";
+	if (status === "running") return "sync";
+	if (status === "queued") return "hourglass_empty";
+	if (status === "partial") return "warning";
+	if (status === "cancelled") return "block";
+	return "error";
 }
 
 function statusColor(status: string) {
-	return status === "success"
-		? "positive"
-		: status === "running"
-			? "primary"
-			: status === "queued"
-				? "grey"
-				: "negative";
+	if (status === "success") return "positive";
+	if (status === "running") return "primary";
+	if (status === "queued") return "grey";
+	if (status === "partial") return "warning";
+	if (status === "cancelled") return "orange-8";
+	return "negative";
 }
 
 // Unified State Fetch: Replaces pollStatus, fetchLogs, fetchMirroring

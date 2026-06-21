@@ -50,6 +50,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
     sync_state.current_job_id = log.id
     sync_state.started_at = datetime.now(timezone.utc)
     sync_state.progress.reset()
+    sync_state.stop_requested = False
 
     stats = SyncStats()
 
@@ -251,7 +252,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                     if is_image:
                         total_images_in_run += 1
 
-        # Update sync log → success
+        # Update sync log
         log = session.query(SyncLog).get(sync_log.id)
         log.finished_at = datetime.now(timezone.utc)
         log.total_fetched = stats.total_fetched
@@ -261,11 +262,20 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
         log.total_failed = stats.total_failed
         log.total_images = total_images_in_run
         log.images_mirrored = 0  # Will be updated by archiver in background
-        log.status = "success"
+
+        if sync_state.stop_requested:
+            if stats.total_fetched > 0:
+                log.status = "partial"
+                log.notes = "Stopped by user (partial sync)"
+            else:
+                log.status = "cancelled"
+                log.notes = "Stopped by user"
+        else:
+            log.status = "success"
         session.commit()
 
         sync_state.last_result = {
-            "status": "success",
+            "status": log.status,
             "survey": req.survey_name,
             "job_id": sync_log.id,
             "fetched": stats.total_fetched,

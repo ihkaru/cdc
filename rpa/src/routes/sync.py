@@ -25,6 +25,7 @@ def health():
 def status():
     # Get queued jobs — use existing session without reset/init every call
     queue = []
+    job_status = None
     try:
         session = get_session()
         queued = _get_queued_jobs(session)
@@ -44,6 +45,11 @@ def status():
                     "status": "queued",
                 }
             )
+
+        if sync_state.current_job_id:
+            active_job = session.query(SyncLog).get(sync_state.current_job_id)
+            if active_job:
+                job_status = active_job.status
         session.close()
     except:
         pass
@@ -58,6 +64,7 @@ def status():
         last_result=sync_state.last_result,
         queue=queue,
         progress=sync_state.progress.to_dict() if sync_state.is_running else None,
+        job_status=job_status,
     )
 
 
@@ -118,7 +125,7 @@ async def trigger_sync(req: SyncRequest, background_tasks: BackgroundTasks):
 
 @router.delete("/sync/{job_id}")
 async def cancel_job(job_id: int):
-    """Cancel a queued job."""
+    """Cancel a queued or running job."""
     reset_engine()
     init_db()
     session = get_session()
@@ -128,17 +135,38 @@ async def cancel_job(job_id: int):
         session.close()
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if job.status != "queued":
+    if job.status not in ["queued", "running", "stopping"]:
         session.close()
         raise HTTPException(status_code=400, detail=f"Cannot cancel job with status '{job.status}'")
 
-    job.status = "cancelled"
-    job.finished_at = datetime.now(timezone.utc)
-    job.notes = "Cancelled by user"
-    session.commit()
-    session.close()
+    if job.status == "stopping":
+        session.close()
+        return {"status": "stopping", "message": f"Penghentian job {job_id} sedang diproses..."}
 
-    return {"status": "cancelled", "message": f"Job {job_id} cancelled"}
+    if job.status == "queued":
+        job.status = "cancelled"
+        job.finished_at = datetime.now(timezone.utc)
+        job.notes = "Cancelled by user"
+        session.commit()
+        session.close()
+        return {"status": "cancelled", "message": f"Job {job_id} cancelled"}
+
+    # Handle running job
+    if job.status == "running":
+        if sync_state.current_job_id == job_id:
+            sync_state.stop_requested = True
+            job.status = "stopping"
+            job.notes = "Stop requested by user"
+            session.commit()
+            session.close()
+            return {"status": "stopping", "message": f"Penghentian job {job_id} sedang diproses..."}
+        else:
+            job.status = "cancelled"
+            job.finished_at = datetime.now(timezone.utc)
+            job.notes = "Cancelled (orphan job cleanup)"
+            session.commit()
+            session.close()
+            return {"status": "cancelled", "message": f"Orphan job {job_id} cleaned up."}
 
 
 from connectivity import check_fasih_reachable

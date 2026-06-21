@@ -110,11 +110,19 @@ class UltimateSyncEngine:
 
     async def _fetch_worker(self, assignment_id: str, semaphore: asyncio.Semaphore):
         """Fetch a single assignment detail using healthy sessions from the pool."""
+        if sync_state.stop_requested or sync_state.is_shutting_down:
+            await self.queue.put(None)
+            return
+
         async with semaphore:
-            if sync_state.is_shutting_down:
+            if sync_state.stop_requested or sync_state.is_shutting_down:
+                await self.queue.put(None)
                 return
 
             for attempt in range(4):
+                if sync_state.stop_requested or sync_state.is_shutting_down:
+                    await self.queue.put(None)
+                    return
                 # Filter out bad sessions
                 healthy_pool = [s for s in self.sessions_pool if s not in self.bad_sessions]
                 if not healthy_pool:
@@ -170,7 +178,7 @@ class UltimateSyncEngine:
         """Consumer that pulls data from queue and feeds the upserter."""
         count = 0
         while count < total_expected:
-            if sync_state.is_shutting_down:
+            if sync_state.stop_requested or sync_state.is_shutting_down:
                 break
 
             data = await self.queue.get()
@@ -217,6 +225,10 @@ class UltimateSyncEngine:
         relogin_attempts = 0
 
         while remaining_ids:
+            if sync_state.stop_requested or sync_state.is_shutting_down:
+                print("   🛑 Stop signal detected in run_sync. Exiting loop...")
+                break
+
             total_this_batch = len(remaining_ids)
             consumer = asyncio.create_task(self._db_consumer(upserter, total_this_batch))
 

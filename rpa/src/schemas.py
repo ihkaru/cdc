@@ -29,6 +29,7 @@ class StatusResponse(BaseModel):
     last_result: dict | None = None
     queue: list = []
     progress: dict | None = None
+    job_status: str | None = None
 
 
 class ProbeRequest(BaseModel):

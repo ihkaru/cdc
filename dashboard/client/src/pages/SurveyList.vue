@@ -39,14 +39,74 @@
     <!-- RPA Status Banner -->
     <q-banner
       v-if="rpaStatus.is_running"
-      class="bg-primary text-white q-mb-md rounded-borders"
+      class="bg-primary text-white q-mb-md rounded-borders relative-position overflow-hidden"
       rounded
+      style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%) !important; border: 1px solid #3b82f6;"
     >
       <template v-slot:avatar>
-        <q-spinner color="white" size="2em" />
+        <q-spinner-oval color="white" size="2.5em" />
       </template>
-      <div class="text-subtitle1 text-weight-bold">Sync sedang berjalan</div>
-      <div class="text-body2">Memproses: {{ rpaStatus.current_survey }}</div>
+      
+      <div class="row no-wrap items-center justify-between">
+        <div>
+          <div class="text-subtitle1 text-weight-bold row items-center q-gutter-x-sm">
+            <span>Sinkronisasi Sedang Berjalan</span>
+            <q-badge color="amber" text-color="dark" class="text-weight-bold" v-if="rpaStatus.progress?.phase_label">
+              {{ rpaStatus.progress.phase_label }}
+            </q-badge>
+          </div>
+          <div class="text-body2 text-blue-2 q-mt-xs">
+            Survey: <span class="text-white text-weight-medium">{{ rpaStatus.current_survey }}</span>
+          </div>
+        </div>
+        
+        <div>
+          <q-btn
+            color="negative"
+            :label="rpaStatus.job_status === 'stopping' ? 'Stopping...' : 'Stop Sync'"
+            icon="stop"
+            unelevated
+            class="q-px-md text-weight-bold"
+            style="border-radius: 6px;"
+            :loading="stoppingJobId === rpaStatus.current_job_id"
+            :disable="rpaStatus.job_status === 'stopping'"
+            @click="confirmStopSync(rpaStatus.current_job_id, rpaStatus.current_survey)"
+          />
+        </div>
+      </div>
+
+      <!-- Live progress bar based on active phase -->
+      <div class="q-mt-md" v-if="rpaStatus.progress">
+        <!-- If in fetch_assignments phase -->
+        <template v-if="rpaStatus.progress.users_total > 0 && (rpaStatus.progress.phase === 'fetch_assignments' || rpaStatus.progress.phase === 'fetch_users')">
+          <div class="row justify-between text-caption text-blue-2 q-mb-xs">
+            <span>Iterasi Petugas</span>
+            <span>{{ rpaStatus.progress.users_done }} / {{ rpaStatus.progress.users_total }}</span>
+          </div>
+          <q-linear-progress
+            :value="rpaStatus.progress.users_done / rpaStatus.progress.users_total"
+            color="amber"
+            track-color="blue-9"
+            size="6px"
+            rounded
+          />
+        </template>
+        
+        <!-- If in streaming_sync phase -->
+        <template v-else-if="rpaStatus.progress.assignments_total > 0 && rpaStatus.progress.phase === 'streaming_sync'">
+          <div class="row justify-between text-caption text-blue-2 q-mb-xs">
+            <span>Mengunduh Detail Assignment</span>
+            <span>{{ rpaStatus.progress.assignments_fetched }} / {{ rpaStatus.progress.assignments_total }}</span>
+          </div>
+          <q-linear-progress
+            :value="rpaStatus.progress.assignments_fetched / rpaStatus.progress.assignments_total"
+            color="positive"
+            track-color="blue-9"
+            size="6px"
+            rounded
+          />
+        </template>
+      </div>
     </q-banner>
 
     <!-- Queue Banner -->
@@ -155,7 +215,42 @@ const surveys = ref<any[]>([]);
 const loading = ref(true);
 const syncingId = ref<string | null>(null);
 const rpaStatus = ref<any>({});
+const stoppingJobId = ref<number | null>(null);
 let pollTimer: any = null;
+
+function confirmStopSync(jobId: number, surveyName: string) {
+	$q.dialog({
+		title: "Konfirmasi Penghentian",
+		message: `Apakah Anda yakin ingin menghentikan sinkronisasi untuk survey "${surveyName}"? Data yang sudah diunduh akan tetap disimpan.`,
+		persistent: true,
+		dark: true,
+		ok: {
+			label: "Stop",
+			color: "negative",
+			unelevated: true,
+		},
+		cancel: {
+			label: "Batal",
+			flat: true,
+			color: "white",
+		},
+	}).onOk(async () => {
+		stoppingJobId.value = jobId;
+		try {
+			const res = await api.delete(`/surveys/sync/${jobId}`);
+			$q.notify({
+				type: "info",
+				message: res.data.message || `Proses penghentian dikirim`,
+			});
+			refreshStatus();
+		} catch (e: any) {
+			const msg = e.response?.data?.detail || e.message || "Gagal menghentikan sinkronisasi";
+			$q.notify({ type: "negative", message: `Error: ${msg}` });
+		} finally {
+			stoppingJobId.value = null;
+		}
+	});
+}
 
 const filteredSurveys = computed(() => {
 	if (!searchQuery.value) return surveys.value;

@@ -22,9 +22,13 @@ async def _fetch_one(
     index: int = 0,
 ) -> tuple[dict, list[dict]]:
     """Fetch metadata 1 user, throttled by semaphore + jitter."""
+    if sync_state.stop_requested or sync_state.is_shutting_down:
+        return f, []
     jitter = random.uniform(0, min(index * 0.2, 2.0))
     await asyncio.sleep(jitter)
     async with semaphore:
+        if sync_state.stop_requested or sync_state.is_shutting_down:
+            return f, []
         try:
             results = await api_client.get_assignments_metadata(
                 period_id,
@@ -98,7 +102,7 @@ async def run_full_sync(
 
         # If capped at 1000, we must slice immediately
         if len(results) >= 1000 and parent_full_code:
-            if sync_state.is_shutting_down:
+            if sync_state.is_shutting_down or sync_state.stop_requested:
                 return
 
             print(f"   ⚠️  [CAP] {f_user.get('label')} hit {len(results)} limit. Diving into sub-regions...")
@@ -108,7 +112,7 @@ async def run_full_sync(
             if l3_list:
 
                 async def _slice_l3(l3):
-                    if sync_state.is_shutting_down:
+                    if sync_state.is_shutting_down or sync_state.stop_requested:
                         return {}
                     sub_f = f_user.copy()
                     sub_f["kec_uuid"] = l3.get("id")
@@ -118,12 +122,12 @@ async def run_full_sync(
                     )
                     local_map = {m.get("id"): m for m in sub_res if m.get("id")}
 
-                    if len(sub_res) >= 1000 and not sync_state.is_shutting_down:
+                    if len(sub_res) >= 1000 and not (sync_state.is_shutting_down or sync_state.stop_requested):
                         l4_list = await api_client.get_sub_regions(4, region_group_id, l3.get("fullCode"))
                         if l4_list:
 
                             async def _slice_l4(l4):
-                                if sync_state.is_shutting_down:
+                                if sync_state.is_shutting_down or sync_state.stop_requested:
                                     return {}
                                 sub_f4 = sub_f.copy()
                                 sub_f4["desa_uuid"] = l4.get("id")
@@ -150,8 +154,8 @@ async def run_full_sync(
         print(f"   {status} [{done_count}/{users_total}] {f_user.get('label', '?')}: {found_for_this_user} records")
 
     for coro in asyncio.as_completed(all_tasks):
-        if sync_state.is_shutting_down:
-            print("🛑 [FULL] Shutdown detected during metadata fetch.")
+        if sync_state.is_shutting_down or sync_state.stop_requested:
+            print("🛑 [FULL] Shutdown/Stop detected during metadata fetch.")
             break
         f, results = await coro
         await _handle_results(f, results)
@@ -172,7 +176,7 @@ async def run_full_sync(
     total_skipped = 0
 
     for m in unique_metadata:
-        if sync_state.is_shutting_down:
+        if sync_state.is_shutting_down or sync_state.stop_requested:
             break
         rec_id = m.get("id")
         api_val = m.get("dateModifiedRemote")
