@@ -3,12 +3,12 @@ import os
 import random
 from typing import Any
 
-from db.repository import BatchUpserterBulk, SyncStats, get_existing_modifications_by_ids_batched, normalize_bps_date
-from pages.detail_page import fetch_assignments_concurrent
+from db.repository import SyncStats, get_existing_modifications_by_ids_batched, normalize_bps_date
 from state import sync_state
+from worker.ultimate_engine import UltimateSyncEngine
 
 FASIH_CONCURRENCY = int(os.getenv("FASIH_CONCURRENCY", "1"))
-DETAIL_CONCURRENCY = int(os.getenv("FETCH_CONCURRENCY", "20"))
+DETAIL_CONCURRENCY = int(os.getenv("FETCH_CONCURRENCY", "50"))
 
 
 async def _fetch_one(
@@ -193,37 +193,42 @@ async def run_full_sync(
         stats.total_skipped = total_skipped
         return stats
 
-    # --- STEP 3 & 4: Streaming Fetch & Upsert ---
+    # --- STEP 3 & 4: Streaming Fetch & Bulk Upsert via UltimateSyncEngine (curl_cffi) ---
     sync_state.progress.phase = "streaming_sync"
     sync_state.progress.assignments_total = len(to_fetch_links)
     sync_state.progress.assignments_fetched = 0
 
-    upserter = BatchUpserterBulk(session, batch_size=500, sync_log_id=sync_log_id)
+    # Extract UUIDs directly — no need to build/parse URLs
+    assignment_ids = []
+    for url in to_fetch_links:
+        # URL format: {TARGET_URL}/assignment-detail/{UUID}/{survey_id}/1
+        parts = url.rstrip("/").split("/")
+        if len(parts) >= 2:
+            candidate = parts[-3]  # UUID is 3rd from end
+            import re
+
+            if re.match(r"^[a-f0-9\-]{36}$", candidate):
+                assignment_ids.append(candidate)
+
+    print(
+        f"   🚀 [UltimateSyncEngine] Fetching {len(assignment_ids):,} assignments "
+        f"via curl_cffi (concurrency={DETAIL_CONCURRENCY})..."
+    )
 
     try:
-
-        async def on_progress(fetched_count: int, total: int, data_json: dict | None):
-            sync_state.progress.assignments_fetched = fetched_count
-            sync_state.progress.phase_label = f"⬇️ Detail: {fetched_count}/{total} fetched..."
-            if data_json and not sync_state.is_shutting_down:
-                data_json["_survey_config_id"] = survey_config_id
-                await upserter.add_async(data_json)
-
-        await fetch_assignments_concurrent(
-            cookie_dict,
-            to_fetch_links,
-            concurrency=DETAIL_CONCURRENCY,
-            on_progress=on_progress,
+        engine = UltimateSyncEngine(
+            primary_cookies=cookie_dict,
+            survey_config_id=survey_config_id,
+            sync_log_id=sync_log_id,
             sso_username=sso_username,
             sso_password=sso_password,
         )
+        run_stats = await engine.run_sync(assignment_ids)
     except asyncio.CancelledError:
-        print("🛑 [FULL] Interrupted during streaming sync. Emergency flushing...")
-        upserter.emergency_flush()
+        print("🛑 [FULL] Interrupted during streaming sync.")
         raise
     finally:
-        # Final commit even if interrupted
-        stats = upserter.finish()
+        stats = run_stats if "run_stats" in dir() else SyncStats()
         stats.total_skipped += total_skipped
 
     print(

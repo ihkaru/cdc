@@ -1,8 +1,10 @@
 """
 Konfigurasi aplikasi — load dari file .env
 """
+
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
 from dotenv import load_dotenv
 
 # Load .env dari folder config/
@@ -31,7 +33,7 @@ class Settings:
     db_path: str = "data/fasih_sync.db"
     # Performance
     fetch_concurrency: int = 5
-    
+
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(

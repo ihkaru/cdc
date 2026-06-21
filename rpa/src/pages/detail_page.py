@@ -16,7 +16,7 @@ from api_client import FasihAuthError
 TARGET_URL = os.getenv("TARGET_URL", "https://fasih-sm.bps.go.id")
 API_BASE = f"{TARGET_URL}/app/api/assignment-general/api/assignment/get-by-assignment-id"
 MAX_RETRIES = 3
-RETRY_DELAY = 2  # seconds
+RETRY_DELAY = 0.3  # seconds — flat delay, not exponential (VPN latency ~5s already penalizes enough)
 
 
 def extract_assignment_id(detail_url: str) -> str | None:
@@ -137,7 +137,7 @@ async def _fetch_one(
                         if attempt < retries:
                             if session.closed:
                                 return None
-                            await asyncio.sleep(RETRY_DELAY * attempt)
+                            await asyncio.sleep(RETRY_DELAY)  # flat delay — not exponential
                             continue
                         return None
 
@@ -164,7 +164,7 @@ async def _fetch_one(
                     if attempt < retries:
                         if session.closed:
                             return None
-                        await asyncio.sleep(RETRY_DELAY * attempt)
+                        await asyncio.sleep(RETRY_DELAY)  # flat delay
                         continue
                     else:
                         return None
@@ -175,9 +175,10 @@ async def _fetch_one(
             except Exception as e:
                 if session.closed:
                     return None
-                print(f"   ❌ {assignment_id[:8]}... Exception: {e}")
+                # Print type+repr so empty-message exceptions (TimeoutError, ServerDisconnectedError) are visible
+                print(f"   ❌ {assignment_id[:8]}... {type(e).__name__}: {e!r}")
                 if attempt < retries:
-                    await asyncio.sleep(RETRY_DELAY * attempt)
+                    await asyncio.sleep(RETRY_DELAY)  # flat delay
                 else:
                     return None
 
@@ -297,9 +298,10 @@ async def fetch_assignments_concurrent(
         }
         try:
             # Short-lived check connection context
+            # Timeout 12s: BPS VPN latency regularly exceeds 5s — old timeout caused false-negative rejections
             connector = aiohttp.TCPConnector(ssl=ssl_ctx)
             async with aiohttp.ClientSession(cookies=c_dict, connector=connector) as test_sess:
-                async with test_sess.get(probe_url, headers=headers, timeout=5) as test_resp:
+                async with test_sess.get(probe_url, headers=headers, timeout=12) as test_resp:
                     # Expired session will redirect to Keycloak/SSO
                     if "oauth_login" in str(test_resp.url) or "sso.bps.go.id" in str(test_resp.url):
                         return False

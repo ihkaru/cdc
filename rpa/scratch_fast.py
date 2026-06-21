@@ -1,11 +1,12 @@
 import asyncio
+
 from playwright.async_api import async_playwright
+
 
 async def run():
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-http2']
+            headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-http2"]
         )
         page = await browser.new_page()
         print("Navigating...")
@@ -22,5 +23,6 @@ async def run():
             print(f"Error: {e}")
         await browser.close()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     asyncio.run(run())
