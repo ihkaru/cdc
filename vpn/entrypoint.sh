@@ -93,6 +93,7 @@ cleanup() {
     log "🛑 Caught termination signal! Shutting down..." "warn"
     pkill -x openconnect 2>/dev/null
     pkill -x openfortivpn 2>/dev/null
+    kill "$KEEPALIVE_PID" 2>/dev/null
     kill $(jobs -p) 2>/dev/null
     exit 0
 }
@@ -119,6 +120,44 @@ mtu_watchdog() {
 }
 
 mtu_watchdog &
+
+# 🔥 FortiGate Application-Level Keepalive (Golden Rule #14 Permanent Fix)
+# FortiGate BPS memiliki idle timeout 60 menit pada lapisan sesi aplikasi.
+# DPD hanya menjaga tunnel TCP tetap hidup, tapi FortiGate masih bisa
+# silently drop traffic HTTP jika tidak ada aktivitas di lapisan aplikasi.
+# Solusi: kirim HTTP GET ringan ke BPS setiap 45 detik saat tun0 UP.
+fortigate_keepalive() {
+    KEEPALIVE_URL="https://fasih-sm.bps.go.id/app/api/survey/api/v1/surveys/datatable?surveyType=&pageSize=1&pageNumber=0"
+    KEEPALIVE_INTERVAL=45  # seconds — well within FortiGate's 60-min idle timeout
+    log "🔥 FortiGate Application-Level Keepalive started (interval: ${KEEPALIVE_INTERVAL}s)" "info"
+    # Wait for VPN tunnel to come up before starting pings
+    for i in $(seq 1 60); do
+        if [ -d "/sys/class/net/tun0" ] || [ -d "/sys/class/net/ppp0" ]; then
+            break
+        fi
+        sleep 2
+    done
+    while true; do
+        sleep "$KEEPALIVE_INTERVAL"
+        VPN_IF=""
+        if [ -d "/sys/class/net/tun0" ]; then VPN_IF="tun0"; fi
+        if [ -z "$VPN_IF" ] && [ -d "/sys/class/net/ppp0" ]; then VPN_IF="ppp0"; fi
+        # Only send keepalive if VPN interface is UP
+        if [ -n "$VPN_IF" ]; then
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+                --interface "$VPN_IF" \
+                "$KEEPALIVE_URL" 2>/dev/null)
+            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
+                log "💓 FortiGate Keepalive OK (HTTP $HTTP_CODE via $VPN_IF)" "debug"
+            else
+                log "⚠️ FortiGate Keepalive degraded (HTTP $HTTP_CODE via $VPN_IF) — tunnel may be dying" "warn"
+            fi
+        fi
+    done
+}
+
+fortigate_keepalive &
+KEEPALIVE_PID=$!
 
 # Background Watcher: Monitors DB for cookie changes and triggers restart
 monitor_cookie_changes() {
