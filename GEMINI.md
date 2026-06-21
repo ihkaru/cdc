@@ -137,15 +137,14 @@ untuk **semua 8 role_id** pada survey SE 2026 — bahkan untuk `pageNumber: 0` (
 
 **Root cause**: BPS memvalidasi bahwa hasil query tidak akan melebihi page 100 sebelum eksekusi. Tanpa filter `regionCode` di payload, BPS menghitung scope nasional → ribuan halaman → langsung ditolak. Error ini di-*swallow* sebagai warning oleh `_request()` sehingga `pengawas_list = []` dan sistem fallback ke Wilayah Saja **tanpa error**.
 
-### C. `survey/api/v1/survey-period-role-users/region` — Return 0 untuk Role Admin/Viewer
+### C. `survey-user/api/v1/user-region/region` — Endpoint Petugas Lapangan yang Valid (Solved)
 
-Endpoint `/region` untuk fetch users per wilayah mengembalikan HTTP 200 tapi `data: []` karena `survey-roles?surveyId=...` mengembalikan role-role **admin dan viewer** (Viewer Pusat, Admin Pusat, Viewer Provinsi, dll.) — bukan role pengawas/pencacah lapangan.
+Endpoint `/region` lama (`survey/api/v1/survey-period-role-users/region`) atau datatable lama seringkali mengembalikan data kosong atau HTTP 400. Kita berhasil menemukan endpoint yang **100% valid dan stabil** untuk mendapatkan daftar Pengawas & Pencacah:
 
-- Role yang di-fetch: `Viewer Pusat`, `Admin Pusat`, `Viewer Provinsi`, `Admin Provinsi`, `Viewer Kabupaten`, dll.
-- Role-role ini tidak memiliki users di level wilayah → `/region` endpoint return kosong
-- Role pengawas/pencacah lapangan kemungkinan di-fetch via **endpoint atau parameter berbeda** yang belum ditemukan
-
-**Hipotesis yang harus diverifikasi**: Mungkin ada endpoint terpisah untuk fetch petugas lapangan, atau parameter tambahan di `/region` endpoint (mis. `roleType=FIELD`) yang belum digunakan.
+- **Endpoint:** `/app/api/survey-user/api/v1/user-region/region?surveyPeriodId={period_id}&surveyRoleId={role_id}`
+- **Metode:** `GET`
+- **Hasil:** Mengembalikan daftar lengkap petugas lapangan (mis. 1.342 Pengawas & 1.358 Pencacah untuk SE 2026) di bawah yurisdiksi akun SSO yang masuk. Setiap objek menyertakan `userId`, `username`, `email`, dan `smallestRegionCode` (seperti `'610408...'` untuk Mempawah).
+- **Pemfilteran:** Kita dapat menyaring secara lokal menggunakan `smallestRegionCode.startswith(region_code)` untuk mencocokkan dengan filter regional pilihan (seperti `'6104'` untuk Mempawah).
 
 ### D. Period ID Berbeda antara Endpoint
 
@@ -155,10 +154,17 @@ Endpoint `/region` untuk fetch users per wilayah mengembalikan HTTP 200 tapi `da
 - `37526b20` → period yang digunakan sync 380 menit (sebelum Zombie Guard kill)
 - Endpoint `survey/api/v1/survey-period-roles?surveyPeriodId=...` return **HTTP 404** untuk period baru — endpoint ini tidak valid, jangan gunakan
 
-### E. Kesimpulan: Strategi yang Benar untuk Dataset >10k
+### E. BPS WAF Concurrency Limit & Parallel Throttling (Solved)
 
-Untuk mengambil semua ~108k assignment SE 2026:
-1. **WAJIB** dapatkan daftar pengawas/pencacah lapangan via API yang benar (masih perlu investigasi endpoint-nya)
-2. Fan-out: query `datatable-all-user-survey-periode` dengan `currentUserId` per-pengawas
-3. Setiap subset per-pengawas harus < 10,000 agar tidak kena cap
-4. Union semua hasil → deduplikasi by ID → fetch detail → upsert
+BPS menggunakan **F5 BIG-IP WAF** yang sangat sensitif terhadap ledakan request HTTP concurrent yang dikirimkan secara serentak dari alamat IP yang sama. 
+- **Masalah:** Mengambil metadata assignment untuk total data besar (seperti "Wilayah Saja" dengan 10.000 data) meluncurkan 49 request `POST` datatable secara paralel tanpa jeda. Ini memicu proteksi firewall BPS, menyebabkan redirect instan ke halaman login Keycloak dan memicu `FasihAuthError: Session expired`.
+- **Solusi:** Menambahkan **Throttling & Jitter** pada function `get_assignments_metadata`. Kita membatasi request concurrent menggunakan `asyncio.Semaphore(5)` dan menyisipkan jeda acak (`asyncio.sleep(random.uniform(0.1, 0.5))`) di setiap request halaman. Hal ini terbukti aman dan menjaga session cookie tetap aktif.
+
+### F. Kesimpulan: Strategi yang Benar untuk Dataset >10k (Solved & Implemented)
+
+Untuk mengambil seluruh ~108k assignment SE 2026 secara lengkap:
+1. **Dapatkan Daftar Petugas:** Panggil `/app/api/survey-user/api/v1/user-region/region` untuk mengambil seluruh ID Pengawas (atau Pencacah) yang berada di wilayah target.
+2. **Filter & Slicing Per-User:** Filter list user secara lokal agar hanya memproses petugas yang berada di dalam lingkup wilayah (mis. Mempawah `6104`).
+3. **Metadata Loop (Sequential Throttling):** Iterasi metadata assignment per-petugas dengan `FASIH_CONCURRENCY=1` (berurutan) agar tidak membebani server BPS.
+4. **Smart Region Slicing (Auto-Fallback):** Jika satu user memiliki $\ge 1.000$ data (karena cap pagination BPS berada di angka 1.000), sistem otomatis membagi pencarian ke sub-wilayah (Kecamatan/Desa) secara dinamis hingga setiap hasil query $< 1.000$.
+5. **Deduplikasi & Fetch:** Gabungkan seluruh ID assignment hasil pemindaian, hapus duplikatnya, lalu lakukan konkurensi fetch detail kuesioner ke DB PostgreSQL.
