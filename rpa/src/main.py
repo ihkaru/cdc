@@ -200,8 +200,14 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
         print(f"   📊 Ditemukan {len(metadata)} entries ({f['label']}).")
         return metadata
 
-    # Fetch all user metadata in parallel
-    metadata_results = await asyncio.gather(*(fetch_user_metadata(f) for f in filters_to_run))
+    # Fetch all user metadata in parallel (throttled to avoid WAF session deaths)
+    sem = asyncio.Semaphore(1)
+
+    async def fetch_user_metadata_throttled(f):
+        async with sem:
+            return await fetch_user_metadata(f)
+
+    metadata_results = await asyncio.gather(*(fetch_user_metadata_throttled(f) for f in filters_to_run))
     for metadata in metadata_results:
         for m in metadata:
             all_metadata_map[m["id"]] = m

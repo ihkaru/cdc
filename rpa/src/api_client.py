@@ -440,6 +440,47 @@ class FasihApiClient:
             else:
                 pengawas_list.append(entry)
 
+        # Coba cara baru dulu: /app/api/survey-user/api/v1/user-region/region
+        try:
+            print("   👥 [API] Mengambil daftar petugas via endpoint user-region/region...")
+            for role_id in role_ids:
+                path = f"survey-user/api/v1/user-region/region?surveyPeriodId={period_id}&surveyRoleId={role_id}"
+                body = await self._request("GET", path)
+                if body and body.get("success") and body.get("data") is not None:
+                    for item in body["data"]:
+                        # Filter by region code if provided
+                        smallest_code = item.get("smallestRegionCode")
+                        if region_code and smallest_code and not smallest_code.startswith(region_code):
+                            continue
+
+                        role_info = item.get("surveyRole", {})
+                        is_pencacah = role_info.get("isPencacah", False)
+
+                        # Generate name fallbacks
+                        email = item.get("email") or ""
+                        username = item.get("username") or email
+                        fullname = username.split("@")[0].title() if username else "Petugas Lapangan"
+
+                        flat = {
+                            "userId": item.get("userId"),
+                            "fullname": fullname,
+                            "username": username,
+                            "description": role_info.get("description", ""),
+                            "isPencacah": is_pencacah,
+                        }
+                        _add_user(flat, is_pencacah)
+
+            # Jika berhasil menemukan user, kembalikan langsung
+            if pengawas_list or pencacah_list:
+                print(
+                    f"   ✅ [API] Ditemukan {len(pengawas_list)} pengawas, {len(pencacah_list)} pencacah via endpoint baru."
+                )
+                return pengawas_list, pencacah_list
+        except Exception as e:
+            print(f"   ⚠️ [API] Gagal menggunakan endpoint user-region/region: {e}. Melakukan fallback...")
+
+        # --- FALLBACK KE METODE LAMA ---
+        print("   ⚠️ [API] Melakukan fallback ke endpoint/datatable lama...")
         for role_id in role_ids:
             path = f"survey/api/v1/survey-period-role-users/region?surveyPeriodId={period_id}&surveyRoleId={role_id}&regionCode={region_code}"
             body = await self._request("GET", path)
@@ -548,13 +589,19 @@ class FasihApiClient:
         if total_records <= page_size:
             return all_metadata
 
-        # 2. Fetch remaining pages in parallel
+        # 2. Fetch remaining pages in parallel (throttled to avoid BPS WAF rate limiting/session deaths)
         offsets = range(page_size, total_records, page_size)
-        print(f"   📡 Launching {len(offsets)} parallel metadata requests...")
+        print(f"   📡 Launching {len(offsets)} parallel metadata requests (throttled)...")
+
+        sem = asyncio.Semaphore(5)
 
         async def _fetch_page(offset):
-            body = await self._request("POST", path, json=_build_payload(offset))
-            return _parse_data(body) if body else []
+            import random
+
+            async with sem:
+                await asyncio.sleep(random.uniform(0.1, 0.5))
+                body = await self._request("POST", path, json=_build_payload(offset))
+                return _parse_data(body) if body else []
 
         results = await asyncio.gather(*(_fetch_page(o) for o in offsets))
         for res in results:
