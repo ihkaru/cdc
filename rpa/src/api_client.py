@@ -290,6 +290,46 @@ class FasihApiClient:
 
         print(f"   ✅ [API] Period: {period_id}, {len(role_ids)} roles, group: {role_group_id}")
         return period_id, role_ids, role_group_id
+
+    @with_retry()
+    async def get_analytic_assignment_count(
+        self, period_id: str, region1_id: str | None = None, region2_id: str | None = None
+    ) -> int:
+        """Mendapatkan total assignments yang ditargetkan di remote FASIH-SM."""
+        print(f"   📊 [API] Menghitung total target assignment di remote (Period: {period_id[:8]}...)...")
+        path = "analytic/api/v2/assignment/report-progress-assignment"
+        payload = {
+            "region1Id": region1_id,
+            "region2Id": region2_id,
+            "surveyPeriodId": period_id,
+            "assignmentStatusAlias": None,
+            "assignmentErrorStatusType": -1,
+            "data1": None,
+            "data2": None,
+            "data3": None,
+            "data4": None,
+            "data5": None,
+            "data6": None,
+            "data7": None,
+            "data8": None,
+            "data9": None,
+            "data10": None,
+            "currentUserId": None,
+            "userIdResponsibility": None,
+            "filterTargetType": "TARGET_ONLY",
+        }
+        body = await self._request("POST", path, json=payload)
+        try:
+            if body and isinstance(body, list) and len(body) > 0:
+                values = body[0].get("values", [])
+                for val in values:
+                    if val.get("label") == "total":
+                        count = int(val.get("value", 0))
+                        print(f"   ✅ [API] Remote Target Count: {count}")
+                        return count
+        except Exception as e:
+            print(f"   ⚠️ [API] Gagal mengurai jumlah analytic count: {e}")
+        return 0
         return None, [], None
 
     @with_retry()

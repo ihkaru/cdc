@@ -2,10 +2,10 @@
 
 import { DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
-import { eq, ilike, inArray, or } from "drizzle-orm";
+import { desc, eq, ilike, inArray, or } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../db";
-import { assignments, surveyConfigs } from "../db/schema";
+import { assignments, surveyConfigs, syncLogs } from "../db/schema";
 import { s3Client } from "./storage";
 
 function getEncryptionKey(): Buffer {
@@ -54,12 +54,25 @@ export const surveysRoutes = new Elysia({ prefix: "/api/surveys" })
 		}
 
 		const rows = await dbQuery;
-		return rows
-			.filter((r) => !r.surveyName.startsWith("[DELETING]"))
-			.map((r) => ({
-				...r,
-				ssoPasswordEncrypted: undefined, // Never expose password
-			}));
+		const results = await Promise.all(
+			rows
+				.filter((r) => !r.surveyName.startsWith("[DELETING]"))
+				.map(async (r) => {
+					const [latestLog] = await db
+						.select()
+						.from(syncLogs)
+						.where(eq(syncLogs.surveyConfigId, r.id))
+						.orderBy(desc(syncLogs.startedAt))
+						.limit(1);
+
+					return {
+						...r,
+						ssoPasswordEncrypted: undefined,
+						latestLog: latestLog || null,
+					};
+				}),
+		);
+		return results;
 	})
 
 	// Get single survey

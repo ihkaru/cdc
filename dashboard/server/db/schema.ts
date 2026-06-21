@@ -73,6 +73,7 @@ export const syncLogs = pgTable(
 		totalFailed: integer("total_failed").default(0),
 		totalImages: integer("total_images").default(0),
 		imagesMirrored: integer("images_mirrored").default(0),
+		totalTargetRemote: integer("total_target_remote").default(0),
 		status: text("status").default("running"),
 		notes: text("notes"),
 		timings: jsonb("timings"),

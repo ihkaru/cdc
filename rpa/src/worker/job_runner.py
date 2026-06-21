@@ -114,6 +114,21 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                         req.filter_provinsi, req.filter_kabupaten, survey_id
                     )
 
+                    # Fetch initial total remote target count
+                    total_target_remote = 0
+                    try:
+                        total_target_remote = await api.get_analytic_assignment_count(
+                            period_id, prov_uuid, region_filter
+                        )
+                        log = session.query(SyncLog).get(sync_log.id)
+                        log.total_target_remote = total_target_remote
+                        session.commit()
+
+                        if total_target_remote > 0:
+                            sync_state.progress.assignments_total = total_target_remote
+                    except Exception as count_e:
+                        print(f"   ⚠️ Warning: Gagal mendapatkan remote target count awal: {count_e}")
+
                     # Safety Gate: Jika provinsi diisi tapi tidak ketemu di API, jangan lanjut.
                     if req.filter_provinsi and not prov_uuid:
                         raise Exception(
@@ -210,6 +225,15 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
 
                     stats = run_stats
 
+                    # Fetch final total remote target count before closing API client
+                    final_target_remote = 0
+                    try:
+                        final_target_remote = await api.get_analytic_assignment_count(
+                            period_id, prov_uuid, region_filter
+                        )
+                    except Exception as count_e:
+                        print(f"   ⚠️ Warning: Gagal mendapatkan remote target count akhir: {count_e}")
+
             finally:
                 if "browser" in locals() and browser:
                     await browser.close()
@@ -263,6 +287,14 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
         log.total_images = total_images_in_run
         log.images_mirrored = 0  # Will be updated by archiver in background
 
+        # Assign final remote target count (fallback to initial if final failed)
+        final_target = 0
+        if "final_target_remote" in locals() and final_target_remote > 0:
+            final_target = final_target_remote
+        elif "total_target_remote" in locals() and total_target_remote > 0:
+            final_target = total_target_remote
+        log.total_target_remote = final_target
+
         if sync_state.stop_requested:
             if stats.total_fetched > 0:
                 log.status = "partial"
@@ -271,7 +303,13 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                 log.status = "cancelled"
                 log.notes = "Stopped by user"
         else:
-            log.status = "success"
+            # Check for data integrity mismatch (incomplete sync)
+            actual_fetched = (stats.total_fetched or 0) + (stats.total_skipped or 0)
+            if final_target > 0 and actual_fetched < final_target:
+                log.status = "partial"
+                log.notes = f"Selesai dengan selisih data (BPS: {final_target}, Lokal: {actual_fetched})"
+            else:
+                log.status = "success"
         session.commit()
 
         sync_state.last_result = {

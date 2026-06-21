@@ -151,10 +151,15 @@
         <q-card class="bg-dark text-white border-card my-card transition-hover" flat bordered>
           <q-card-section>
             <div class="row justify-between items-start q-mb-sm">
-              <div class="text-h6 text-weight-bold ellipsis" style="max-width: 70%">{{ s.surveyName }}</div>
-              <q-badge :color="s.isActive ? 'positive' : 'grey-8'" rounded class="q-px-sm q-py-xs">
-                {{ s.isActive ? 'Active' : 'Inactive' }}
-              </q-badge>
+              <div class="text-h6 text-weight-bold ellipsis" style="max-width: 60%">{{ s.surveyName }}</div>
+              <div class="row q-gutter-x-xs">
+                <q-badge v-if="isSurveyIncomplete(s)" color="warning" text-color="dark" rounded class="q-px-sm q-py-xs text-weight-bold">
+                  Incomplete
+                </q-badge>
+                <q-badge :color="s.isActive ? 'positive' : 'grey-8'" rounded class="q-px-sm q-py-xs">
+                  {{ s.isActive ? 'Active' : 'Inactive' }}
+                </q-badge>
+              </div>
             </div>
             
             <q-list dense class="text-grey-4">
@@ -180,6 +185,7 @@
               <q-btn 
                 class="col"
                 :color="getSyncButtonColor(s.id)"
+                :text-color="getSyncButtonTextColor(s.id)"
                 :label="getSyncButtonLabel(s.id)" 
                 :loading="syncingId === s.id"
                 :disable="syncingId === s.id || isJobActive(s.id) || !vpnStatus?.connected"
@@ -299,13 +305,51 @@ function isJobActive(surveyId: string): boolean {
 	return false;
 }
 
+function isSurveyIncomplete(survey: any): boolean {
+	if (!survey.latestLog) return false;
+	const log = survey.latestLog;
+	if (log.status === "partial") return true;
+	const totalFetched = log.totalFetched || 0;
+	const totalSkipped = log.totalSkipped || 0;
+	const totalTargetRemote = log.totalTargetRemote || 0;
+	return totalTargetRemote > 0 && totalFetched + totalSkipped < totalTargetRemote;
+}
+
 function getSyncButtonColor(surveyId: string): string {
+	const s = surveys.value.find((survey) => survey.id === surveyId);
+	if (
+		s &&
+		isSurveyIncomplete(s) &&
+		!isJobActive(surveyId) &&
+		syncingId.value !== surveyId &&
+		!rpaStatus.value.is_running
+	) {
+		return "warning";
+	}
 	return "primary";
+}
+
+function getSyncButtonTextColor(surveyId: string): string {
+	const s = surveys.value.find((survey) => survey.id === surveyId);
+	if (
+		s &&
+		isSurveyIncomplete(s) &&
+		!isJobActive(surveyId) &&
+		syncingId.value !== surveyId &&
+		!rpaStatus.value.is_running
+	) {
+		return "dark";
+	}
+	return "white";
 }
 
 function getSyncButtonLabel(surveyId: string): string {
 	if (syncingId.value === surveyId) return "Queueing...";
 	if (rpaStatus.value.is_running) return "Queue Sync";
+	const s = surveys.value.find((survey) => survey.id === surveyId);
+	if (s && isSurveyIncomplete(s)) {
+		return "Resume Sync";
+	}
 	return "Sync Now";
 }
 

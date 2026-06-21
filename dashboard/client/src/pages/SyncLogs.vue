@@ -206,8 +206,8 @@
         <q-item v-for="log in logs" :key="log.id" class="q-py-md">
           <q-item-section avatar>
             <q-icon 
-              :name="statusIcon(log.status)" 
-              :color="statusColor(log.status)" 
+              :name="statusIcon(log)" 
+              :color="statusColor(log)" 
               size="md" 
               :class="log.status === 'running' ? 'rotate-anim' : ''"
             />
@@ -218,7 +218,8 @@
               {{ formatDate(log.startedAt) }}
               <q-badge v-if="log.status === 'running'" color="primary" class="q-ml-sm">Running</q-badge>
               <q-badge v-if="log.status === 'queued'" color="grey" class="q-ml-sm">Queued</q-badge>
-              <q-badge v-if="log.status === 'partial'" color="warning" text-color="dark" class="q-ml-sm text-weight-bold">Partial</q-badge>
+              <q-badge v-if="isLogPartialOrIncomplete(log)" color="warning" text-color="dark" class="q-ml-sm text-weight-bold">Incomplete</q-badge>
+              <q-badge v-if="log.status === 'success' && !isLogPartialOrIncomplete(log)" color="positive" class="q-ml-sm">Success</q-badge>
               <q-badge v-if="log.status === 'cancelled'" color="orange-8" class="q-ml-sm">Cancelled</q-badge>
             </q-item-label>
             <q-item-label caption class="text-grey-4">
@@ -274,6 +275,32 @@
                   <div class="text-caption text-grey">Skip</div>
                   <div class="text-weight-bold text-grey-4">{{ log.totalSkipped }}</div>
                 </div>
+              </div>
+
+              <!-- Vertical Separator -->
+              <div style="width: 1px; height: 30px; background: #333"></div>
+
+              <!-- Sync Progress Ratio -->
+              <div style="min-width: 140px">
+                <div class="row items-center justify-between q-mb-xs">
+                  <div class="text-caption text-grey">🎯 Synced</div>
+                  <div class="text-caption text-weight-bold text-white">
+                    <template v-if="log.totalTargetRemote > 0">
+                      {{ (log.totalFetched || 0) + (log.totalSkipped || 0) }} / {{ log.totalTargetRemote }}
+                    </template>
+                    <template v-else>
+                      -
+                    </template>
+                  </div>
+                </div>
+                <q-linear-progress
+                  v-if="log.totalTargetRemote > 0"
+                  :value="Math.min(1, ((log.totalFetched || 0) + (log.totalSkipped || 0)) / log.totalTargetRemote)"
+                  :color="getSyncRatioColor(log)"
+                  track-color="grey-10"
+                  rounded
+                  size="6px"
+                />
               </div>
 
               <!-- Vertical Separator -->
@@ -424,7 +451,28 @@ function calculateDuration(start: string, end: string) {
 	return `${Math.floor(sec / 60)}m ${sec % 60}s`;
 }
 
-function statusIcon(status: string) {
+function isLogPartialOrIncomplete(log: any): boolean {
+	if (log.status === "partial") return true;
+	if (log.status === "success") {
+		const totalFetched = log.totalFetched || 0;
+		const totalSkipped = log.totalSkipped || 0;
+		const totalTargetRemote = log.totalTargetRemote || 0;
+		return totalTargetRemote > 0 && totalFetched + totalSkipped < totalTargetRemote;
+	}
+	return false;
+}
+
+function getSyncRatioColor(log: any): string {
+	const current = (log.totalFetched || 0) + (log.totalSkipped || 0);
+	if (log.totalTargetRemote > 0 && current >= log.totalTargetRemote) {
+		return "positive";
+	}
+	return "warning";
+}
+
+function statusIcon(log: any) {
+	if (isLogPartialOrIncomplete(log)) return "warning";
+	const status = log.status;
 	if (status === "success") return "check_circle";
 	if (status === "running") return "sync";
 	if (status === "queued") return "hourglass_empty";
@@ -433,7 +481,9 @@ function statusIcon(status: string) {
 	return "error";
 }
 
-function statusColor(status: string) {
+function statusColor(log: any) {
+	if (isLogPartialOrIncomplete(log)) return "warning";
+	const status = log.status;
 	if (status === "success") return "positive";
 	if (status === "running") return "primary";
 	if (status === "queued") return "grey";

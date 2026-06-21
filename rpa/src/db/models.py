@@ -97,6 +97,7 @@ class SyncLog(Base):
     total_failed = Column(Integer, default=0)
     total_images = Column(Integer, default=0)
     images_mirrored = Column(Integer, default=0)
+    total_target_remote = Column(Integer, default=0)
     status = Column(String, default="running")
     notes = Column(Text)
     timings = Column(JSON, comment="Phase durations in ms")
