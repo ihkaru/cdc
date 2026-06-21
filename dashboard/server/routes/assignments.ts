@@ -374,16 +374,41 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
 				}
 			}
 
-			// Retrieve the latest totalTargetRemote and bpsProgress snapshot
+			// Retrieve the latest totalTargetRemote, totalScopeMetadata and bpsProgress snapshot.
+			// We fetch two logs:
+			// 1. Latest log overall (for totalTargetRemote + totalScopeMetadata)
+			// 2. Latest log with bpsProgress != null (in case latest sync failed before analytics fetch)
 			const [latestLog] = await db
 				.select({
 					totalTargetRemote: syncLogs.totalTargetRemote,
+					totalScopeMetadata: syncLogs.totalScopeMetadata,
 					bpsProgress: syncLogs.bpsProgress,
+					status: syncLogs.status,
 				})
 				.from(syncLogs)
 				.where(eq(syncLogs.surveyConfigId, params.id))
 				.orderBy(desc(syncLogs.startedAt))
 				.limit(1);
+
+			// Find the most recent log that actually has bpsProgress data
+			// (the latest log might have failed before calling the analytics API)
+			let bpsProgressData = latestLog ? (latestLog.bpsProgress as any) : null;
+			if (!bpsProgressData) {
+				const [logWithProgress] = await db
+					.select({
+						bpsProgress: syncLogs.bpsProgress,
+						totalTargetRemote: syncLogs.totalTargetRemote,
+					})
+					.from(syncLogs)
+					.where(
+						and(eq(syncLogs.surveyConfigId, params.id), sql`${syncLogs.bpsProgress} IS NOT NULL`),
+					)
+					.orderBy(desc(syncLogs.startedAt))
+					.limit(1);
+				if (logWithProgress) {
+					bpsProgressData = logWithProgress.bpsProgress as any;
+				}
+			}
 
 			return {
 				total,
@@ -392,11 +417,21 @@ export const assignmentsRoutes = new Elysia({ prefix: "/api/surveys" })
 				rejected,
 				breakdown,
 				totalTargetRemote: latestLog ? Number(latestLog.totalTargetRemote || 0) : 0,
-				bpsProgress: latestLog ? (latestLog.bpsProgress as any) : null,
+				totalScopeMetadata: latestLog ? Number(latestLog.totalScopeMetadata || 0) : 0,
+				syncStatus: latestLog?.status || null,
+				bpsProgress: bpsProgressData,
 			};
 		} catch (error) {
 			console.error(`Error fetching stats for survey ${params.id}:`, error);
-			return { total: 0, open: 0, submitted: 0, rejected: 0, breakdown: [], totalTargetRemote: 0 };
+			return {
+				total: 0,
+				open: 0,
+				submitted: 0,
+				rejected: 0,
+				breakdown: [],
+				totalTargetRemote: 0,
+				totalScopeMetadata: 0,
+			};
 		}
 	})
 

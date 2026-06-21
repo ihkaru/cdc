@@ -180,6 +180,34 @@ export const syncRoutes = new Elysia({ prefix: "/api/surveys" })
 		}
 	})
 
+	// Refresh analytics (totalTargetRemote + bpsProgress) from BPS API
+	.post("/:id/analytics/refresh", async (ctx: any) => {
+		const { params, set } = ctx;
+		const traceId = ctx.traceId || "no-trace";
+		const log = ctx.log || logger.child({ traceId });
+		try {
+			log.info("Refreshing analytics from BPS API", { survey_id: params.id });
+			const response = await fetch(`${RPA_URL}/analytics/refresh/${params.id}`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"X-Trace-ID": traceId,
+				},
+				signal: AbortSignal.timeout(60000),
+			});
+			if (!response.ok) {
+				const err = await response.json().catch(() => ({}));
+				set.status = response.status;
+				return { error: (err as any).detail || `RPA error ${response.status}` };
+			}
+			return await response.json();
+		} catch (e: any) {
+			log.error("Failed to refresh analytics", { error: e.message });
+			set.status = 503;
+			return { error: `RPA service unavailable: ${e.message}` };
+		}
+	})
+
 	// Update VPN cookie (store in PostgreSQL for VPN container to read)
 	.post("/vpn/cookie", async ({ body, set }) => {
 		const { cookie } = body as { cookie: string };

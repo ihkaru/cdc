@@ -114,12 +114,21 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                         req.filter_provinsi, req.filter_kabupaten, survey_id
                     )
 
-                    # Fetch initial total remote target count
+                    # If config filters are empty, try auto-resolving from SSO profile
+                    target_prov_uuid = prov_uuid
+                    target_kab_uuid = region_filter
+                    if not req.filter_provinsi:
+                        sso_prov_uuid, sso_kab_uuid, _ = await api.get_sso_user_regions(period_id, survey_id)
+                        if sso_prov_uuid:
+                            target_prov_uuid = sso_prov_uuid
+                            target_kab_uuid = sso_kab_uuid
+
+                    # Fetch initial total remote target count (filtered by config or resolved SSO scope)
                     total_target_remote = 0
                     bps_progress_data = None
                     try:
                         total_target_remote, bps_progress_data = await api.get_analytic_assignment_count(
-                            period_id, prov_uuid, region_filter
+                            period_id, target_prov_uuid, target_kab_uuid
                         )
                         log = session.query(SyncLog).get(sync_log.id)
                         log.total_target_remote = total_target_remote
@@ -232,7 +241,7 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                     final_bps_progress = None
                     try:
                         final_target_remote, final_bps_progress = await api.get_analytic_assignment_count(
-                            period_id, prov_uuid, region_filter
+                            period_id, target_prov_uuid, target_kab_uuid
                         )
                     except Exception as count_e:
                         print(f"   ⚠️ Warning: Gagal mendapatkan remote target count akhir: {count_e}")
@@ -301,6 +310,9 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
             final_progress = bps_progress_data
         log.total_target_remote = final_target
         log.bps_progress = final_progress
+        # Save actual scope count (how many assignments this sync was configured to handle)
+        scope_count = getattr(stats, "total_scope_metadata", 0)
+        log.total_scope_metadata = scope_count
 
         if sync_state.stop_requested:
             if stats.total_fetched > 0:
@@ -310,13 +322,21 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                 log.status = "cancelled"
                 log.notes = "Stopped by user"
         else:
-            # Check for data integrity mismatch (incomplete sync)
+            # Integrity check: compare actual fetched+skipped vs SCOPE (not national total).
+            # total_scope_metadata = assignments within this sync's filter region/users.
+            # total_target_remote = BPS national total (used for dashboard context only).
             actual_fetched = (stats.total_fetched or 0) + (stats.total_skipped or 0)
-            if final_target > 0 and actual_fetched < final_target:
+            if scope_count > 0 and actual_fetched < scope_count:
+                # We found more in scope than we actually processed — incomplete sync
                 log.status = "partial"
-                log.notes = f"Selesai dengan selisih data (BPS: {final_target}, Lokal: {actual_fetched})"
+                log.notes = (
+                    f"Selesai dengan selisih data scope (Scope: {scope_count:,}, Lokal: {actual_fetched:,}). "
+                    f"BPS Remote: {final_target:,}"
+                )
             else:
                 log.status = "success"
+                if final_target > 0:
+                    log.notes = f"Sinkronisasi selesai. BPS Remote: {final_target:,} total assignment."
         session.commit()
 
         sync_state.last_result = {

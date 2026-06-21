@@ -24,6 +24,17 @@
           no-caps
         />
         <q-btn
+          color="blue-grey-7"
+          icon="refresh"
+          label="Refresh Analytics"
+          @click="refreshAnalytics"
+          :loading="refreshingAnalytics"
+          unelevated
+          no-caps
+        >
+          <q-tooltip>Ambil ulang angka total & status dari BPS (tanpa sync penuh)</q-tooltip>
+        </q-btn>
+        <q-btn
           color="teal"
           icon="download"
           label="Download Template"
@@ -54,17 +65,46 @@
       </div>
     </div>
 
-    <!-- Integrity Warning Banner -->
+    <!-- Integrity Warning Banner: scope-based (not national total) -->
+    <!-- Shows when we've fetched less than the scope we were supposed to sync -->
     <q-banner
-      v-if="stats && stats.totalTargetRemote > 0 && stats.total < stats.totalTargetRemote"
+      v-if="scopeCompletionPct !== null && scopeCompletionPct < 100"
       class="bg-warning text-dark q-mb-lg rounded-borders text-weight-medium"
       style="border: 1px solid #f2c037; border-radius: 8px;"
     >
       <template v-slot:avatar>
         <q-icon name="warning" color="dark" />
       </template>
-      Sinkronisasi data lokal belum lengkap. Baru menyinkronkan {{ stats.total.toLocaleString('id-ID') }} dari total {{ stats.totalTargetRemote.toLocaleString('id-ID') }} assignments di remote BPS ({{ ((stats.total / stats.totalTargetRemote) * 100).toFixed(1) }}%).
-      Beberapa data mungkin berbeda atau belum muncul di tabel bawah.
+      <span>
+        Sinkronisasi belum lengkap dalam lingkup konfigurasi ini.
+        Tersinkronisasi <b>{{ stats.total.toLocaleString('id-ID') }}</b> dari
+        <b>{{ stats.totalScopeMetadata.toLocaleString('id-ID') }}</b> assignment dalam lingkup sync
+        (<b>{{ scopeCompletionPct }}%</b>). Jalankan sync lagi untuk melengkapi data.
+      </span>
+    </q-banner>
+
+    <!-- BPS National Context Banner (info only — not a warning) -->
+    <q-banner
+      v-if="stats && stats.totalTargetRemote > 0"
+      class="text-white q-mb-lg rounded-borders"
+      style="background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.25); border-radius: 8px;"
+      dense
+    >
+      <template v-slot:avatar>
+        <q-icon name="public" color="blue-4" size="sm" />
+      </template>
+      <span class="text-caption text-grey-4">
+        Total Target BPS: <b class="text-blue-3">{{ stats.totalTargetRemote.toLocaleString('id-ID') }}</b> assignment
+        <span v-if="stats.totalScopeMetadata > 0">
+          · Lingkup sync konfigurasi ini: <b class="text-white">{{ stats.totalScopeMetadata.toLocaleString('id-ID') }}</b>
+        </span>
+        <span v-if="stats.bpsProgress && stats.bpsProgress.length > 0">
+          · Data diperbarui dari BPS
+        </span>
+      </span>
+      <template v-slot:action>
+        <q-btn flat dense no-caps color="blue-4" label="Refresh" icon="sync" size="sm" @click="refreshAnalytics" :loading="refreshingAnalytics" />
+      </template>
     </q-banner>
 
     <!-- Stats Banner -->
@@ -103,10 +143,10 @@
             <template v-if="stats.bpsProgress && stats.bpsProgress.length > 0">
               <span>Lokal: <b>{{ submittedPercent }}%</b></span>
               <span class="text-grey-6">•</span>
-              <span>{{ stats.total.toLocaleString('id-ID') }} / {{ stats.totalTargetRemote.toLocaleString('id-ID') }} Data</span>
+              <span>{{ stats.total.toLocaleString('id-ID') }} / {{ stats.totalTargetRemote.toLocaleString('id-ID') }} (Target BPS)</span>
             </template>
             <template v-else>
-              <span>{{ stats.total.toLocaleString('id-ID') }} Total Assignment</span>
+              <span>{{ stats.total.toLocaleString('id-ID') }} Tersinkronisasi</span>
             </template>
           </div>
           
@@ -128,8 +168,11 @@
         <div class="row q-col-gutter-md">
           <div class="col-6 col-sm-6">
             <q-card class="bg-dark border-card text-center q-pa-md" flat bordered>
-              <div class="text-grey-5 text-uppercase text-caption">Total Assignments</div>
+              <div class="text-grey-5 text-uppercase text-caption">Tersinkronisasi</div>
               <div class="text-h4 text-weight-bold text-white">{{ stats.total.toLocaleString('id-ID') }}</div>
+              <div v-if="stats.totalScopeMetadata > 0" class="text-caption text-grey-6 q-mt-xs">
+                dari {{ stats.totalScopeMetadata.toLocaleString('id-ID') }} scope
+              </div>
             </q-card>
           </div>
           <div class="col-6 col-sm-6">
@@ -153,6 +196,67 @@
         </div>
       </div>
     </div>
+
+    <!-- BPS Remote Progress Analytics Dashboard -->
+    <q-card 
+      v-if="stats && stats.bpsProgress && stats.bpsProgress.length > 0"
+      class="bg-dark border-card text-white q-mb-lg" 
+      flat 
+      bordered
+    >
+      <q-card-section class="row items-center q-pb-none">
+        <q-icon name="public" size="sm" color="amber-5" class="q-mr-sm" />
+        <div class="text-subtitle1 text-weight-bold text-white">Monitoring Progress BPS (Analytic Remote)</div>
+        <q-space />
+        <q-btn-toggle
+          v-model="bpsDashboardTab"
+          toggle-color="amber-5"
+          toggle-text-color="dark"
+          text-color="grey-4"
+          flat
+          dense
+          no-caps
+          :options="[
+            { label: 'Tabel Detail', value: 'table', icon: 'table_chart' },
+            { label: 'Visualisasi Chart', value: 'chart', icon: 'bar_chart' }
+          ]"
+        />
+      </q-card-section>
+
+      <q-card-section>
+        <div v-show="bpsDashboardTab === 'table'">
+          <q-table
+            :rows="bpsRegionsData"
+            :columns="bpsTableColumns"
+            row-key="region"
+            dark
+            flat
+            bordered
+            :pagination="{ rowsPerPage: 10 }"
+            class="bg-dark border-card"
+          >
+            <template v-slot:body-cell-progressPct="props">
+              <q-td :props="props">
+                <div class="row items-center q-gutter-x-sm no-wrap">
+                  <q-linear-progress
+                    :value="props.value / 100"
+                    color="positive"
+                    track-color="grey-10"
+                    style="width: 80px; height: 6px;"
+                    rounded
+                  />
+                  <span class="text-weight-bold text-positive">{{ props.value }}%</span>
+                </div>
+              </q-td>
+            </template>
+          </q-table>
+        </div>
+
+        <div v-show="bpsDashboardTab === 'chart'" style="height: 380px;" class="q-pa-md">
+          <v-chart class="full-width full-height" :option="bpsChartOption" autoresize />
+        </div>
+      </q-card-section>
+    </q-card>
 
     <!-- Label stats -->
     <q-banner v-if="labelCount > 0" class="bg-grey-9 text-white q-mb-md rounded-borders" rounded>
@@ -517,9 +621,22 @@
 </template>
 
 <script setup lang="ts">
+import { BarChart } from "echarts/charts";
+import {
+	GridComponent,
+	LegendComponent,
+	TitleComponent,
+	TooltipComponent,
+} from "echarts/components";
+import { use } from "echarts/core";
+import { CanvasRenderer } from "echarts/renderers";
 import { useQuasar } from "quasar";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, provide, ref } from "vue";
+import VChart, { THEME_KEY } from "vue-echarts";
 import { useRoute } from "vue-router";
+
+use([CanvasRenderer, BarChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent]);
+provide(THEME_KEY, "dark");
 
 interface ApiResponse<T> {
 	data: T;
@@ -566,9 +683,51 @@ const submittedPercent = computed(() => {
 	return Number(((submitted / stats.value.total) * 100).toFixed(2));
 });
 
+// Completeness % based on sync SCOPE (not national total).
+// Returns null if no scope data — hides warning banner when info is unavailable.
+const scopeCompletionPct = computed<number | null>(() => {
+	if (!stats.value) return null;
+	const scopeTotal = Number(stats.value.totalScopeMetadata || 0);
+	if (scopeTotal === 0) return null; // No scope data yet — don't show warning
+	const localTotal = stats.value.total || 0;
+	if (localTotal >= scopeTotal) return 100;
+	return Number(((localTotal / scopeTotal) * 100).toFixed(1));
+});
+
+const flatBpsProgress = computed(() => {
+	if (!stats.value || !stats.value.bpsProgress || !Array.isArray(stats.value.bpsProgress))
+		return [];
+
+	const firstItem = stats.value.bpsProgress[0];
+	if (!firstItem) return [];
+
+	// If it's already a flat list (old logs or aggregated)
+	if (!("values" in firstItem)) {
+		return stats.value.bpsProgress;
+	}
+
+	// If it is the raw group-based list, aggregate across all groups
+	const aggregated: Record<string, number> = {};
+	for (const group of stats.value.bpsProgress) {
+		const values = group.values || [];
+		for (const val of values) {
+			const label = val.label || "";
+			const value = Number(val.value || 0);
+			aggregated[label] = (aggregated[label] || 0) + value;
+		}
+	}
+
+	const result = Object.entries(aggregated).map(([label, value]) => ({
+		label,
+		value,
+	}));
+	result.sort((a, b) => (a.label === "total" ? -1 : b.label === "total" ? 1 : 0));
+	return result;
+});
+
 const bpsSubmittedPercent = computed(() => {
-	if (!stats.value || !stats.value.bpsProgress) return 0;
-	const bpsProgressList = stats.value.bpsProgress || [];
+	const bpsProgressList = flatBpsProgress.value;
+	if (bpsProgressList.length === 0) return 0;
 	const totalItem = bpsProgressList.find((item: any) => item.label === "total");
 	const bpsTotal = totalItem ? Number(totalItem.value || 0) : 0;
 	if (bpsTotal === 0) return 0;
@@ -593,7 +752,7 @@ const combinedBreakdown = computed<StatusBreakdownItem[]>(() => {
 		]) || [],
 	);
 
-	const bpsProgressList = (stats.value.bpsProgress as any[]) || [];
+	const bpsProgressList = flatBpsProgress.value;
 	const bpsMap = new Map<string, number>(
 		bpsProgressList
 			.filter((item: any) => item.label !== "total")
@@ -620,19 +779,243 @@ function getPercentOfTotalLocal(count: number): string {
 }
 
 function getPercentOfTotalBps(count: number): string {
-	if (!stats.value || !stats.value.bpsProgress) return "0";
-	const bpsProgressList = stats.value.bpsProgress || [];
+	const bpsProgressList = flatBpsProgress.value;
+	if (bpsProgressList.length === 0) return "0";
 	const totalItem = bpsProgressList.find((item: any) => item.label === "total");
 	const bpsTotal = totalItem ? Number(totalItem.value || 0) : 0;
 	if (bpsTotal === 0) return "0";
 	return ((count / bpsTotal) * 100).toFixed(1);
 }
+
+// BPS Regional Progress Monitoring
+const bpsDashboardTab = ref("table");
+
+interface BpsRegionProgress {
+	region: string;
+	total: number;
+	open: number;
+	draft: number;
+	submitted: number;
+	rejected: number;
+	progressPct: number;
+}
+
+const bpsRegionsData = computed<BpsRegionProgress[]>(() => {
+	if (!stats.value || !stats.value.bpsProgress || !Array.isArray(stats.value.bpsProgress))
+		return [];
+
+	const firstItem = stats.value.bpsProgress[0];
+	if (!firstItem) return [];
+
+	if (!("values" in firstItem)) {
+		// Old flat format compatibility
+		const values = stats.value.bpsProgress;
+		const totalItem = values.find((item: any) => item.label === "total");
+		const total = totalItem ? Number(totalItem.value || 0) : 0;
+		if (total === 0) return [];
+
+		const openItem = values.find((item: any) => item.label.toLowerCase() === "open");
+		const open = openItem ? Number(openItem.value || 0) : 0;
+
+		const draftItem = values.find((item: any) => item.label.toLowerCase() === "draft");
+		const draft = draftItem ? Number(draftItem.value || 0) : 0;
+
+		const nonSubmitted = values
+			.filter((item: any) => {
+				const lbl = item.label.toLowerCase();
+				return lbl === "open" || lbl === "draft";
+			})
+			.reduce((sum: number, item: any) => sum + Number(item.value || 0), 0);
+
+		const submitted = total - nonSubmitted;
+
+		const rejectedItem = values.find((item: any) => {
+			const lbl = item.label.toLowerCase();
+			return lbl === "rejected" || lbl.includes("rejected") || lbl.includes("error");
+		});
+		const rejected = rejectedItem ? Number(rejectedItem.value || 0) : 0;
+
+		const progressPct = total > 0 ? Number(((submitted / total) * 100).toFixed(1)) : 0;
+
+		return [
+			{
+				region: "Total Target BPS",
+				total,
+				open,
+				draft,
+				submitted,
+				rejected,
+				progressPct,
+			},
+		];
+	}
+
+	return stats.value.bpsProgress.map((group: any) => {
+		const region = group.label || "Unknown";
+		const values = group.values || [];
+
+		const totalItem = values.find((item: any) => item.label === "total");
+		const total = totalItem ? Number(totalItem.value || 0) : 0;
+
+		const openItem = values.find((item: any) => item.label.toLowerCase() === "open");
+		const open = openItem ? Number(openItem.value || 0) : 0;
+
+		const draftItem = values.find((item: any) => item.label.toLowerCase() === "draft");
+		const draft = draftItem ? Number(draftItem.value || 0) : 0;
+
+		const nonSubmitted = values
+			.filter((item: any) => {
+				const lbl = item.label.toLowerCase();
+				return lbl === "open" || lbl === "draft";
+			})
+			.reduce((sum: number, item: any) => sum + Number(item.value || 0), 0);
+
+		const submitted = total - nonSubmitted;
+
+		const rejectedItem = values.find((item: any) => {
+			const lbl = item.label.toLowerCase();
+			return lbl === "rejected" || lbl.includes("rejected") || lbl.includes("error");
+		});
+		const rejected = rejectedItem ? Number(rejectedItem.value || 0) : 0;
+
+		const progressPct = total > 0 ? Number(((submitted / total) * 100).toFixed(1)) : 0;
+
+		return {
+			region,
+			total,
+			open,
+			draft,
+			submitted,
+			rejected,
+			progressPct,
+		};
+	});
+});
+
+const bpsTableColumns: any[] = [
+	{ name: "region", label: "Wilayah / Label BPS", align: "left", field: "region", sortable: true },
+	{
+		name: "total",
+		label: "Total Target",
+		align: "right",
+		field: "total",
+		sortable: true,
+		format: (val: number) => val.toLocaleString("id-ID"),
+	},
+	{
+		name: "open",
+		label: "Open",
+		align: "right",
+		field: "open",
+		sortable: true,
+		format: (val: number) => val.toLocaleString("id-ID"),
+	},
+	{
+		name: "draft",
+		label: "Draft",
+		align: "right",
+		field: "draft",
+		sortable: true,
+		format: (val: number) => val.toLocaleString("id-ID"),
+	},
+	{
+		name: "submitted",
+		label: "Submitted",
+		align: "right",
+		field: "submitted",
+		sortable: true,
+		format: (val: number) => val.toLocaleString("id-ID"),
+	},
+	{
+		name: "rejected",
+		label: "Rejected / Error",
+		align: "right",
+		field: "rejected",
+		sortable: true,
+		format: (val: number) => val.toLocaleString("id-ID"),
+	},
+	{ name: "progressPct", label: "Progress", align: "left", field: "progressPct", sortable: true },
+];
+
+const bpsChartOption = computed(() => {
+	const data = bpsRegionsData.value;
+	if (data.length === 0) return {};
+
+	// Sort by total target descending, limit to top 15 regions to prevent overflow/crowding
+	const sortedData = [...data].sort((a, b) => b.total - a.total).slice(0, 15);
+
+	const categories = sortedData.map((d) => d.region);
+	const totalSeries = sortedData.map((d) => d.total);
+	const submittedSeries = sortedData.map((d) => d.submitted);
+
+	return {
+		backgroundColor: "transparent",
+		tooltip: {
+			trigger: "axis",
+			axisPointer: { type: "shadow" },
+		},
+		legend: {
+			textStyle: { color: "#a0aabf" },
+			data: ["Total Target BPS", "Submitted BPS"],
+		},
+		grid: {
+			left: "3%",
+			right: "8%",
+			bottom: "3%",
+			top: "40px",
+			containLabel: true,
+		},
+		xAxis: {
+			type: "value",
+			axisLabel: { color: "#a0aabf" },
+			splitLine: { lineStyle: { color: "#262b36" } },
+		},
+		yAxis: {
+			type: "category",
+			data: categories.reverse(),
+			axisLabel: { color: "#a0aabf" },
+		},
+		series: [
+			{
+				name: "Total Target BPS",
+				type: "bar",
+				data: totalSeries.reverse(),
+				itemStyle: { color: "rgba(59, 130, 246, 0.25)", borderRadius: [0, 4, 4, 0] },
+				barGap: "-100%",
+				label: {
+					show: true,
+					position: "insideRight",
+					color: "#fff",
+					formatter: (params: any) => (params.value ? params.value.toLocaleString("id-ID") : ""),
+				},
+			},
+			{
+				name: "Submitted BPS",
+				type: "bar",
+				data: submittedSeries.reverse(),
+				itemStyle: { color: "rgba(16, 185, 129, 0.8)", borderRadius: [0, 4, 4, 0] },
+				label: {
+					show: true,
+					position: "right",
+					color: "#a0aabf",
+					formatter: (params: any) => {
+						const idx = params.dataIndex;
+						const originalIdx = sortedData.length - 1 - idx;
+						const pct = sortedData[originalIdx]?.progressPct || 0;
+						return `${params.value.toLocaleString("id-ID")} (${pct}%)`;
+					},
+				},
+			},
+		],
+	};
+});
 const uploadFile = ref<File | null>(null);
 const uploading = ref(false);
 const uploadError = ref("");
 const uploadSuccess = ref("");
 const downloading = ref(false);
 const exporting = ref(false);
+const refreshingAnalytics = ref(false);
 
 const pagination = ref({
 	page: 1,
@@ -923,6 +1306,27 @@ async function onRequest(props: any) {
 		console.error("Failed to load assignments");
 	} finally {
 		loading.value = false;
+	}
+}
+
+async function refreshAnalytics() {
+	refreshingAnalytics.value = true;
+	try {
+		const res = await fetch(`/api/surveys/${surveyId}/analytics/refresh`, { method: "POST" });
+		const data = await res.json();
+		if (!res.ok) throw new Error(data.error || "Refresh gagal");
+		$q.notify({
+			type: "positive",
+			message: `Analytics diperbarui: ${(data.total_target_remote || 0).toLocaleString("id-ID")} total assignment dari BPS`,
+			timeout: 5000,
+			position: "top",
+		});
+		// Reload stats to show new values
+		await loadStatsAndSurvey();
+	} catch (e: any) {
+		$q.notify({ type: "negative", message: `Gagal refresh analytics: ${e.message}` });
+	} finally {
+		refreshingAnalytics.value = false;
 	}
 }
 

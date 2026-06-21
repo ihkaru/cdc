@@ -331,3 +331,170 @@ async def refresh_image_urls(req: RefreshImageUrlsRequest):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         session.close()
+
+
+@router.post("/analytics/refresh/{survey_config_id}")
+async def refresh_analytics(survey_config_id: str):
+    """
+    Refresh totalTargetRemote and bpsProgress for the latest sync log of a survey config.
+    Uses cached SSO cookies to call BPS analytic API (no region filter → full national total).
+    """
+    from api_client import FasihApiClient, FasihAuthError
+    from db.models import SurveyConfig
+
+    reset_engine()
+    init_db()
+    session = get_session()
+
+    try:
+        # Get the survey config first
+        survey_config = session.query(SurveyConfig).get(survey_config_id)
+        if not survey_config:
+            raise HTTPException(status_code=404, detail="Survey config not found")
+
+        # Get the latest completed/partial sync log for this survey
+        latest_log = (
+            session.query(SyncLog)
+            .filter(
+                SyncLog.survey_config_id == survey_config_id,
+                SyncLog.status.in_(["success", "partial"]),
+            )
+            .order_by(SyncLog.id.desc())
+            .first()
+        )
+        if not latest_log:
+            raise HTTPException(status_code=404, detail="No completed sync log found for this survey")
+
+        # Retrieve current cookies
+        cookie_setting = session.query(SystemSettings).filter_by(key="sso_cookies").first()
+        cookies = json.loads(cookie_setting.value) if cookie_setting else {}
+
+        attempts = 0
+        total_target_remote = 0
+        bps_progress = []
+
+        while attempts < 2:
+            try:
+                if not cookies:
+                    raise FasihAuthError("SSO cookies not initialized")
+
+                async with FasihApiClient(cookies) as api:
+                    # Resolve period_id from BPS API using the survey config
+                    bps_survey_id = survey_config.bps_survey_id
+                    if not bps_survey_id:
+                        bps_survey_id = await api.get_survey_id(survey_config.survey_name)
+                    if not bps_survey_id:
+                        raise HTTPException(status_code=404, detail="Could not resolve BPS survey ID")
+
+                    period_id, _, _ = await api.get_survey_period_and_roles(bps_survey_id)
+                    if not period_id:
+                        raise HTTPException(status_code=404, detail="Could not resolve BPS period ID")
+
+                    # Resolve region UUIDs if config filters are set
+                    prov_uuid, region_filter, _, _ = await api.get_region_metadata(
+                        survey_config.filter_provinsi, survey_config.filter_kabupaten, bps_survey_id
+                    )
+
+                    # If config filters are empty, try auto-resolving from SSO profile
+                    target_prov_uuid = prov_uuid
+                    target_kab_uuid = region_filter
+                    if not survey_config.filter_provinsi:
+                        sso_prov_uuid, sso_kab_uuid, _ = await api.get_sso_user_regions(period_id, bps_survey_id)
+                        if sso_prov_uuid:
+                            target_prov_uuid = sso_prov_uuid
+                            target_kab_uuid = sso_kab_uuid
+
+                    # Fetch total target count using the target region UUIDs
+                    total_target_remote, bps_progress = await api.get_analytic_assignment_count(
+                        period_id, target_prov_uuid, target_kab_uuid
+                    )
+                break  # Success, break loop
+            except FasihAuthError as auth_err:
+                attempts += 1
+                if attempts >= 2:
+                    raise HTTPException(
+                        status_code=401, detail=f"SSO Session Expired. Re-login otomatis gagal: {auth_err}"
+                    )
+
+                logger.info(
+                    f"🔑 [Refresh] SSO cookie expired/missing ({auth_err}). Memulai headless login via Playwright..."
+                )
+                username = survey_config.sso_username
+                try:
+                    from crypto import decrypt_password
+
+                    password = decrypt_password(survey_config.sso_password_encrypted)
+                except Exception as dec_e:
+                    raise HTTPException(status_code=500, detail=f"Gagal dekripsi password SSO: {dec_e}")
+
+                from playwright.async_api import async_playwright
+
+                from auth import auto_login, launch_stealth_browser, new_stealth_context
+
+                new_cookies = None
+                try:
+                    async with async_playwright() as p:
+                        browser = await launch_stealth_browser(p)
+                        context = await new_stealth_context(browser)
+                        page = await context.new_page()
+                        success, cookies_dict, err_msg = await auto_login(page, username, password)
+                        if success:
+                            new_cookies = cookies_dict
+                        else:
+                            raise Exception(err_msg or "auto_login returned False")
+                        await browser.close()
+                except Exception as login_e:
+                    logger.error(f"❌ [Refresh] Re-login gagal: {login_e}")
+                    raise HTTPException(
+                        status_code=401, detail=f"SSO Session Expired. Re-login otomatis gagal: {login_e}"
+                    )
+
+                if new_cookies:
+                    cookies = new_cookies
+                    # Save new cookies to database
+                    cookie_setting = session.query(SystemSettings).filter_by(key="sso_cookies").first()
+                    if cookie_setting:
+                        cookie_setting.value = json.dumps(new_cookies)
+                        cookie_setting.updated_at = datetime.now(timezone.utc)
+                    else:
+                        cookie_setting = SystemSettings(key="sso_cookies", value=json.dumps(new_cookies))
+                        session.add(cookie_setting)
+                    session.commit()
+                    logger.info("✅ [Refresh] SSO cookie refreshed & saved. Retrying fetch...")
+
+        # Update all recent sync logs for this survey with the correct national total
+        updated_logs = (
+            session.query(SyncLog)
+            .filter(
+                SyncLog.survey_config_id == survey_config_id,
+                SyncLog.status.in_(["success", "partial"]),
+            )
+            .order_by(SyncLog.id.desc())
+            .limit(5)  # Update the 5 most recent logs
+            .all()
+        )
+
+        for log in updated_logs:
+            log.total_target_remote = total_target_remote
+            log.bps_progress = bps_progress
+
+        session.commit()
+        logger.info(
+            f"✅ Refreshed analytics for survey {survey_config_id}: "
+            f"total={total_target_remote:,}, breakdown={len(bps_progress)} items"
+        )
+
+        return {
+            "status": "success",
+            "total_target_remote": total_target_remote,
+            "bps_progress": bps_progress,
+            "logs_updated": len(updated_logs),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error refreshing analytics")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()

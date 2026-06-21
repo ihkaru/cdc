@@ -23,6 +23,7 @@ class SyncStats:
         self.total_failed = 0
         self.total_images = 0
         self.images_mirrored = 0
+        self.total_scope_metadata = 0  # Total assignments in scope (from metadata fetch)
 
     def __repr__(self):
         return (
@@ -291,6 +292,9 @@ def log_sync_run(
     notes: str = "",
     survey_config_id: str = "",
     timings: dict = None,
+    total_target_remote: int = 0,
+    bps_progress: list = None,
+    status: str = "success",
 ) -> SyncLog:
     """Catat log satu cycle sinkronisasi."""
     log = SyncLog(
@@ -306,6 +310,10 @@ def log_sync_run(
         images_mirrored=stats.images_mirrored,
         notes=notes,
         timings=timings,
+        total_target_remote=total_target_remote,
+        total_scope_metadata=getattr(stats, "total_scope_metadata", 0),
+        bps_progress=bps_progress,
+        status=status,
     )
     session.add(log)
     session.commit()

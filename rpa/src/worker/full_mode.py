@@ -195,6 +195,7 @@ async def run_full_sync(
     if not to_fetch_links:
         stats = SyncStats()
         stats.total_skipped = total_skipped
+        stats.total_scope_metadata = total_found
         return stats
 
     # --- STEP 3 & 4: Streaming Fetch & Bulk Upsert via UltimateSyncEngine (curl_cffi) ---
@@ -234,8 +235,9 @@ async def run_full_sync(
     finally:
         stats = run_stats if "run_stats" in dir() else SyncStats()
         stats.total_skipped += total_skipped
+        stats.total_scope_metadata = total_found  # Track actual scope from metadata phase
 
     print(
-        f"   ✅ Full sync selesai: processed={stats.total_fetched:,}, new={stats.total_new:,}, skipped={stats.total_skipped:,}"
+        f"   ✅ Full sync selesai: processed={stats.total_fetched:,}, new={stats.total_new:,}, skipped={stats.total_skipped:,}, scope={stats.total_scope_metadata:,}"
     )
     return stats

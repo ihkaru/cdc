@@ -111,6 +111,15 @@ class FasihApiClient:
                     print(f"   🚨 [API] Authentication failed (HTTP {resp.status})", flush=True)
                     raise FasihAuthError(f"Authentication failed with HTTP {resp.status}")
 
+                # 3. Check for HTML redirection/content on API requests
+                content_type = resp.headers.get("content-type", "").lower()
+                if "text/html" in content_type:
+                    print(
+                        "   🚨 [API] Response Guardian: Detected HTML content on API request. Session expired!",
+                        flush=True,
+                    )
+                    raise FasihAuthError("Session expired: returned HTML page instead of JSON")
+
                 if resp.status != 200:
                     text = await resp.text()
                     print(f"   ⚠️ [API] Request to {path} failed (HTTP {resp.status}): {text[:200]}", flush=True)
@@ -121,13 +130,12 @@ class FasihApiClient:
                     return await resp.json()
                 except Exception as json_err:
                     text = await resp.text()
-                    # If it's HTML, check if it's the SSO login page (in case redirect wasn't fully detected by URL)
-                    if "<html" in text.lower() and ("login" in text.lower() or "sso" in text.lower()):
+                    if "<html" in text.lower():
                         print(
-                            "   🚨 [API] Response Guardian: Detected HTML login page structure. Session expired!",
+                            "   🚨 [API] Response Guardian: Detected HTML structure in JSON fallback check. Session expired!",
                             flush=True,
                         )
-                        raise FasihAuthError("Session expired: returned HTML login page instead of JSON")
+                        raise FasihAuthError("Session expired: HTML structure returned")
                     print(f"   ⚠️ [API] Failed to parse JSON response from {path}: {json_err}", flush=True)
                     return None
         except FasihAuthError:
@@ -215,7 +223,7 @@ class FasihApiClient:
         """Cari Survey ID berdasarkan nama survey"""
         print(f"📋 [API] Mencari survey: '{survey_name}'...")
 
-        path = "survey/api/v1/surveys/datatable?surveyType=Pencacahan"
+        path = "survey/api/v1/surveys/datatable?surveyType="
         target_clean = re.sub(r"[^a-z0-9]", "", survey_name.lower())
 
         all_surveys = []
@@ -296,7 +304,11 @@ class FasihApiClient:
     async def get_analytic_assignment_count(
         self, period_id: str, region1_id: str | None = None, region2_id: str | None = None
     ) -> tuple[int, list[dict[str, Any]]]:
-        """Mendapatkan total target dan breakdown status assignments di remote BPS."""
+        """Mendapatkan total target dan breakdown status assignments di remote BPS.
+
+        BPS API mengembalikan list of region groups, masing-masing punya "values" array.
+        Kita agregasi semua group untuk mendapat angka total yang benar sesuai regional scope.
+        """
         print(f"   📊 [API] Menghitung total target assignment di remote (Period: {period_id[:8]}...)...")
         path = "analytic/api/v2/assignment/report-progress-assignment"
         payload = {
@@ -322,13 +334,20 @@ class FasihApiClient:
         body = await self._request("POST", path, json=payload)
         try:
             if body and isinstance(body, list) and len(body) > 0:
-                values = body[0].get("values", [])
-                count = 0
-                for val in values:
-                    if val.get("label") == "total":
-                        count = int(val.get("value", 0))
-                print(f"   ✅ [API] Remote Target Count: {count}, Breakdown: {len(values)} items")
-                return count, values
+                # BPS API returns a list of region groups, each with "values".
+                # e.g. [{"label": "61", "values": [{"label": "total", "value": N}, ...]}]
+                # Aggregate across ALL groups to get the true scoped totals.
+                aggregated: dict[str, int] = {}
+                for group in body:
+                    for val in group.get("values", []):
+                        lbl = val.get("label", "")
+                        v = int(val.get("value", 0) or 0)
+                        aggregated[lbl] = aggregated.get(lbl, 0) + v
+
+                total_count = aggregated.get("total", 0)
+
+                print(f"   ✅ [API] Remote Target Count: {total_count:,}, Raw Region Groups: {len(body)}")
+                return total_count, body
         except Exception as e:
             print(f"   ⚠️ [API] Gagal mengurai jumlah analytic count: {e}")
         return 0, []
@@ -701,3 +720,68 @@ class FasihApiClient:
 
             print(f"   ❌ [API] Content download failed (HTTP {resp.status}): {url[:100]}...")
             return None
+
+    async def get_sso_user_regions(self, period_id: str, survey_id: str) -> tuple[str | None, str | None, str | None]:
+        """
+        Dapatkan region code dari API /myinfo, lalu cari UUID region1Id dan region2Id BPS.
+        Mengembalikan: (prov_uuid, kab_uuid, group_id)
+        """
+        print("   👤 [API] Mengambil regional scope dari akun SSO BPS...")
+        path = f"survey/api/v1/users/myinfo?surveyPeriodId={period_id}"
+        body = await self._request("GET", path)
+        if not body or not body.get("success"):
+            return None, None, None
+
+        data = body.get("data", {})
+        region_ids = data.get("regionId", [])
+        if not region_ids:
+            # Fallback check allocations
+            allocations = data.get("allocations", [])
+            region_ids = [a.get("parentRegionCode") for a in allocations if a.get("parentRegionCode")]
+
+        if not region_ids:
+            print("   ⚠️ [API] Akun SSO tidak memiliki regional scope terikat (National Admin).")
+            return None, None, None
+
+        # Ambil kode pertama, misal "6104"
+        full_code = str(region_ids[0])
+        print(f"   📍 [API] Terdeteksi kode region SSO: '{full_code}'")
+
+        # Resolusi survey group_id
+        survey_role = data.get("surveyRole") or {}
+        group_id = survey_role.get("surveyRoleGroupId")
+        if not group_id:
+            # fallback get from config
+            _, _, group_id = await self.get_survey_period_and_roles(survey_id)
+
+        if not group_id:
+            return None, None, None
+
+        # Level 1: Provinsi (2 digit pertama, misal "61")
+        prov_code = full_code[:2]
+        prov_uuid = None
+        # Panggil API list level1
+        prov_list = await self._request("GET", f"region/api/v1/region/level1?groupId={group_id}")
+        if prov_list and prov_list.get("data"):
+            for item in prov_list["data"]:
+                if item.get("fullCode") == prov_code:
+                    prov_uuid = item.get("id")
+                    print(f"   📍 [API] Resolusi Provinsi: {item.get('name')} → UUID: {prov_uuid}")
+                    break
+
+        # Level 2: Kabupaten (4 digit pertama, misal "6104")
+        kab_uuid = None
+        if len(full_code) >= 4 and prov_uuid:
+            kab_code = full_code[:4]
+            # Panggil API list level2
+            kab_list = await self._request(
+                "GET", f"region/api/v1/region/level2?groupId={group_id}&level1FullCode={prov_code}"
+            )
+            if kab_list and kab_list.get("data"):
+                for item in kab_list["data"]:
+                    if item.get("fullCode") == kab_code:
+                        kab_uuid = item.get("id")
+                        print(f"   📍 [API] Resolusi Kabupaten: {item.get('name')} → UUID: {kab_uuid}")
+                        break
+
+        return prov_uuid, kab_uuid, group_id

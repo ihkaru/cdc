@@ -250,28 +250,23 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
                 timings["fetch"] = 0
             else:
                 # ids_to_fetch
-                ids_to_fetch = [m['id'] for m in to_fetch]
+                ids_to_fetch = [m["id"] for m in to_fetch]
 
                 # --- ULTIMATE SYNC ENGINE ---
                 try:
                     from worker.ultimate_engine import run_ultimate_sync
-                    
+
                     survey_config_id = getattr(settings, "id", None)
                     if not survey_config_id or survey_config_id == "default":
                         # Attempt to get a valid UUID from the database if settings.id is 'default'
                         from sqlalchemy import text
+
                         row = session.execute(text("SELECT id FROM survey_configs LIMIT 1")).fetchone()
                         survey_config_id = str(row[0]) if row else None
 
                     print(f"\n   🚀 Memulai Ultimate Sync Engine untuk {len(ids_to_fetch):,} records...")
                     stats = await run_ultimate_sync(
-                        session,
-                        api,
-                        survey_id,
-                        period_id,
-                        survey_config_id,
-                        ids_to_fetch,
-                        sync_log_id=None
+                        session, api, survey_id, period_id, survey_config_id, ids_to_fetch, sync_log_id=None
                     )
                     timings["fetch_and_upsert"] = int((time.perf_counter() - phase_start) * 1000)
                 except FasihAuthError as ae:
@@ -286,12 +281,50 @@ async def run_sync_cycle(settings: Settings, dry_run: bool = False):
         # Re-resolve survey_config_id for logging to avoid 'default' UUID error
         log_config_id = getattr(settings, "id", None)
         if not log_config_id or log_config_id == "default":
-             from sqlalchemy import text
-             row = session.execute(text("SELECT id FROM survey_configs LIMIT 1")).fetchone()
-             log_config_id = str(row[0]) if row else None
+            from sqlalchemy import text
+
+            row = session.execute(text("SELECT id FROM survey_configs LIMIT 1")).fetchone()
+            log_config_id = str(row[0]) if row else None
+
+        # Fetch final remote analytic count (national total + breakdown) for UI comparison
+        final_target_remote = 0
+        final_bps_progress = None
+        if "period_id" in locals() and period_id:
+            try:
+                final_target_remote, final_bps_progress = await api.get_analytic_assignment_count(period_id)
+                print(f"   📊 Final remote target: {final_target_remote:,} assignments")
+            except Exception as analytic_err:
+                print(f"   ⚠️ Gagal mengambil remote analytic count: {analytic_err}")
+
+        # Check data integrity for partial sync status.
+        # Use unique_assignments count (scope) not national total for integrity check.
+        actual_fetched = (stats.total_fetched or 0) + (stats.total_skipped or 0)
+        scope_count = (
+            getattr(stats, "total_scope_metadata", 0) or len(unique_assignments)
+            if "unique_assignments" in locals()
+            else 0
+        )
+        log_status = "success"
+        log_notes = ""
+        if scope_count > 0 and actual_fetched < scope_count:
+            log_status = "partial"
+            log_notes = (
+                f"Selesai dengan selisih data scope (Scope: {scope_count:,}, Lokal: {actual_fetched:,}). "
+                f"BPS Remote: {final_target_remote:,}"
+            )
+        elif final_target_remote > 0:
+            log_notes = f"Sinkronisasi selesai. BPS Remote: {final_target_remote:,} total assignment."
 
         log = log_sync_run(
-            session, started_at, stats, survey_config_id=log_config_id, timings=timings
+            session,
+            started_at,
+            stats,
+            survey_config_id=log_config_id,
+            timings=timings,
+            total_target_remote=final_target_remote,
+            bps_progress=final_bps_progress,
+            status=log_status,
+            notes=log_notes,
         )
         session.close()
 
