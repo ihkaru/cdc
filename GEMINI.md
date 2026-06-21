@@ -109,3 +109,56 @@ Sistem menggunakan bash scripts sebagai entrypoint development:
 16. **Mid-Fetch Session Expiry (Resilient Resume)**: Saat sync massal (ribuan assignment), session FASIH-SM bisa expire di tengah-tengah fetch detail. Perilaku lama (Early-Abort) menghentikan semua request → data tidak lengkap. **Solusi**: `fetch_assignments_concurrent()` kini menggunakan strategi **Resilient Resume** — saat `FasihAuthError` terdeteksi, sistem mengumpulkan ID yang belum diproses, melakukan headless re-login via Playwright (`_relogin_headless()`), membangun ulang session pool, lalu melanjutkan fetch dari titik terakhir. Credentials (`sso_username`, `sso_password`) harus diteruskan dari `SyncRequest` → `run_full_sync()` → `fetch_assignments_concurrent()` agar mekanisme ini berfungsi.
 17. **Dynamic BPS SSO Scope Scoping (No True National Target)**: API progress analytics BPS (`report-progress-assignment`) membatasi data secara implisit berdasarkan level regional akun SSO yang masuk. Walaupun filter wilayah dikirim kosong, target remote yang dikembalikan adalah total wilayah/scope akun tersebut (bukan total nasional secara keseluruhan). Oleh karena itu, label target di UI dashboard dan log harus menggunakan istilah "BPS Remote" atau "Target BPS (Scope SSO)" alih-alih "Nasional" agar tidak membingungkan pengguna mengenai cakupan statistiknya.
 
+---
+
+## BPS API Behavior — Hard-Won Discoveries (Diagnostic Results)
+
+Temuan-temuan ini diverifikasi langsung melalui pengujian API live ke `fasih-sm.bps.go.id` dari dalam container RPA (dengan VPN aktif), bukan asumsi.
+
+### A. `datatable-all-user-survey-periode` — Hard Cap 10,000 (Bukan Jumlah Sesungguhnya)
+
+Endpoint metadata assignment **selalu melaporkan `totalHit: 10000`** untuk dataset besar (>10k records), terlepas dari berapa banyak data yang sebenarnya ada. Ini adalah **hard cap BPS**, bukan angka data aktual.
+
+- `totalHit: 10000` → **angka bulat = tanda pasti itu adalah cap, bukan jumlah data nyata**
+- Offset `0–200`: mengembalikan data normal (200 records per page)
+- Offset `9800`: mengembalikan **0 records** — data sesungguhnya jauh lebih sedikit dari 10k
+- Tanpa filter `currentUserId`, hanya ~1,000 records yang bisa diambil untuk wilayah Mempawah
+- API `report-progress-assignment` (analytics) adalah satu-satunya yang memberikan angka **benar** (contoh: 108,895) — gunakan ini sebagai ground truth target, **bukan** `totalHit` dari datatable
+
+**Implikasi kritis**: Untuk dataset >10k (seperti SE 2026 dengan 108k records), sync **WAJIB** menggunakan filter `currentUserId` per-pengawas/pencacah agar setiap subset tetap di bawah cap. Tanpa ini, maksimal yang bisa diambil adalah ~1,000 records.
+
+### B. `analytic/api/v2/survey-period-role-user/datatable` — Selalu HTTP 400 untuk Dataset Besar
+
+Endpoint datatable untuk fetch daftar petugas (pengawas/pencacah) mengembalikan:
+```json
+{"error": "VALIDATION_ERROR", "status": 400, "message": "Page number must be maximum 100."}
+```
+untuk **semua 8 role_id** pada survey SE 2026 — bahkan untuk `pageNumber: 0` (page pertama).
+
+**Root cause**: BPS memvalidasi bahwa hasil query tidak akan melebihi page 100 sebelum eksekusi. Tanpa filter `regionCode` di payload, BPS menghitung scope nasional → ribuan halaman → langsung ditolak. Error ini di-*swallow* sebagai warning oleh `_request()` sehingga `pengawas_list = []` dan sistem fallback ke Wilayah Saja **tanpa error**.
+
+### C. `survey/api/v1/survey-period-role-users/region` — Return 0 untuk Role Admin/Viewer
+
+Endpoint `/region` untuk fetch users per wilayah mengembalikan HTTP 200 tapi `data: []` karena `survey-roles?surveyId=...` mengembalikan role-role **admin dan viewer** (Viewer Pusat, Admin Pusat, Viewer Provinsi, dll.) — bukan role pengawas/pencacah lapangan.
+
+- Role yang di-fetch: `Viewer Pusat`, `Admin Pusat`, `Viewer Provinsi`, `Admin Provinsi`, `Viewer Kabupaten`, dll.
+- Role-role ini tidak memiliki users di level wilayah → `/region` endpoint return kosong
+- Role pengawas/pencacah lapangan kemungkinan di-fetch via **endpoint atau parameter berbeda** yang belum ditemukan
+
+**Hipotesis yang harus diverifikasi**: Mungkin ada endpoint terpisah untuk fetch petugas lapangan, atau parameter tambahan di `/region` endpoint (mis. `roleType=FIELD`) yang belum digunakan.
+
+### D. Period ID Berbeda antara Endpoint
+
+`survey-periods/my?surveyId=...` mengembalikan period `fd68e454` (nama: "PENDATAAN") sementara sync yang berhasil sebelumnya menggunakan period `37526b20`. Keduanya adalah period yang valid untuk survey yang sama — kemungkinan ada multiple periode aktif (mis. periode pendataan dan periode pengawasan).
+
+- `fd68e454` ("PENDATAAN") → assignments datatable berfungsi, return data
+- `37526b20` → period yang digunakan sync 380 menit (sebelum Zombie Guard kill)
+- Endpoint `survey/api/v1/survey-period-roles?surveyPeriodId=...` return **HTTP 404** untuk period baru — endpoint ini tidak valid, jangan gunakan
+
+### E. Kesimpulan: Strategi yang Benar untuk Dataset >10k
+
+Untuk mengambil semua ~108k assignment SE 2026:
+1. **WAJIB** dapatkan daftar pengawas/pencacah lapangan via API yang benar (masih perlu investigasi endpoint-nya)
+2. Fan-out: query `datatable-all-user-survey-periode` dengan `currentUserId` per-pengawas
+3. Setiap subset per-pengawas harus < 10,000 agar tidak kena cap
+4. Union semua hasil → deduplikasi by ID → fetch detail → upsert
