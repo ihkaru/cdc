@@ -33,12 +33,18 @@ async def routine_sync_loop():
 
             from state import sync_state
 
-            cutoff = datetime.now(timezone.utc) - timedelta(minutes=45)
-
             db_running_jobs = session.query(SyncLog).filter(SyncLog.status == "running").all()
             for job in db_running_jobs:
                 is_zombie = False
                 reason = ""
+
+                # Dynamic timeout: base 45 min + 1 min per 100 target assignments, capped at 8 hours.
+                # Prevents killing large syncs (e.g. 108k assignments need hours, not 45 min).
+                base_minutes = 45
+                scope = job.total_target_remote or 0
+                dynamic_minutes = min(base_minutes + int(scope / 100), 480)  # max 8 hours
+                cutoff = job.started_at + timedelta(minutes=dynamic_minutes)
+                now_utc = datetime.now(timezone.utc)
 
                 # Check 1: In-memory live validation (Primary)
                 if not sync_state.is_running:
@@ -47,10 +53,13 @@ async def routine_sync_loop():
                 elif sync_state.current_job_id != job.id:
                     is_zombie = True
                     reason = f"Active job ID mismatch (RAM current_job_id: {sync_state.current_job_id}, DB job ID: {job.id})."
-                # Check 2: Stale time-based fallback (Secondary)
-                elif job.started_at < cutoff:
+                # Check 2: Dynamic time-based fallback (Secondary) — accounts for large scopes
+                elif job.started_at and now_utc > cutoff.replace(tzinfo=timezone.utc):
                     is_zombie = True
-                    reason = f"Job exceeded the global 45-minute hard limit (started at {job.started_at})."
+                    reason = (
+                        f"Job exceeded dynamic timeout of {dynamic_minutes}m "
+                        f"(scope={scope:,} assignments, started at {job.started_at})."
+                    )
 
                 if is_zombie:
                     print(
