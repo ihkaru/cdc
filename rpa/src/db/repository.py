@@ -400,14 +400,22 @@ class BatchUpserterBulk:
         date_modified = normalize_bps_date(date_modified_raw)
 
         db_row = {
-            "id": row.get("_id") or row.get("id") or row.get("assignment", {}).get("id"),
-            "survey_config_id": row.get("_survey_config_id", ""),
-            "code_identity": row.get("code_identity") or row.get("assignment", {}).get("codeIdentity") or "",
-            "survey_period_id": row.get("survey_period_id") or row.get("assignment", {}).get("surveyPeriodId") or "",
+            "id": row.get("_id") or row.get("id") or row.get("assignment", {}).get("id") or row.get("assignment", {}).get("_id"),
+            "survey_config_id": row.get("_survey_config_id") or row.get("survey_config_id") or None,
+            "code_identity": row.get("code_identity")
+            or row.get("assignment", {}).get("code_identity")
+            or row.get("assignment", {}).get("codeIdentity")
+            or "",
+            "survey_period_id": row.get("survey_period_id")
+            or row.get("assignment", {}).get("survey_period_id")
+            or row.get("assignment", {}).get("surveyPeriodId")
+            or None,
             "assignment_status_alias": row.get("assignment_status_alias")
+            or row.get("assignment", {}).get("assignment_status_alias")
             or row.get("assignment", {}).get("assignmentStatusAlias")
             or "",
             "current_user_username": row.get("current_user_username")
+            or row.get("assignment", {}).get("current_user_username")
             or row.get("assignment", {}).get("currentUserUsername")
             or "",
             "data_json": json.dumps(row, ensure_ascii=False),
@@ -448,14 +456,22 @@ class BatchUpserterBulk:
         date_modified = normalize_bps_date(date_modified_raw)
 
         db_row = {
-            "id": row.get("_id") or row.get("id") or row.get("assignment", {}).get("id"),
-            "survey_config_id": row.get("_survey_config_id", ""),
-            "code_identity": row.get("code_identity") or row.get("assignment", {}).get("codeIdentity") or "",
-            "survey_period_id": row.get("survey_period_id") or row.get("assignment", {}).get("surveyPeriodId") or "",
+            "id": row.get("_id") or row.get("id") or row.get("assignment", {}).get("id") or row.get("assignment", {}).get("_id"),
+            "survey_config_id": row.get("_survey_config_id") or row.get("survey_config_id") or None,
+            "code_identity": row.get("code_identity")
+            or row.get("assignment", {}).get("code_identity")
+            or row.get("assignment", {}).get("codeIdentity")
+            or "",
+            "survey_period_id": row.get("survey_period_id")
+            or row.get("assignment", {}).get("survey_period_id")
+            or row.get("assignment", {}).get("surveyPeriodId")
+            or None,
             "assignment_status_alias": row.get("assignment_status_alias")
+            or row.get("assignment", {}).get("assignment_status_alias")
             or row.get("assignment", {}).get("assignmentStatusAlias")
             or "",
             "current_user_username": row.get("current_user_username")
+            or row.get("assignment", {}).get("current_user_username")
             or row.get("assignment", {}).get("currentUserUsername")
             or "",
             "data_json": json.dumps(row, ensure_ascii=False),

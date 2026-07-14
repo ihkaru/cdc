@@ -43,8 +43,8 @@ services:
       - /dev/net/tun
       - /dev/ppp
     networks:
-      - fasih_internal
       - coolify
+      - fasih_internal
     dns:
       - 127.0.0.11
       - 172.16.2.2
@@ -63,7 +63,7 @@ services:
     extra_hosts:
       - "fasih-sm.bps.go.id:10.1.110.13"
     healthcheck:
-      test: [ "CMD-SHELL", "curl -fks --connect-timeout 15 https://fasih-sm.bps.go.id/oauth_login.html -o /dev/null && echo ok || exit 1" ]
+      test: [ "CMD-SHELL", "curl -fks -A 'Mozilla/5.0' --connect-timeout 15 https://fasih-sm.bps.go.id/oauth_login.html -o /dev/null && echo ok || exit 1" ]
       interval: 45s
       timeout: 20s
       retries: 5

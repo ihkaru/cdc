@@ -76,7 +76,7 @@ class UltimateSyncEngine:
 
         # Validate and create curl_cffi sessions
         for c_dict in all_cookie_dicts:
-            s = AsyncSession(impersonate="chrome120", verify=False)
+            s = AsyncSession(impersonate="chrome120", verify=False, http_version="v1")
             s.cookies.update(c_dict)
             try:
                 resp = await s.get(f"{self.target_url}/survey/api/v1/users/myinfo", timeout=5)
@@ -102,7 +102,7 @@ class UltimateSyncEngine:
 
         if not self.sessions_pool:
             print("   🚨 No valid sessions found! Forcing primary cookies (may fail if also expired).")
-            s = AsyncSession(impersonate="chrome120", verify=False)
+            s = AsyncSession(impersonate="chrome120", verify=False, http_version="v1")
             s.cookies.update(self.primary_cookies)
             self.sessions_pool.append(s)
 
@@ -186,7 +186,7 @@ class UltimateSyncEngine:
             if data:
                 upserter.add(
                     {
-                        "_id": data.get("id"),
+                        "_id": data.get("_id") or data.get("id"),
                         "assignment": data,
                         "responses": [],
                         "_survey_config_id": self.survey_config_id,
@@ -294,7 +294,7 @@ class UltimateSyncEngine:
             self.sessions_pool.clear()
             self.bad_sessions.clear()
 
-            new_s = AsyncSession(impersonate="chrome120", verify=False)
+            new_s = AsyncSession(impersonate="chrome120", verify=False, http_version="v1")
             new_s.cookies.update(new_cookies)
             self.sessions_pool.append(new_s)
             self.primary_cookies = new_cookies
@@ -306,7 +306,10 @@ class UltimateSyncEngine:
                 break
 
         try:
-            self.stats = upserter.finish()
+            upserter_stats = upserter.finish()
+            self.stats.total_new = upserter_stats.total_new
+            self.stats.total_updated = upserter_stats.total_updated
+            self.stats.total_skipped = upserter_stats.total_skipped
         except Exception:
             pass
         finally:

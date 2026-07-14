@@ -78,15 +78,49 @@ fi
 log "📉 Ensuring eth0 MTU is 1500..." "info"
 ip link set eth0 mtu 1500 2>/dev/null || true
 
-GATEWAY_IP=$(ip route | grep default | awk '{print $3}')
+# 🛠️ DYNAMIC FIX: Pin all active physical networks to prevent routing dropouts when VPN goes live
+for interface in eth0 eth1; do
+    if [ -d "/sys/class/net/$interface" ]; then
+        SUBNET=$(ip route show dev "$interface" | grep "proto kernel" | awk '{print $1}')
+        IP_ADDR=$(ip -4 addr show dev "$interface" | grep inet | awk '{print $2}' | cut -d/ -f1)
+        if [ -n "$IP_ADDR" ] && [ -n "$SUBNET" ]; then
+            GW=$(echo "$IP_ADDR" | sed 's/\.[0-9]*$/\.1/')
+            log "🛣️  Pinning network $SUBNET to $interface via $GW" "info"
+            ip route add "$SUBNET" dev "$interface" via "$GW" 2>/dev/null || true
+        fi
+    fi
+done
 
-# 🛠️ DYNAMIC FIX: Ensure internal Docker network stays on eth0
-# We detect the actual subnet of eth0 to avoid hardcoding 172.16.0.0/12
-# which might change in production environments like Coolify.
-LOCAL_SUBNET=$(ip route show dev eth0 | grep "proto kernel" | awk '{print $1}')
-if [ -n "$GATEWAY_IP" ] && [ -n "$LOCAL_SUBNET" ]; then
-    log "🛣️  Pinning local Docker network ($LOCAL_SUBNET) to eth0 via $GATEWAY_IP" "info"
-    ip route add "$LOCAL_SUBNET" dev eth0 via "$GATEWAY_IP" 2>/dev/null || true
+# 🌐 DYNAMIC FIX: Verify internet connectivity and switch default gateway if default is blocked
+log "🌐 Testing outbound internet connectivity..." "info"
+if ! curl -s -f -A "Mozilla/5.0" -I -m 5 https://1.1.1.1 >/dev/null 2>&1; then
+    log "⚠️  Default gateway is not routing internet traffic. Scanning other interfaces..." "warn"
+    for interface in eth0 eth1 eth2; do
+        if [ -d "/sys/class/net/$interface" ]; then
+            IP_ADDR=$(ip -4 addr show dev "$interface" | grep inet | awk '{print $2}' | cut -d/ -f1)
+            if [ -n "$IP_ADDR" ]; then
+                GW=$(echo "$IP_ADDR" | sed 's/\.[0-9]*$/\.1/')
+                if [ -n "$GW" ]; then
+                    # Temporarily route 1.1.1.1/32 via this interface's gateway to test it
+                    ip route add 1.1.1.1/32 via "$GW" dev "$interface" 2>/dev/null || true
+                    
+                    if curl -s -f -A "Mozilla/5.0" -I -m 5 https://1.1.1.1 >/dev/null 2>&1; then
+                        log "✅ Interface $interface has working internet connection via $GW!" "info"
+                        ip route del 1.1.1.1/32 2>/dev/null || true
+                        
+                        log "🔄 Switching default gateway to $GW via $interface..." "info"
+                        ip route del default 2>/dev/null || true
+                        ip route add default via "$GW" dev "$interface"
+                        break
+                    else
+                        ip route del 1.1.1.1/32 2>/dev/null || true
+                    fi
+                fi
+            fi
+        fi
+    done
+else
+    log "✅ Default gateway is working fine (internet reachable)." "info"
 fi
 # Helper function to handle graceful shutdown
 cleanup() {

@@ -292,35 +292,41 @@ async def fetch_assignments_concurrent(
     async def validate_session(c_dict) -> bool:
         probe_url = f"{TARGET_URL}/survey/api/v1/users/myinfo"
         headers = {
-            "Accept": "application/json, text/plain, */*",
-            "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36",
+            "Accept": "application/json",
             "X-XSRF-TOKEN": unquote(c_dict.get("XSRF-TOKEN", "")),
         }
+        from curl_cffi.requests import AsyncSession
         try:
             # Short-lived check connection context
             # Timeout 12s: BPS VPN latency regularly exceeds 5s — old timeout caused false-negative rejections
-            connector = aiohttp.TCPConnector(ssl=ssl_ctx)
-            async with aiohttp.ClientSession(cookies=c_dict, connector=connector) as test_sess:
-                async with test_sess.get(probe_url, headers=headers, timeout=12) as test_resp:
-                    # Expired session will redirect to Keycloak/SSO
-                    if "oauth_login" in str(test_resp.url) or "sso.bps.go.id" in str(test_resp.url):
-                        return False
+            async with AsyncSession(impersonate="chrome", verify=False, http_version="v1") as s:
+                for k, v in c_dict.items():
+                    s.cookies.set(k, v, domain="fasih-sm.bps.go.id")
+                
+                test_resp = await s.get(probe_url, headers=headers, timeout=12)
+                
+                # Expired session will redirect to Keycloak/SSO
+                if "oauth_login" in str(test_resp.url) or "sso.bps.go.id" in str(test_resp.url):
+                    return False
 
-                    # BPS Fortinet returns HTTP 200 with HTML body (login page) on expired cookies.
-                    content_type = test_resp.headers.get("content-type", "")
-                    body_text = await test_resp.text()
-                    is_html_response = (
-                        "text/html" in content_type
-                        or body_text.lstrip().startswith("<!")
-                        or ("login" in body_text.lower() and "<html" in body_text.lower())
-                    )
-                    if test_resp.status == 200 and not is_html_response:
-                        return True
+                # BPS Fortinet returns HTTP 200 with HTML body (login page) on expired cookies.
+                content_type = test_resp.headers.get("content-type", "")
+                body_text = test_resp.text
+                is_html_response = (
+                    "text/html" in content_type
+                    or body_text.lstrip().startswith("<!")
+                    or ("login" in body_text.lower() and "<html" in body_text.lower())
+                )
+                if test_resp.status_code == 200 and not is_html_response:
+                    return True
+                else:
+                    if is_html_response:
+                        print("   ⚠️ Session rejected: HTML redirect — SSO cookie likely expired.", flush=True)
                     else:
-                        if is_html_response:
-                            print("   ⚠️ Session rejected: returned HTML login page (cookie expired).")
-                        return False
-        except Exception:
+                        print(f"   ⚠️ Session validation returned status {test_resp.status_code}", flush=True)
+                    return False
+        except Exception as e:
+            print(f"   ⚠️ Session validation network error: {e}", flush=True)
             return False
 
     print(f"   👥 Found {len(all_sessions)} candidates in dynamic session pool. Validating active states...")
