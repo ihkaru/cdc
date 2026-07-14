@@ -78,23 +78,46 @@ def extract_flat_data(data: dict) -> dict:
 
 
 def normalize_bps_date(date_str: any) -> str:
+    """
+    Normalisasi berbagai format tanggal BPS menjadi string '20260714081317' (UTC).
+
+    Format yang didukung:
+    - int/str 13-digit unix ms : 1784016797460 → '20260714081317'
+    - str 14-digit UTC compact  : '20260714081317' → '20260714081317' (passthrough)
+    - BPS string WIB (2-digit hr): 'Jul 14, 2026, 03:13:17 PM' → '20260714081317'
+    - BPS string WIB (1-digit hr): 'Jul 14, 2026, 3:13:17 PM'  → '20260714081317'
+    """
     if not date_str:
         return ""
     s = str(date_str).strip()
+
+    # Case 1: unix ms timestamp (13 digits)
+    if s.isdigit() and len(s) == 13:
+        from datetime import datetime, timezone
+        dt = datetime.fromtimestamp(int(s) / 1000, tz=timezone.utc)
+        return dt.strftime("%Y%m%d%H%M%S")
+
+    # Case 2: already normalized 14-digit UTC compact string
     if s.isdigit() and len(s) == 14:
         return s
+
     from datetime import datetime, timedelta
 
-    try:
-        # Format: 'Dec 9, 2025, 11:07:12 AM'
-        dt = datetime.strptime(s, "%b %d, %Y, %I:%M:%S %p")
-        # Convert WIB to UTC (Assuming BPS local is WIB/UTC+7)
-        dt_utc = dt - timedelta(hours=7)
-        return dt_utc.strftime("%Y%m%d%H%M%S")
-    except:
-        import re
+    # Case 3: BPS locale string in WIB (UTC+7) — try multiple format variants
+    # BPS returns both 1-digit and 2-digit hours: '3:13:17 PM' and '03:13:17 PM'
+    for fmt in ("%b %d, %Y, %I:%M:%S %p", "%b %d, %Y, %I:%M:%S%p",
+                "%b %-d, %Y, %I:%M:%S %p", "%b %d, %Y, %H:%M:%S"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            # BPS timestamps are WIB (UTC+7) — convert to UTC for canonical comparison
+            return (dt - timedelta(hours=7)).strftime("%Y%m%d%H%M%S")
+        except ValueError:
+            continue
 
-        return re.sub(r"\D", "", s)[:14]
+    # Case 4: Fallback — strip all non-digits and take first 14
+    import re
+    stripped = re.sub(r"\D", "", s)[:14]
+    return stripped if len(stripped) == 14 else ""
 
 
 def upsert_assignment(session: Session, data: dict, stats: SyncStats | None = None, sync_log_id: int = None) -> str:
@@ -123,6 +146,7 @@ def upsert_assignment(session: Session, data: dict, stats: SyncStats | None = No
     date_modified_raw = (
         data.get("date_modified")
         or data.get("dateModifiedRemote")
+        or data.get("assignment", {}).get("date_modified")
         or data.get("assignment", {}).get("dateModifiedRemote")
         or ""
     )
@@ -391,10 +415,12 @@ class BatchUpserterBulk:
         # as pg_insert expects exact DB column names
 
         self.stats.total_fetched += 1
+        _asgn = row.get("assignment") or {}
         date_modified_raw = (
             row.get("date_modified")
             or row.get("dateModifiedRemote")
-            or row.get("assignment", {}).get("dateModifiedRemote")
+            or _asgn.get("date_modified")        # ← key snake_case dari detail API
+            or _asgn.get("dateModifiedRemote")
             or ""
         )
         date_modified = normalize_bps_date(date_modified_raw)
@@ -447,10 +473,12 @@ class BatchUpserterBulk:
     async def add_async(self, row: dict):
         """Asynchronously add a row and trigger async flush if batch size is met."""
         self.stats.total_fetched += 1
+        _asgn = row.get("assignment") or {}
         date_modified_raw = (
             row.get("date_modified")
             or row.get("dateModifiedRemote")
-            or row.get("assignment", {}).get("dateModifiedRemote")
+            or _asgn.get("date_modified")        # ← key snake_case dari detail API
+            or _asgn.get("dateModifiedRemote")
             or ""
         )
         date_modified = normalize_bps_date(date_modified_raw)
@@ -551,9 +579,12 @@ class BatchUpserterBulk:
                 index_elements=["id"],
                 set_=update_cols,
                 where=(
-                    # Always update if it's an emergency flush to ensure latest state is captured,
-                    # otherwise only update if remote date changed.
-                    (Assignment.date_modified_remote != stmt.excluded.date_modified_remote) or is_emergency
+                    # Update jika: emergency flush, ATAU tanggal berubah, ATAU DB value masih kosong
+                    # Kondisi ketiga penting untuk initial population setelah fix deploy.
+                    is_emergency
+                    | (Assignment.date_modified_remote != stmt.excluded.date_modified_remote)
+                    | (Assignment.date_modified_remote == "")
+                    | Assignment.date_modified_remote.is_(None)
                 ),
             )
 

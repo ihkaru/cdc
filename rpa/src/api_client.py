@@ -579,18 +579,38 @@ class FasihApiClient:
         return all_metadata
 
     def _norm_date(self, d_raw):
+        """
+        Normalisasi nilai dateModified dari datatable API ke string UTC compact '20260714081317'.
+        HARUS menghasilkan nilai yang identik dengan normalize_bps_date() di repository.py.
+        """
         if not d_raw:
             return ""
         s = str(d_raw).strip()
+
+        # Case 1: unix ms timestamp (13 digits) — format dari datatable API
+        if s.isdigit() and len(s) == 13:
+            from datetime import datetime, timezone
+            dt = datetime.fromtimestamp(int(s) / 1000, tz=timezone.utc)
+            return dt.strftime("%Y%m%d%H%M%S")
+
+        # Case 2: already normalized 14-digit compact
         if s.isdigit() and len(s) == 14:
             return s
+
         from datetime import datetime, timedelta
 
-        try:
-            dt = datetime.strptime(s, "%b %d, %Y, %I:%M:%S %p")
-            return (dt - timedelta(hours=7)).strftime("%Y%m%d%H%M%S")
-        except:
-            return re.sub(r"\D", "", s)[:14]
+        # Case 3: BPS WIB string — try multiple format variants
+        for fmt in ("%b %d, %Y, %I:%M:%S %p", "%b %d, %Y, %I:%M:%S%p",
+                    "%b %-d, %Y, %I:%M:%S %p", "%b %d, %Y, %H:%M:%S"):
+            try:
+                dt = datetime.strptime(s, fmt)
+                return (dt - timedelta(hours=7)).strftime("%Y%m%d%H%M%S")
+            except ValueError:
+                continue
+
+        # Case 4: Fallback
+        stripped = re.sub(r"\D", "", s)[:14]
+        return stripped if len(stripped) == 14 else ""
 
     @with_retry(retries=3, delay=2)
     async def get_assignment_detail(self, assignment_id: str) -> dict | None:
