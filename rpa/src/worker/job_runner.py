@@ -172,10 +172,11 @@ async def _run_single_job(sync_log: SyncLog, req: SyncRequest):
                             filters_to_run.append(
                                 {
                                     "label": f"[{len(pencacah_list) + idx + 1}/{len(pencacah_list) + len(pengawas_list)}] Pengawas: {user['fullname']}",
+                                    "pengawas_id": user["userId"],
                                     "pencacah_id": None,
                                 }
                             )
-                    else:
+                    elif req.filter_rotation == "pengawas" and pengawas_list:
                         for idx, user in enumerate(pengawas_list):
                             filters_to_run.append(
                                 {
