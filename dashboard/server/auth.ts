@@ -62,7 +62,7 @@ export const auth = betterAuth({
 		// secure: false is required for local HTTP development (non-HTTPS).
 		defaultCookieAttributes: {
 			sameSite: "lax",
-			secure: false,
+			secure: !!(process.env.BETTER_AUTH_URL?.startsWith("https") || process.env.PUBLIC_BASE_URL?.startsWith("https")),
 			httpOnly: true,
 			path: "/",
 		},
